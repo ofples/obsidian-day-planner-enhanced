@@ -145,6 +145,8 @@ Details replace the list in narrow panes and split beside it at a 620px containe
 
 Pending operations and source issues share a compact disclosure above the list. Count affected task identities once. Expand to inspect individual retry or review actions. Conflicts retain the controller's original comparison object, show per-field choices and one Apply choices action, and refresh contested choices when the comparison changes. Editors freeze their opened task and account baseline, preserve date/recurrence metadata and issue narrow durable commands. Settings merge into the latest account configuration and reject a changed active account.
 
+Opening a workflow or task details collapses the review disclosure. Task calendar feeds is reachable from Capture and routing and shares its custom form with the full settings entry. Retain exact unavailable saved sources when reloading the calendar list. Show Google IDs alongside names and keep internet-feed URLs out of visible text. Reject a changed task account both after loading and before saving. Copy reactive selections into ordinary arrays before dispatching settings through the Redux display policy.
+
 ## Performance and refresh
 
 Refresh at connection, manual request, pane activation if stale and at a visible-pane interval. Coalesce overlapping refresh calls. Avoid reading all daily-note files during every row render. Use the existing vault index and update affected links incrementally. Keep account snapshots immutable to support Svelte subscriptions. Profile 2,000 active tasks and deep nesting before release. Add virtualization only if measured pane performance requires it.
