@@ -34,6 +34,14 @@
     busy = $state(false),
     error = $state("");
   let closed = false;
+  const noteCount = $derived.by(
+    () =>
+      new Set(
+        Object.values(review?.record.links ?? {}).map(
+          (link) => link.source.path,
+        ),
+      ).size,
+  );
   async function load() {
     loading = true;
     error = "";
@@ -112,10 +120,9 @@
             >{task.title}{task.completed ? " · Completed" : ""}</span
           >{/each}
       </fieldset>{/if}
-    {#if Object.keys(review.record.links).length}<p class="task-form-context">
-        {new Set(
-          Object.values(review.record.links).map((link) => link.source.path),
-        ).size} linked notes will retain their content.
+    {#if noteCount}<p class="task-form-context">
+        {noteCount} linked {noteCount === 1 ? "note" : "notes"} will retain their
+        content.
       </p>{/if}
     {#if review.cached}<p class="task-form-context">
         Using cached task details. Saved changes are checked before deletion.

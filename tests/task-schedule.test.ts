@@ -457,6 +457,8 @@ describe("verified task deletion", () => {
     expect(h.texts.get(projection.source.path)).not.toContain("#todoist");
     const deletion = state.operations.find(op => op.mutation.kind === "delete")!;
     expect(deletion.deletionReadback).toEqual({ root: null, child: null });
+    await h.indexNotes();
+    expect(get(h.capture.state).issues).toEqual([]);
     await h.restart();
     h.texts.set(projection.source.path, before);
     await h.indexNotes();

@@ -387,6 +387,8 @@ export class TaskCapture {
       )
         continue;
       if (item.reason === "deleted") {
+        if (!candidate.tags.some((tag) => tag.name.toLowerCase() === "todoist"))
+          continue;
         issues.push({
           kind: "identity",
           candidate,
