@@ -15,6 +15,14 @@ The current production baseline is commit `82ae46ff` on `feat/google-calendar-sy
 
 The mockups describe the intended product. Implementation progress and verification live in IMPLEMENTATION.md and ACCEPTANCE.md.
 
+## Development build usage
+
+Open Tasks from the ribbon or the Show tasks command. Connect Todoist using its API token. The token is saved through Obsidian SecretStorage. Task creation, editing, completion and reopening use the pane's native controls.
+
+Open Capture and routing to choose capture folders, the default project, project tags and label tags. Initial project tags come from unique single-tag project names, and the Inbox is the initial default. Settings are account-specific. Add `#todoist` to an unchecked Markdown task and leave its line to capture it. For example, `- [ ] Buy rice #todoist #karma` routes to the project mapped to `#karma`. A task with tags mapping to several projects waits for Choose project. The editor context menu also provides Todoist routing for a specific task. Remote IDs remain in plugin state.
+
+Tagged capture currently creates and links tasks. Linked note updates and scheduling are being implemented in subsequent milestones. The feature build is under development in its separate branch. The production baseline remains installed during verification.
+
 ## Decisions
 
 - Integrate the pane into Day Planner Enhanced, reusing its schedule editor, note parser, task rendering and calendar exporter.

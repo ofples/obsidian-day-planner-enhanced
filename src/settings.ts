@@ -1,6 +1,10 @@
 import type { HexString } from "obsidian";
 
 import { defaultDayFormat } from "./constants";
+import {
+  taskCaptureSettingsSchema,
+  type TaskCaptureSettings,
+} from "./tasks/capture-settings";
 
 export interface IcalConfig {
   name: string;
@@ -54,6 +58,7 @@ export type TimelineColumnType = "timeTracker" | "planner";
 export type TimelineColumns = Record<TimelineColumnType, boolean>;
 
 export interface DayPlannerSettings {
+  taskCapture: TaskCaptureSettings;
   googleCalendar: import("./google-calendar/service").GoogleCalendarSettings;
   progressIndicator: "mini-timeline" | "pie" | "bar" | "none";
   showTaskNotification: boolean;
@@ -99,6 +104,7 @@ export interface DayPlannerSettings {
 }
 
 export const defaultSettings: DayPlannerSettings = {
+  taskCapture: taskCaptureSettingsSchema.parse({}),
   googleCalendar: {
     clientId: "",
     calendarId: "",
@@ -157,9 +163,10 @@ export const defaultSettings: DayPlannerSettings = {
 
 type StoredDayPlannerSettings = Omit<
   Partial<DayPlannerSettings>,
-  "googleCalendar"
+  "googleCalendar" | "taskCapture"
 > & {
   googleCalendar?: Partial<DayPlannerSettings["googleCalendar"]>;
+  taskCapture?: Partial<TaskCaptureSettings>;
   showUncheduledTasks?: boolean;
   showUnscheduledNestedTasks?: boolean;
   showTimelineInSidebar?: boolean;
@@ -176,6 +183,9 @@ export function mergeStoredSettings(
   return {
     ...defaultSettings,
     ...currentSettings,
+    taskCapture: taskCaptureSettingsSchema.parse(
+      currentSettings.taskCapture ?? {},
+    ),
     googleCalendar: {
       ...defaultSettings.googleCalendar,
       ...currentSettings.googleCalendar,

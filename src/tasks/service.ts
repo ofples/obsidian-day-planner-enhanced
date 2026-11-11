@@ -169,14 +169,21 @@ export class TaskService {
       throw new TaskReadError("Refresh this task before editing it.");
     const operation = await this.registry.change((state) => {
       if (source) {
+        const sameSourceUid = Object.entries(state.links).find(
+          ([, link]) =>
+            link.source.path === source.value.path &&
+            link.source.from === source.value.from &&
+            link.source.raw === source.value.raw,
+        )?.[0];
+        const sourceUid = sameSourceUid ?? source.uid;
         const existing = state.operations.find(
           (item) =>
-            item.sourceUid === source.uid &&
+            item.sourceUid === sourceUid &&
             item.mutation.kind === "create" &&
             item.status !== "cancelled",
         );
         if (existing) return existing;
-        if (state.links[source.uid]?.taskId)
+        if (state.links[sourceUid]?.taskId)
           throw new TaskReadError("This note task is already linked.");
         state.links[source.uid] = {
           provider: snapshot.provider,

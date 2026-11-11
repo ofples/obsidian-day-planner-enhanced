@@ -9,6 +9,37 @@ import {
 } from "../src/settings";
 
 describe("settings migration", () => {
+  test("defaults tagged capture and preserves account-scoped routing", () => {
+    expect(mergeStoredSettings(null).taskCapture).toEqual({
+      enabled: true,
+      roots: [],
+      accounts: {},
+    });
+    expect(
+      mergeStoredSettings({
+        taskCapture: {
+          enabled: false,
+          accounts: {
+            account: {
+              defaultProjectId: "work",
+              projectMappings: { work: "work" },
+              labelMappings: {},
+            },
+          },
+        },
+      }).taskCapture,
+    ).toEqual({
+      enabled: false,
+      roots: [],
+      accounts: {
+        account: {
+          defaultProjectId: "work",
+          projectMappings: { work: "work" },
+          labelMappings: {},
+        },
+      },
+    });
+  });
   test("preserves status filters and defaults existing installations to no hidden statuses", () => {
     expect(mergeStoredSettings(null).hiddenTaskStatuses).toEqual([]);
     expect(

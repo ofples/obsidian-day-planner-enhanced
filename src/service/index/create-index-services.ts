@@ -1,4 +1,5 @@
 import type { DayPlannerSettings } from "../../settings";
+import { TaskCaptureIndexService } from "../../tasks/capture-parser";
 import type { ListPropsParser } from "../list-props-parser";
 import type { PeriodicNotes } from "../periodic-notes";
 
@@ -17,6 +18,7 @@ export function createIndexServices(props: {
   const { listPropsParser, periodicNotes, settings } = props;
 
   return [
+    new TaskCaptureIndexService(),
     new ListItemIndexService([
       new DailyNoteExtensionService(periodicNotes, settings),
       new ObsidianTasksExtensionService(settings),

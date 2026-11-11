@@ -7,6 +7,7 @@ import type {
   FileIndexContribution,
   IndexService,
 } from "../../service/index/index-service";
+import type { CaptureCandidate } from "../../tasks/capture-parser";
 import { createAppSlice } from "../create-app-slice";
 import type { AppListenerEffect } from "../store";
 
@@ -62,6 +63,7 @@ export interface PlanEntry {
 }
 
 interface IndexSliceState {
+  captureEntries: Record<string, CaptureCandidate[]>;
   listItemEntries: {
     byId: Record<string, ListItemEntry>;
     byPath: Record<string, string[]>;
@@ -83,6 +85,7 @@ interface IndexSliceState {
 }
 
 const initialState: IndexSliceState = {
+  captureEntries: {},
   listItemEntries: { byPath: {}, byId: {} },
   fileEntries: { byPath: {}, byId: {} },
   logEntries: {
@@ -98,6 +101,7 @@ const initialState: IndexSliceState = {
 };
 
 interface FileIndex {
+  captureEntries?: CaptureCandidate[];
   path: string;
   listItemEntries?: ListItemEntry[];
   fileEntries?: FileSystemEntry[];
@@ -119,6 +123,8 @@ export const indexSlice = createAppSlice({
     fileDeleted: create.reducer(
       (state, action: PayloadAction<FileDeletedPayload>) => {
         const { path } = action.payload;
+
+        delete state.captureEntries[path];
 
         const listItemEntryIds = state.listItemEntries.byPath[path] || [];
 
@@ -190,6 +196,7 @@ export const indexSlice = createAppSlice({
         const fileIndexes = action.payload;
 
         fileIndexes.forEach((fileIndex) => {
+          state.captureEntries[fileIndex.path] = fileIndex.captureEntries ?? [];
           const {
             path,
             listItemEntries,
@@ -377,6 +384,10 @@ function mergeContributions(
   return contributions.reduce<FileIndex>(
     (acc, contribution) => ({
       path,
+      captureEntries: [
+        ...(acc.captureEntries ?? []),
+        ...(contribution.captureEntries ?? []),
+      ],
       listItemEntries: [
         ...(acc.listItemEntries ?? []),
         ...(contribution.listItemEntries ?? []),

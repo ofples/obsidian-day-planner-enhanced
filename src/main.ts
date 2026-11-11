@@ -43,6 +43,7 @@ import { selectVisibleDays } from "./redux/date-ranges-slice";
 import { icalRefreshRequested } from "./redux/ical/ical-slice";
 import { type IcalParseTaskResult } from "./redux/ical/init-ical-listeners";
 import { selectActiveLogTimeBlocks } from "./redux/index/index-selectors";
+import { filesIndexed } from "./redux/index/index-slice";
 import { settingsUpdated } from "./redux/settings-slice";
 import {
   type AppDispatch,
@@ -71,6 +72,8 @@ import {
 import { VaultFacade } from "./service/vault-facade";
 import { WorkspaceFacade } from "./service/workspace-facade";
 import { type DayPlannerSettings, mergeStoredSettings } from "./settings";
+import type { TaskCapture } from "./tasks/capture";
+import { createTaskCapture } from "./tasks/capture-obsidian";
 import { createTaskService } from "./tasks/obsidian";
 import type { TaskService } from "./tasks/service";
 import { createGetTasksApi } from "./tasks-plugin";
@@ -88,6 +91,10 @@ import { DayPlannerReleaseNotesView } from "./ui/release-notes";
 import { ScheduleExportModal } from "./ui/schedule-export-modal";
 import { DayPlannerSettingsTab } from "./ui/settings-tab";
 import { mountStatusBarWidget } from "./ui/status-bar-widget";
+import {
+  TaskCaptureSettingsModal,
+  TaskCaptureRouteModal,
+} from "./ui/task-capture-modal";
 import { TasksView, viewTypeTasks } from "./ui/tasks-view";
 import {
   createTimeTrackerCommandCheck,
@@ -111,6 +118,7 @@ import { createBackgroundBatchScheduler } from "./util/scheduler";
 export default class DayPlanner extends Plugin {
   googleCalendarSync!: GoogleCalendarSync;
   taskService!: TaskService;
+  taskCapture!: TaskCapture;
   getSettings!: () => DayPlannerSettings;
   private settingsStore!: Writable<DayPlannerSettings>;
   private workspaceFacade!: WorkspaceFacade;
@@ -251,10 +259,23 @@ export default class DayPlanner extends Plugin {
     this.taskService = createTaskService(this);
     try {
       await this.taskService.initialize();
+      this.taskCapture = createTaskCapture(
+        this,
+        this.taskService,
+        store,
+        this.settingsStore,
+      );
+      listenerMiddleware.startListening({
+        actionCreator: filesIndexed,
+        effect: () => this.taskCapture.scan(),
+      });
       this.register(() => this.taskService.stop());
       this.registerView(
         viewTypeTasks,
-        (leaf) => new TasksView(leaf, this.taskService),
+        (leaf) =>
+          new TasksView(leaf, this.taskService, this.taskCapture, () =>
+            this.openTaskCaptureSettings(),
+          ),
       );
       this.addCommand({
         id: "show-tasks",
@@ -264,6 +285,37 @@ export default class DayPlanner extends Plugin {
       this.addRibbonIcon("list-todo", "Open tasks", () => {
         void this.openTasks();
       });
+      this.addCommand({
+        id: "capture-todoist-tasks",
+        name: "Capture tagged Todoist tasks",
+        callback: () => this.taskCapture.scan(),
+      });
+      this.registerEvent(
+        this.app.workspace.on("editor-menu", (menu, editor, view) => {
+          const candidate = store
+            .getState()
+            .tracker.captureEntries[
+              view.file?.path ?? ""
+            ]?.find((item) => item.line === editor.getCursor().line);
+          if (candidate && !candidate.completed)
+            menu.addItem((item) =>
+              item
+                .setTitle("Todoist routing…")
+                .setIcon("list-todo")
+                .onClick(() =>
+                  new TaskCaptureRouteModal(
+                    this.app,
+                    {
+                      candidate,
+                      message: "Choose the project for this note task.",
+                    },
+                    this.taskService,
+                    this.taskCapture,
+                  ).open(),
+                ),
+            );
+        }),
+      );
     } catch {
       new Notice(
         "Tasks could not load its cache. Restore the task cache backup and reopen this vault.",
@@ -354,6 +406,15 @@ export default class DayPlanner extends Plugin {
       this.detachLeavesOfType(viewTypeMultiDay),
       this.syncTimeTrackerView(false),
     ]);
+  }
+
+  openTaskCaptureSettings() {
+    new TaskCaptureSettingsModal(
+      this.app,
+      this.taskService,
+      this.settingsStore,
+      this.taskCapture,
+    ).open();
   }
 
   addRibbonIcons() {

@@ -89,10 +89,10 @@ Use deterministic provider responses for focused regression tests and a real dis
 | Evidence | State | Required record |
 | --- | --- | --- |
 | Baseline source | Confirmed | `82ae46ff` equals origin `feat/google-calendar-sync` |
-| New source checks | M2 editing foundation verified | 34 focused passes, 712 full-suite passes, one inherited ICS timeout, TypeScript/Svelte, formatting/style lint, strict scorecard and build pass |
+| New source checks | M2 editing and capture verified | 41 task-focused passes, 720 full-suite passes, one inherited ICS timeout, TypeScript/Svelte, formatting/style lint, strict scorecard and build pass |
 | Inherited ICS timeout | Known baseline issue | `tests/ical.test.ts`, last visible day inclusive case, independently reproduced on upstream previously |
 | Synthetic desktop acceptance | M1 partial | Dockable pane, tree folding, cached/disconnected state, search and details inspected. Exhaustive keyboard/popout checks pending |
-| Live Todoist acceptance | M2 editing foundation verified | Complete account reads, persisted credentials, native creation/edit/project move/subtask/completion/reopen readbacks. Disposable tasks deleted and both IDs returned 404 afterward. Capture and recurring writes pending |
+| Live Todoist acceptance | M2 editing and capture verified | Complete account reads, persisted credentials, native creation/edit/project move/subtask/completion/reopen, cursor-leave capture and explicit routing readbacks. All disposable task IDs returned 404 after cleanup. Recurring writes pending |
 | Live Google acceptance | Pending | Stable event IDs, one exporter, description/color preservation and cleanup |
 | Working-vault installation | Pending | Matching backup, exact artifact hashes, reload and normal-entry readback |
 
@@ -113,3 +113,11 @@ The focused task suite has 34 passing cases. New cases cover narrow provider com
 Desktop acceptance created a disposable task through the pane's native dialog, edited its title/date/priority, moved it to another project and preserved its description. The same remote task ID was read back after editing. A child was created through Add subtask, completed through its row checkbox and reopened through Completed. Provider readback confirmed its parent relationship after reopening. The final snapshot had no pending operations or connection error. Deleting the disposable parent also removed its child, and both provider task endpoints returned 404. Private IDs and screenshots remain in ignored local output.
 
 A long title exposed narrow-pane overflow during this check. Wrapping the task row corrected the measured horizontal overflow to zero. The parent tree and details remain independently scrollable. Exhaustive focus, popout, light-theme and recurrence acceptance remains scheduled for later milestones.
+
+## M2 capture evidence
+
+Seven capture regression cases cover parsed first-line tags, code/comments/escaped text/wikilinks/frontmatter exclusion, original CRLF source offsets, project/label routing, unavailable projects, ambiguity, complete initial indexing, cursor stability, repeated indexing, restart, concurrent manual/automatic capture, stale bytes and parent-before-child acknowledgment. A settings regression preserves account-scoped routing and migration defaults. Existing Google identity and canonical indexing tests pass after extracting the shared whole-block matcher.
+
+Desktop acceptance used an actual Markdown editor in the isolated vault. No creation was queued while the tagged line held the cursor. Synthetic compositionstart/compositionend events verified the composition guard while moving the actual editor cursor to another line. After composition ended, provider readback showed one parent and one child in the parent's project. Two project tags paused the third task for review. Choose project opened the native routing dialog, and its Send to Todoist action created exactly one task in the selected project. A checked task and an inline-code example remained local. Reload and refresh preserved the three create operations and links. All three task endpoints returned 404 after cleanup, and the disposable note was removed.
+
+This composition check exercises the editor integration and event guard. OS input-method acceptance remains pending. Source-side update propagation, schedule operations, conflict resolution and recurring completion remain in their dependent milestones.

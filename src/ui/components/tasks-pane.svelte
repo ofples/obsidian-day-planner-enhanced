@@ -11,6 +11,7 @@
   import type { Readable, Writable } from "svelte/store";
 
   import { taskDay, taskGroups, type TaskViewState } from "../../tasks/browser";
+  import type { TaskCapture, CaptureIssue } from "../../tasks/capture";
   import { operationTaskId } from "../../tasks/operations";
   import type { TaskBrowserState, TaskService } from "../../tasks/service";
   import type { ProviderTask } from "../../tasks/types";
@@ -26,6 +27,9 @@
     completeTask,
     reopenTask,
     retry,
+    capture,
+    captureSettings,
+    routeCapture,
   }: {
     service: TaskService;
     preferences: Writable<TaskViewState>;
@@ -36,8 +40,12 @@
     completeTask: (task: ProviderTask) => void;
     reopenTask: (task: ProviderTask) => void;
     retry: (id: string) => void;
+    capture: TaskCapture;
+    captureSettings: () => void;
+    routeCapture: (issue: CaptureIssue) => void;
   } = $props();
   const browserState: Readable<TaskBrowserState> = $derived(service.state);
+  const captureState = $derived(capture.state);
   const groups = $derived(
     $browserState.snapshot
       ? taskGroups($browserState.snapshot, $preferences)
@@ -122,6 +130,23 @@
       </select>
     {/if}
   </header>
+  {#if $captureState.error}<p role="status">{$captureState.error}</p>{/if}
+  {#if $captureState.issues.length}
+    <details class="task-changes" open>
+      <summary
+        >{$captureState.issues.length} capture {$captureState.issues.length ===
+        1
+          ? "needs"
+          : "need"} review</summary
+      >
+      {#each $captureState.issues as issue (`${issue.candidate.path}:${issue.candidate.from}`)}
+        <div class="task-change">
+          <span>{issue.candidate.title}</span><small>{issue.message}</small>
+          <button onclick={() => routeCapture(issue)}>Choose project</button>
+        </div>
+      {/each}
+    </details>
+  {/if}
   <div class="task-status" aria-live="polite" role="status">
     {#if $browserState.loading}Refreshing tasks…
     {:else if $browserState.error}<span>{$browserState.error}</span>
@@ -319,6 +344,7 @@
     </section>
   {/if}
   {#if $browserState.connected}<footer>
+      <button onclick={captureSettings}>Capture and routing</button>
       <button onclick={() => service.disconnect()}>Disconnect Todoist</button>
     </footer>{/if}
 </section>

@@ -6,6 +6,7 @@ import type {
   LogEntry,
   PlanEntry,
 } from "../../redux/index/index-slice";
+import type { CaptureCandidate } from "../../tasks/capture-parser";
 
 export interface FileWithMetadata {
   path: string;
@@ -14,6 +15,7 @@ export interface FileWithMetadata {
 }
 
 export interface FileIndexContribution {
+  captureEntries?: CaptureCandidate[];
   listItemEntries?: ListItemEntry[];
   fileEntries?: FileSystemEntry[];
   logEntries?: LogEntry[];

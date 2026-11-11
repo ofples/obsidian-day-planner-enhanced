@@ -54,6 +54,11 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
               .setButtonText("Open tasks")
               .onClick(() => this.plugin.openTasks()),
           );
+          setting.addButton((button) =>
+            button
+              .setButtonText("Capture and routing")
+              .onClick(() => this.plugin.openTaskCaptureSettings()),
+          );
         },
       },
       {

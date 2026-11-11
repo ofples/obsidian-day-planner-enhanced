@@ -49,6 +49,22 @@
         ),
     );
 
+    new SettingGroup(el).setHeading("Tasks").addSetting((setting) =>
+      setting
+        .setName("Capture #todoist tasks")
+        .setDesc(
+          "Project and label mappings are available in the full Day Planner settings.",
+        )
+        .addToggle((toggle) =>
+          toggle.setValue($settings.taskCapture.enabled).onChange((enabled) => {
+            $settings = {
+              ...$settings,
+              taskCapture: { ...$settings.taskCapture, enabled },
+            };
+          }),
+        ),
+    );
+
     new SettingGroup(el)
       .addSetting((setting) =>
         setting.setName("Start hour").addDropdown((dropdown) =>

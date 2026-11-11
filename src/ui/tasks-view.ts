@@ -10,10 +10,12 @@ import { mount, unmount } from "svelte";
 import { get, writable } from "svelte/store";
 
 import { taskViewStateSchema } from "../tasks/browser";
+import type { TaskCapture, CaptureIssue } from "../tasks/capture";
 import type { TaskService } from "../tasks/service";
 import { TaskReadError, type ProviderTask } from "../tasks/types";
 
 import TasksPane from "./components/tasks-pane.svelte";
+import { TaskCaptureRouteModal } from "./task-capture-modal";
 import { TaskEditorModal } from "./task-editor-modal";
 
 export const viewTypeTasks = "planner-tasks";
@@ -93,6 +95,8 @@ export class TasksView extends ItemView {
   constructor(
     leaf: WorkspaceLeaf,
     private readonly service: TaskService,
+    private readonly capture: TaskCapture,
+    private readonly captureSettings: () => void,
   ) {
     super(leaf);
   }
@@ -135,6 +139,15 @@ export class TasksView extends ItemView {
       target: this.contentEl,
       props: {
         service: this.service,
+        capture: this.capture,
+        captureSettings: this.captureSettings,
+        routeCapture: (issue: CaptureIssue) =>
+          new TaskCaptureRouteModal(
+            this.app,
+            issue,
+            this.service,
+            this.capture,
+          ).open(),
         preferences: this.preferences,
         connect: () => new TaskConnectModal(this.app, this.service).open(),
         createTask: () => editor(),
