@@ -318,6 +318,14 @@ Account disconnection, foreign identities, missing counters, pending child comma
 
 The three-file subset has 153 passes. Full validation has 1,029 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Required source checks, the separate strict scorecard and production build pass. Installed external-completion acceptance remains pending at this source checkpoint. Exact undo and remaining M5/M6 acceptance continue.
 
+### Installed external completion verification
+
+The isolated bundle matched the committed build and had a full plugin/state backup. Migration retained exact original v13 bytes before v14. A controlled provider command completed a disposable scheduled recurring parent outside the plugin's outbox. Authoritative readback confirmed one increment and the next date. Native Refresh tasks triggered ordinary snapshot/reconciliation processing, which saved the external observation, checked the past note and archived its child link with no plugin completion command.
+
+Native history details displayed the saved occurrence, description, child, external provenance and observed current date and opened the historical note. The pane/form had zero horizontal overflow at 300px. Google retained the past event's ID, interval, mapped color and child description. Scheduling the next occurrence created fresh links/calendar identities. Full reload retained both mappings, the captured baseline, the external observation and one counter increment. No task/schedule operation or source/reconciliation issue remained pending.
+
+Product deletion removed both fixture tasks and preserved history/recovery. Cleanup restored original note bytes or file absence, removed both managed events and restored pane/calendar settings. Workspace storage was checked before reload. Final API/state readback confirmed fixture tasks/events absent or cancelled, zero native echoes, preserved history and no task-service error. This is live API evidence for a completion outside the plugin outbox, with native refresh/history/navigation acceptance. Exact undo, complete copy/link repair and remaining M6 acceptance continue. Full validation remains at 1,029 passes and the inherited ICS timeout.
+
 ### Missing-source recovery foundation
 
 Regression checks cover deleted timed parent/child blocks, a deleted note file, exact Undo after restart, provider edits while detached and a fresh export identity after ordinary calendar deletion. Missing-source intents issue no note or provider write. Tests interrupt intent, local acknowledgment and archive acknowledgment writes, then restart and restore the same Todoist link. An uncertain calendar create carries its original event identity through deletion, restart and restoration. An already restored document cancels a stale detachment intent.
