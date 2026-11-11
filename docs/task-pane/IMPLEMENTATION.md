@@ -1,0 +1,53 @@
+# Implementation sequence
+
+## M0 Reviewed design and contracts
+
+Deliver the stories, technical specification, acceptance matrix, goal prompt and reviewed mockup gallery. Confirm production baseline and a separate development worktree. Verify the old plugin/feed situation from installed settings. Review generated screens against capture, date, identity and recurrence semantics. Resolve contradictory UI before using screenshots as implementation guidance.
+
+Completion evidence is the design review, screen traceability and a committed design package. The baseline is already pushed at `82ae46ff`. The unused previous sync plugin was backed up outside the vault and uninstalled. Existing Todoist task links were not found in the planning notes inspected.
+
+## M1 Connected task browser
+
+Implement provider-neutral snapshot records, Todoist v1 paginated reads, account validation, SecretStorage connection, versioned cache and lifecycle-safe refresh. Add dockable Tasks, date/project grouping, search, tree expansion, selection and read-only task details. Account replacement must be explicit. Display cached data and clear connection/error states. Keep unsupported actions out of the first milestone's live UI.
+
+Run A01–A12, A52 and A56 as applicable. Test partial pagination, stale responses after disconnect, account separation and deep/cyclic parent data. Use synthetic data to inspect the actual Svelte pane in a disposable Obsidian vault. Complete provider read acceptance before describing it as connected and verified.
+
+## M2 Durable edits and capture
+
+Add a versioned operation outbox, field baselines, runtime-checked mutations and command UUID recovery. Implement new task, title/description/project/label/priority edits, completion and mapped #todoist capture. Introduce settings together with their UI and migration. Test create-response loss and repeated indexing before enabling automatic creation. Add the inline routing popover and ambiguity choice.
+
+Dependencies are M1's account identity and complete snapshots. Acceptance covers A13–A18, A41, A44 and relevant token/permission cases. Desktop capture acceptance must include real editor cursor movement and IME behavior.
+
+## M3 Scheduling and calendar ownership
+
+Extract a small public identity/projection interface around existing Google note identities. Add the shared scheduling coordinator, day/week drops, Markdown drops, keyboard Schedule, resize, move and unschedule. Add exact legacy-calendar exclusion with restoration. Adopt existing Google event mappings. Persist note intent before writes and integrate the existing move-recovery journal.
+
+Dependencies are M2's durable identities and operations. Acceptance covers A19–A21 and A24–A38 as applicable, including no duplicate feed after refresh/restart. Validate the note block and event ID through normal entry points.
+
+## M4 Reconciliation and recovery
+
+Connect note, pane, Todoist and Google changes through field-level reconciliation. Add conflict UI, read-before-write checks, origin handling, independent acknowledgment of task and calendar phases, retries, account reattachment, explicit unlink/delete semantics and second-writer detection. Extend synthetic failure injection across every acknowledged boundary.
+
+Acceptance covers A22–A23, A28–A30, A35–A36, A39–A46, A51, A55 and A56. Record the actual Todoist concurrent-write limitation after live verification. A newer upstream version appearing during a conflict-resolution dialog must trigger a fresh comparison.
+
+## M5 Recurrence, subtasks and identity repair
+
+Implement occurrence identities, completion history, next-occurrence transition, safe recurring rescheduling, parent/child semantics and explicit copy/link repair. Add independent child scheduling. Reuse existing compact layout and Google description export. Verify recurring completion and undo against disposable real tasks.
+
+Acceptance covers A18, A20–A21, A37 and A47–A50. Recurrence history must survive restart, offline completion and a moved note. Unsupported provider undo semantics must have explicit UI and documented acceptance evidence.
+
+## M6 Integrated release
+
+Verify all cases against the exact combined feature/hotfix tree. Review screen fidelity, 320px panes, keyboard focus, light/dark theme, popout lifecycle, performance, export and existing calendar workflows. Build and back up the working vault before installation. Restore the relevant calendar-display selection according to the task integration's recorded policy. Complete live readback and test cleanup.
+
+Completion requires acceptance evidence for the supported workflows, a pushed branch, a usable build and installed verification. Carry genuine remaining limitations into user-facing documentation and the final report.
+
+## Current progress
+
+- M0 complete. Eight boards were reviewed across three passes. Targeted revisions corrected connection, capture, recurring occurrence, conflict, schedule-chip and count inconsistencies.
+- M1 starting after the reviewed design package commit.
+- M2–M6 planned.
+
+## Working conventions
+
+Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.
