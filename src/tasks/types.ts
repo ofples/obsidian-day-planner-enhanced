@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import type { TaskOperation } from "./operations";
+
 export const taskSchema = z.object({
   id: z.string().min(1),
   title: z.string(),
@@ -28,7 +30,12 @@ export const taskSnapshotSchema = z.object({
     timezone: z.string(),
   }),
   projects: z.array(
-    z.object({ id: z.string().min(1), name: z.string(), order: z.number() }),
+    z.object({
+      id: z.string().min(1),
+      name: z.string(),
+      order: z.number(),
+      inbox: z.boolean().optional(),
+    }),
   ),
   tasks: z.array(taskSchema),
   fetchedAt: z.iso.datetime(),
@@ -46,11 +53,15 @@ export type TaskCache = z.infer<typeof taskCacheSchema>;
 
 export interface TaskProvider {
   read(): Promise<TaskSnapshot>;
+  get?(id: string): Promise<ProviderTask | null>;
+  apply?(operation: TaskOperation): Promise<{ taskId: string }>;
 }
 
 export interface TaskStorage {
   read(): Promise<string | null>;
   write(content: string): Promise<void>;
+  readState(): Promise<string | null>;
+  writeState(content: string): Promise<void>;
   getSecret(key: string): string | null;
   setSecret(key: string, value: string): void;
 }
@@ -60,6 +71,16 @@ export class TaskReadError extends Error {
     message: string,
     readonly retryAt?: number,
     readonly needsReconnect = false,
+    readonly status?: number,
+  ) {
+    super(message);
+  }
+}
+
+export class TaskWriteError extends TaskReadError {
+  constructor(
+    message: string,
+    readonly permanent: boolean,
   ) {
     super(message);
   }

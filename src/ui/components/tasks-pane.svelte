@@ -2,8 +2,8 @@
   import {
     ChevronDown,
     ChevronRight,
-    Circle,
     ExternalLink,
+    Plus,
     RefreshCw,
     Search,
     X,
@@ -11,6 +11,7 @@
   import type { Readable, Writable } from "svelte/store";
 
   import { taskDay, taskGroups, type TaskViewState } from "../../tasks/browser";
+  import { operationTaskId } from "../../tasks/operations";
   import type { TaskBrowserState, TaskService } from "../../tasks/service";
   import type { ProviderTask } from "../../tasks/types";
 
@@ -19,10 +20,22 @@
     service,
     preferences,
     connect,
+    createTask,
+    editTask,
+    addSubtask,
+    completeTask,
+    reopenTask,
+    retry,
   }: {
     service: TaskService;
     preferences: Writable<TaskViewState>;
     connect: () => void;
+    createTask: () => void;
+    editTask: (task: ProviderTask) => void;
+    addSubtask: (task: ProviderTask) => void;
+    completeTask: (task: ProviderTask) => void;
+    reopenTask: (task: ProviderTask) => void;
+    retry: (id: string) => void;
   } = $props();
   const browserState: Readable<TaskBrowserState> = $derived(service.state);
   const groups = $derived(
@@ -35,6 +48,14 @@
       (task) => task.id === $preferences.selectedId,
     ),
   );
+  const pendingIds = $derived(
+    new Set($browserState.operations.map(operationTaskId)),
+  );
+  $effect(() => {
+    const selectedId = $preferences.selectedId;
+    const alias = selectedId ? $browserState.aliases[selectedId] : undefined;
+    if (alias) $preferences = { ...$preferences, selectedId: alias };
+  });
   function toggleGroup(id: string) {
     const collapsed = new Set($preferences.collapsed);
     if (collapsed.has(id)) collapsed.delete(id);
@@ -48,6 +69,11 @@
     <h2>Tasks</h2>
     <div class="task-source">
       <span>Todoist</span>
+      {#if $browserState.writable}<button
+          aria-label="New task"
+          onclick={createTask}
+          title="New task"><Plus size={17} /></button
+        >{/if}
       <button
         aria-label="Refresh tasks"
         disabled={!$browserState.connected ||
@@ -118,6 +144,29 @@
         ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span
       >{/if}
   </div>
+  {#if $browserState.operations.length}
+    <details class="task-changes">
+      <summary
+        >{$browserState.operations.length} saved {$browserState.operations
+          .length === 1
+          ? "change"
+          : "changes"}</summary
+      >
+      {#each $browserState.operations as operation (operation.id)}
+        <div class="task-change">
+          <span
+            >{operation.mutation.kind === "create"
+              ? operation.mutation.task.title
+              : (operation.base?.title ?? "Task change")}</span
+          >
+          <small>{operation.error ?? "Pending sync"}</small>
+          {#if operation.status !== "conflict"}<button
+              onclick={() => retry(operation.id)}>Retry</button
+            >{/if}
+        </div>
+      {/each}
+    </details>
+  {/if}
   {#if !$browserState.snapshot}
     <div class="task-empty">
       <h3>Connect Todoist</h3>
@@ -172,6 +221,16 @@
                       />{:else}<ChevronDown size={14} />{/if}
                   </button>
                 {/if}
+                <input
+                  class="task-checkbox"
+                  aria-label={`Complete ${row.task.title}`}
+                  checked={row.task.completed}
+                  disabled={!$browserState.writable ||
+                    pendingIds.has(row.task.id) ||
+                    row.task.id.startsWith("local-")}
+                  onchange={() => completeTask(row.task)}
+                  type="checkbox"
+                />
                 <button
                   class="task-row"
                   class:task-context={row.context}
@@ -180,7 +239,6 @@
                     $preferences = { ...$preferences, selectedId: row.task.id };
                   }}
                 >
-                  <Circle size={15} />
                   <span class="task-copy"
                     ><span>{row.task.title || "Untitled task"}</span><small
                       >{$browserState.snapshot?.projects.find(
@@ -194,6 +252,9 @@
                         $browserState.snapshot?.account.timezone ?? "UTC",
                       )}</small
                     >{/if}
+                  {#if pendingIds.has(row.task.id)}<small class="task-pending"
+                      >Pending</small
+                    >{/if}
                 </button>
               </div>
             {/each}
@@ -201,6 +262,19 @@
         </section>
       {/each}
     </div>
+  {/if}
+  {#if $browserState.completed.length}
+    <details class="task-completed">
+      <summary>Completed {$browserState.completed.length}</summary>
+      {#each $browserState.completed as task (task.id)}<div
+          class="task-completed-row"
+        >
+          <span>{task.title}</span><button
+            disabled={!$browserState.writable}
+            onclick={() => reopenTask(task)}>Reopen</button
+          >
+        </div>{/each}
+    </details>
   {/if}
   {#if selected}
     <section class="task-details" aria-label="Task details">
@@ -213,6 +287,13 @@
           }}><X size={17} /></button
         >
       </div>
+      {#if $browserState.writable && !pendingIds.has(selected.id) && !selected.id.startsWith("local-")}
+        <div class="task-actions">
+          <button onclick={() => editTask(selected)}>Edit task</button><button
+            onclick={() => addSubtask(selected)}>Add subtask</button
+          >
+        </div>
+      {/if}
       <dl>
         <dt>Project</dt>
         <dd>
@@ -370,14 +451,18 @@
 
   .task-row {
     display: flex;
+    flex: 1;
+    flex-wrap: wrap;
     gap: var(--size-4-2);
     align-items: start;
 
-    width: 100%;
+    width: auto;
+    min-width: 0;
     height: auto;
     padding: var(--size-4-3);
 
     text-align: start;
+    white-space: normal;
 
     background: transparent;
     box-shadow: none;
@@ -392,6 +477,7 @@
   .task-copy {
     display: grid;
     flex: 1;
+    flex-basis: 100px;
     gap: var(--size-2-1);
 
     min-width: 0;
@@ -461,5 +547,43 @@
 
   footer {
     padding: var(--size-4-2) var(--size-4-4);
+  }
+
+  .task-checkbox {
+    flex-shrink: 0;
+    margin-block-start: var(--size-4-3);
+  }
+
+  .task-changes,
+  .task-completed {
+    padding: var(--size-4-3) var(--size-4-4);
+    font-size: var(--font-ui-small);
+    border-bottom: 1px solid var(--background-modifier-border);
+  }
+
+  .task-change {
+    display: grid;
+    gap: var(--size-4-2);
+    margin-block: var(--size-4-3);
+  }
+
+  .task-change small,
+  .task-pending {
+    color: var(--text-muted);
+  }
+
+  .task-completed-row,
+  .task-actions {
+    display: flex;
+    gap: var(--size-4-2);
+    align-items: center;
+    padding-block: var(--size-4-2);
+  }
+
+  .task-completed-row span {
+    flex: 1;
+    min-width: 0;
+    text-decoration: line-through;
+    overflow-wrap: anywhere;
   }
 </style>

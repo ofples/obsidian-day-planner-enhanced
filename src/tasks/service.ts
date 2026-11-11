@@ -1,6 +1,15 @@
 import { get, writable } from "svelte/store";
 
 import {
+  isOutstanding,
+  operationTaskId,
+  taskMutationSchema,
+  type TaskMutation,
+  type TaskOperation,
+} from "./operations";
+import { pendingSnapshot, TaskQueue } from "./queue";
+import { TaskRegistry, type TaskSource } from "./registry";
+import {
   TaskReadError,
   taskCacheSchema,
   type TaskCache,
@@ -16,6 +25,10 @@ export interface TaskBrowserState {
   error: string;
   retryAt?: number;
   needsReconnect?: boolean;
+  operations: TaskOperation[];
+  completed: import("./types").ProviderTask[];
+  writable: boolean;
+  aliases: Record<string, string>;
 }
 
 export class TaskService {
@@ -24,12 +37,20 @@ export class TaskService {
     connected: false,
     loading: false,
     error: "",
+    operations: [],
+    completed: [],
+    writable: false,
+    aliases: {},
   });
   private cache!: TaskCache;
   private lastSaved: string | null = null;
   private generation = 0;
   private pending?: Promise<void>;
   private closed = false;
+  private canWrite = false;
+  private refreshAgain = false;
+  registry!: TaskRegistry;
+  private queue!: TaskQueue;
 
   constructor(
     private readonly storage: TaskStorage,
@@ -55,12 +76,164 @@ export class TaskService {
           }
         : taskCacheSchema.parse(JSON.parse(this.lastSaved));
     if (this.lastSaved === null) await this.save(this.cache);
-    this.state.set({
-      snapshot: this.cache.snapshot,
-      connected: Boolean(this.storage.getSecret(this.secretKey())),
+    this.registry = new TaskRegistry(this.storage, this.cache.namespace);
+    await this.registry.initialize();
+    this.queue = new TaskQueue(this.registry, () => this.publish());
+    const token = this.storage.getSecret(this.secretKey());
+    this.canWrite = Boolean(token && this.provider(token).apply);
+    this.publish({
+      connected: Boolean(token),
       loading: false,
       error: "",
     });
+  }
+
+  private publish(patch: Partial<TaskBrowserState> = {}) {
+    const snapshot = this.cache.snapshot;
+    const owned = this.registry
+      .snapshot()
+      .operations.filter(
+        (operation) =>
+          operation.provider === snapshot?.provider &&
+          operation.accountId === snapshot.account.id,
+      );
+    const operations = owned.filter(isOutstanding);
+    const effective = pendingSnapshot(snapshot, operations);
+    const latest = new Map(
+      owned
+        .filter((operation) => operation.status === "complete")
+        .map((operation) => [operationTaskId(operation), operation]),
+    );
+    const completed = [...latest.values()]
+      .filter(
+        (operation) =>
+          operation.status === "complete" &&
+          operation.mutation.kind === "complete" &&
+          operation.base &&
+          !operation.base.due?.recurring &&
+          !effective?.tasks.some(
+            (task) => task.id === operationTaskId(operation) && !task.completed,
+          ),
+      )
+      .map((operation) => ({
+        ...operation.base!,
+        id: operationTaskId(operation),
+        completed: true,
+      }));
+    this.state.update((previous) => {
+      const current = { ...previous, ...patch };
+      return {
+        ...current,
+        snapshot: effective,
+        operations,
+        completed,
+        writable: this.canWrite && current.connected,
+        aliases: Object.fromEntries(
+          owned
+            .filter(
+              (operation) =>
+                operation.mutation.kind === "create" && operation.remoteId,
+            )
+            .map((operation) => [`local-${operation.id}`, operation.remoteId!]),
+        ),
+      };
+    });
+  }
+
+  async mutate(
+    input: TaskMutation,
+    source?: { uid: string; value: TaskSource },
+  ): Promise<TaskOperation> {
+    const snapshot = this.cache.snapshot;
+    if (this.closed || !snapshot || !get(this.state).writable)
+      throw new TaskReadError(
+        "Connect a task account with editing access first.",
+        undefined,
+        true,
+      );
+    const mutation = taskMutationSchema.parse(input);
+    if (mutation.kind !== "create" && mutation.taskId.startsWith("local-"))
+      throw new TaskReadError(
+        "Wait for this task to finish creating before editing it.",
+      );
+    const current = get(this.state);
+    const base =
+      mutation.kind === "create"
+        ? null
+        : (current.snapshot?.tasks.find(
+            (task) => task.id === mutation.taskId,
+          ) ??
+          current.completed.find((task) => task.id === mutation.taskId) ??
+          null);
+    if (mutation.kind !== "create" && !base)
+      throw new TaskReadError("Refresh this task before editing it.");
+    const operation = await this.registry.change((state) => {
+      if (source) {
+        const existing = state.operations.find(
+          (item) =>
+            item.sourceUid === source.uid &&
+            item.mutation.kind === "create" &&
+            item.status !== "cancelled",
+        );
+        if (existing) return existing;
+        if (state.links[source.uid]?.taskId)
+          throw new TaskReadError("This note task is already linked.");
+        state.links[source.uid] = {
+          provider: snapshot.provider,
+          accountId: snapshot.account.id,
+          taskId: null,
+          source: source.value,
+          base: null,
+        };
+      }
+      const saved: TaskOperation = {
+        id: crypto.randomUUID(),
+        tempId: crypto.randomUUID(),
+        provider: snapshot.provider,
+        accountId: snapshot.account.id,
+        mutation,
+        base,
+        status: "pending",
+        attempts: 0,
+        createdAt: new Date().toISOString(),
+        sourceUid: source?.uid,
+      };
+      state.operations.push(saved);
+      return saved;
+    });
+    this.publish();
+    this.requestRefresh();
+    return operation;
+  }
+
+  async retryOperation(id: string) {
+    const snapshot = this.cache.snapshot;
+    const operation = this.registry
+      .snapshot()
+      .operations.find((item) => item.id === id);
+    if (
+      !operation ||
+      operation.provider !== snapshot?.provider ||
+      operation.accountId !== snapshot.account.id ||
+      !isOutstanding(operation)
+    )
+      return;
+    if (operation.status === "conflict")
+      throw new TaskReadError(
+        "Review the conflicting task fields before applying this change.",
+      );
+    await this.registry.updateOperation(id, {
+      retryAt: undefined,
+      error: undefined,
+      status: operation.status === "failed" ? "pending" : operation.status,
+    });
+    this.publish();
+    this.requestRefresh();
+  }
+
+  private requestRefresh() {
+    if (this.pending) this.refreshAgain = true;
+    else void this.refresh();
   }
 
   private async save(cache: TaskCache) {
@@ -97,6 +270,10 @@ export class TaskService {
       await operation;
     } finally {
       if (this.pending === operation) this.pending = undefined;
+      if (this.refreshAgain) {
+        this.refreshAgain = false;
+        void this.refresh();
+      }
     }
   }
 
@@ -121,7 +298,16 @@ export class TaskService {
       if (!this.isCurrent(generation)) return;
       this.storage.setSecret(this.secretKey(), token);
       this.cache = cache;
-      this.state.set({ snapshot, connected: true, loading: false, error: "" });
+      this.canWrite = Boolean(this.provider(token).apply);
+      this.publish({ connected: true, loading: false, error: "" });
+      this.refreshAgain ||= this.registry
+        .snapshot()
+        .operations.some(
+          (operation) =>
+            operation.provider === snapshot.provider &&
+            operation.accountId === snapshot.account.id &&
+            ["pending", "sent", "acknowledged"].includes(operation.status),
+        );
     } catch (error) {
       if (this.isCurrent(generation)) this.fail(error);
       throw error;
@@ -146,22 +332,31 @@ export class TaskService {
     this.pending = operation;
     return operation.finally(() => {
       if (this.pending === operation) this.pending = undefined;
+      if (this.refreshAgain) {
+        this.refreshAgain = false;
+        void this.refresh();
+      }
     });
   }
 
   private async refreshSnapshot(token: string, generation: number) {
     try {
-      const snapshot = await this.provider(token).read();
+      const provider = this.provider(token);
+      let snapshot = await provider.read();
       if (!this.isCurrent(generation)) return;
       if (snapshot.account.id !== this.cache.snapshot?.account.id)
         throw new Error(
           "This credential now belongs to another account. Reconnect to choose that account.",
         );
+      snapshot = await this.queue.run(provider, snapshot, () =>
+        this.isCurrent(generation),
+      );
+      if (!this.isCurrent(generation)) return;
       const cache = { ...this.cache, snapshot };
       await this.save(cache);
       if (!this.isCurrent(generation)) return;
       this.cache = cache;
-      this.state.set({ snapshot, connected: true, loading: false, error: "" });
+      this.publish({ connected: true, loading: false, error: "" });
     } catch (error) {
       if (this.isCurrent(generation)) this.fail(error);
     }
@@ -192,6 +387,7 @@ export class TaskService {
       loading: false,
       error: "",
       retryAt: undefined,
+      writable: false,
     }));
   }
 

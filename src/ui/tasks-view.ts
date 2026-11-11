@@ -1,6 +1,7 @@
 import {
   ItemView,
   Modal,
+  Notice,
   Setting,
   WorkspaceLeaf,
   type ViewStateResult,
@@ -10,8 +11,10 @@ import { get, writable } from "svelte/store";
 
 import { taskViewStateSchema } from "../tasks/browser";
 import type { TaskService } from "../tasks/service";
+import { TaskReadError, type ProviderTask } from "../tasks/types";
 
 import TasksPane from "./components/tasks-pane.svelte";
+import { TaskEditorModal } from "./task-editor-modal";
 
 export const viewTypeTasks = "planner-tasks";
 
@@ -115,12 +118,33 @@ export class TasksView extends ItemView {
   }
 
   async onOpen() {
+    const editor = (task?: ProviderTask, parent?: ProviderTask) =>
+      new TaskEditorModal(this.app, this.service, task, parent, (id) =>
+        this.preferences.update((state) => ({ ...state, selectedId: id })),
+      ).open();
+    const handle = (operation: Promise<unknown>) => {
+      void operation.catch((error: unknown) => {
+        new Notice(
+          error instanceof TaskReadError
+            ? error.message
+            : "Could not save this task change. Try again.",
+        );
+      });
+    };
     this.component = mount(TasksPane, {
       target: this.contentEl,
       props: {
         service: this.service,
         preferences: this.preferences,
         connect: () => new TaskConnectModal(this.app, this.service).open(),
+        createTask: () => editor(),
+        editTask: (task: ProviderTask) => editor(task),
+        addSubtask: (parent: ProviderTask) => editor(undefined, parent),
+        completeTask: (task: ProviderTask) =>
+          handle(this.service.mutate({ kind: "complete", taskId: task.id })),
+        reopenTask: (task: ProviderTask) =>
+          handle(this.service.mutate({ kind: "reopen", taskId: task.id })),
+        retry: (id: string) => handle(this.service.retryOperation(id)),
       },
     });
     void this.service.refresh();

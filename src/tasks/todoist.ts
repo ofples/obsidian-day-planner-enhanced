@@ -1,7 +1,14 @@
 import { requestUrl } from "obsidian";
 import { z } from "zod";
 
-import { TaskReadError, type TaskProvider, type TaskSnapshot } from "./types";
+import type { TaskDraft, TaskOperation, TaskPatch } from "./operations";
+import {
+  TaskReadError,
+  TaskWriteError,
+  type ProviderTask,
+  type TaskProvider,
+  type TaskSnapshot,
+} from "./types";
 
 const resourceId = z
   .string()
@@ -12,10 +19,51 @@ const userSchema = z.object({
   full_name: z.string(),
   tz_info: z.object({ timezone: z.string() }),
 });
+
+function normalizeTask(task: z.infer<typeof remoteTaskSchema>): ProviderTask {
+  return {
+    id: task.id,
+    title: task.content,
+    description: task.description,
+    projectId: task.project_id,
+    parentId: task.parent_id,
+    labels: task.labels,
+    priority: task.priority,
+    completed: task.checked,
+    order: task.child_order,
+    due: task.due
+      ? {
+          date: task.due.date,
+          recurring: task.due.is_recurring,
+          text: task.due.string,
+          timezone: task.due.timezone ?? null,
+        }
+      : null,
+  };
+}
+
+function writableFields(task: TaskPatch | TaskDraft) {
+  const fields: Record<string, unknown> = {};
+  if (task.title !== undefined) fields["content"] = task.title;
+  if (task.description !== undefined) fields["description"] = task.description;
+  if (task.priority !== undefined) fields["priority"] = task.priority;
+  if (task.labels !== undefined) fields["labels"] = task.labels;
+  if (task.due !== undefined)
+    fields["due"] = task.due
+      ? {
+          date: task.due.date,
+          string: task.due.text,
+          is_recurring: task.due.recurring,
+          timezone: task.due.timezone,
+        }
+      : null;
+  return fields;
+}
 const projectSchema = z.object({
   id: resourceId,
   name: z.string(),
   child_order: z.number(),
+  inbox_project: z.boolean().optional(),
 });
 const remoteTaskSchema = z.object({
   id: resourceId,
@@ -41,11 +89,20 @@ const remoteTaskSchema = z.object({
 export class TodoistProvider implements TaskProvider {
   constructor(private readonly token: string) {}
 
-  private async request(path: string): Promise<unknown> {
+  private async request(
+    path: string,
+    body?: URLSearchParams,
+  ): Promise<unknown> {
     const response = await requestUrl({
       url: `https://api.todoist.com/api/v1/${path}`,
-      method: "GET",
+      method: body ? "POST" : "GET",
       headers: { Authorization: `Bearer ${this.token}` },
+      ...(body
+        ? {
+            body: body.toString(),
+            contentType: "application/x-www-form-urlencoded",
+          }
+        : {}),
       throw: false,
     });
     if (response.status !== 200) {
@@ -66,9 +123,110 @@ export class TodoistProvider implements TaskProvider {
               : "Could not refresh Todoist. Your last task snapshot is available.",
         retryAt,
         response.status === 401 || response.status === 403,
+        response.status,
       );
     }
     return response.json as unknown;
+  }
+
+  async get(id: string): Promise<ProviderTask | null> {
+    try {
+      return normalizeTask(
+        remoteTaskSchema.parse(
+          await this.request(`tasks/${encodeURIComponent(id)}`),
+        ),
+      );
+    } catch (error) {
+      if (
+        error instanceof TaskReadError &&
+        (error.status === 404 || error.status === 410)
+      )
+        return null;
+      throw error;
+    }
+  }
+
+  async apply(operation: TaskOperation): Promise<{ taskId: string }> {
+    const mutation = operation.mutation;
+    const command = {
+      uuid: operation.id,
+      type: "",
+      args: {} as Record<string, unknown>,
+      ...(mutation.kind === "create" ? { temp_id: operation.tempId } : {}),
+    };
+    switch (mutation.kind) {
+      case "create":
+        command.type = "item_add";
+        command.args = {
+          ...writableFields(mutation.task),
+          project_id: mutation.task.projectId,
+          ...(mutation.task.parentId
+            ? { parent_id: mutation.task.parentId }
+            : {}),
+        };
+        break;
+      case "update":
+        command.type = "item_update";
+        command.args = {
+          id: mutation.taskId,
+          ...writableFields(mutation.changes),
+        };
+        break;
+      case "moveProject":
+        command.type = "item_move";
+        command.args = { id: mutation.taskId, project_id: mutation.projectId };
+        break;
+      case "moveParent":
+        command.type = "item_move";
+        command.args = { id: mutation.taskId, parent_id: mutation.parentId };
+        break;
+      case "complete":
+        command.type = "item_close";
+        command.args = { id: mutation.taskId };
+        break;
+      case "reopen":
+        command.type = "item_uncomplete";
+        command.args = { id: mutation.taskId };
+        break;
+    }
+    const response = z
+      .object({
+        sync_status: z.record(
+          z.string(),
+          z.union([
+            z.literal("ok"),
+            z.object({ error_code: z.number(), error: z.string() }),
+          ]),
+        ),
+        temp_id_mapping: z.record(z.string(), z.string()).optional(),
+      })
+      .parse(
+        await this.request(
+          "sync",
+          new URLSearchParams({
+            commands: JSON.stringify([command]),
+            resource_types: "[]",
+          }),
+        ),
+      );
+    const status = response.sync_status[operation.id];
+    if (status !== "ok")
+      throw new TaskWriteError(
+        status
+          ? `Todoist rejected this change (code ${status.error_code}). Review the task fields and project permissions.`
+          : "Todoist did not acknowledge this change. Retry to check its result.",
+        Boolean(status),
+      );
+    const taskId =
+      mutation.kind === "create"
+        ? response.temp_id_mapping?.[operation.tempId]
+        : mutation.taskId;
+    if (!taskId)
+      throw new TaskWriteError(
+        "Todoist did not return the created task's identity. Retry the saved change.",
+        false,
+      );
+    return { taskId: resourceId.parse(taskId) };
   }
 
   private async pages<T extends { id: string }>(
@@ -116,26 +274,9 @@ export class TodoistProvider implements TaskProvider {
         id: project.id,
         name: project.name,
         order: project.child_order,
+        inbox: project.inbox_project ?? false,
       })),
-      tasks: tasks.map((task) => ({
-        id: task.id,
-        title: task.content,
-        description: task.description,
-        projectId: task.project_id,
-        parentId: task.parent_id,
-        labels: task.labels,
-        priority: task.priority,
-        completed: task.checked,
-        order: task.child_order,
-        due: task.due
-          ? {
-              date: task.due.date,
-              recurring: task.due.is_recurring,
-              text: task.due.string,
-              timezone: task.due.timezone ?? null,
-            }
-          : null,
-      })),
+      tasks: tasks.map(normalizeTask),
       fetchedAt: new Date().toISOString(),
     };
   }

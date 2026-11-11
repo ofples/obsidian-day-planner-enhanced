@@ -6,6 +6,7 @@ import { TodoistProvider } from "./todoist";
 export function createTaskService(plugin: Plugin) {
   const path = `${plugin.manifest.dir ?? `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}`}/task-cache.json`;
   const adapter = plugin.app.vault.adapter;
+  const statePath = path.replace(/task-cache\.json$/, "task-state.json");
   const secrets = Reflect.get(plugin.app, "secretStorage") as
     | App["secretStorage"]
     | undefined;
@@ -14,6 +15,9 @@ export function createTaskService(plugin: Plugin) {
       read: async () =>
         (await adapter.exists(path)) ? adapter.read(path) : null,
       write: (content) => adapter.write(path, content),
+      readState: async () =>
+        (await adapter.exists(statePath)) ? adapter.read(statePath) : null,
+      writeState: (content) => adapter.write(statePath, content),
       getSecret: (key) => secrets?.getSecret(key) ?? null,
       setSecret: (key, value) => {
         if (!secrets)

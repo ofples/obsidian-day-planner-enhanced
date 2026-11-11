@@ -14,9 +14,14 @@ const snapshot: TaskSnapshot = {
 async function setup() {
   let disk: string | null = null;
   let secret: string | null = null;
+  let registry: string | null = null;
   const read = vi.fn(async () => structuredClone(snapshot));
   const storage = {
     read: async () => disk,
+    readState: async () => registry,
+    writeState: async (value: string) => {
+      registry = value;
+    },
     write: async (value: string) => {
       disk = value;
     },

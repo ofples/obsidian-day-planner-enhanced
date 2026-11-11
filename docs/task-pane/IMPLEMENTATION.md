@@ -46,9 +46,10 @@ Completion requires acceptance evidence for the supported workflows, a pushed br
 
 - M0 complete. Eight boards were reviewed across three passes. Targeted revisions corrected connection, capture, recurring occurrence, conflict, schedule-chip and count inconsistencies.
 - M1 browser foundation implemented. Provider reads, SecretStorage connection, complete cached snapshots, account validation, lifecycle guards, date/project grouping, search, tree folding, read-only details and pane reopening work in an isolated desktop vault. Live reads loaded a complete account snapshot. Seventeen focused regression tests pass. Remaining M1 acceptance covers exhaustive keyboard/popout behavior and connection-dialog account-switch presentation, with working-vault installation scheduled in M6.
-- M2–M6 planned.
+- M2 editing foundation implemented. A versioned registry persists intent before provider writes. Todoist commands reuse saved UUIDs across uncertain responses and restarts. Native task dialogs support creation, narrow field edits, project moves and subtask creation. The pane supports completion, pending status, retry and reopening completed nonrecurring tasks. Live desktop verification covered those operations with disposable tasks, followed by deletion and authoritative cleanup checks. Mapped Markdown capture and routing remain in M2.
+- M3–M6 planned.
 
-The M1 code exposes browsing and connection actions. Task mutations, #todoist capture, scheduling and full reconciliation follow their dependent milestones. The working vault continues running the calendar baseline.
+The feature worktree exposes browsing, connection and task-editing actions. Markdown capture, scheduling and full reconciliation follow their dependent milestones. The working vault continues running the calendar baseline.
 
 ## Working conventions
 
