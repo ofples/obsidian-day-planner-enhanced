@@ -96,4 +96,8 @@ Restoring an original block reattaches the original Todoist task before capture 
 
 ## Working conventions
 
+### Deferred view validation
+
+The first isolated v8-to-v9 migration preserved the exact original bytes in its content-addressed backup. Live source stability inspection exposed deferred Markdown tabs without editor instances. Stability checks now skip those unloaded views through Obsidian's documented isDeferred API. A lifecycle regression covers deferred tabs alongside a loaded focused/unfocused editor. Full validation has 902 passes and the inherited ICS timeout. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass. Live recovery verification continues against the corrected build.
+
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

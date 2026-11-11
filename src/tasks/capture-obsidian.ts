@@ -64,10 +64,14 @@ export function createTaskCapture(
       composing.size === 0 &&
       !workspace
         .getLeavesOfType("markdown")
-        .some((leaf) => (leaf.view as MarkdownView).editor.hasFocus()),
+        .some(
+          (leaf) =>
+            !leaf.isDeferred && (leaf.view as MarkdownView).editor.hasFocus(),
+        ),
     settings: () => get(settings).taskCapture,
     stable: (candidate) =>
       !workspace.getLeavesOfType("markdown").some((leaf) => {
+        if (leaf.isDeferred) return false;
         const view = leaf.view as MarkdownView;
         if (view.file?.path !== candidate.path) return false;
         return (
