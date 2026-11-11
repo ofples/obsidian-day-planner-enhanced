@@ -266,6 +266,14 @@ Linked-note cases preserve timed parent/child text and calendar events, resume a
 
 The seven-file subset has 149 passes. Full validation has 934 passes, one inherited ICS timeout, nine skips and 17 todo cases. Required source checks, the separate strict scorecard and production build pass. Full lint exits at the inherited test failure. Disposable live provider deletion, native confirmation/history and installed v10 migration remain pending at this source checkpoint.
 
+### Live permanent deletion verification
+
+Native controls in the isolated vault opened the custom deletion form for a disposable parent/child tree. The form and 300px pane measured zero horizontal overflow. Cancel retained both tasks and exact note bytes. Native confirmation saved the recovery record and completed Todoist's parent deletion. Individual reads verified root and child absence. The record preserved both descriptions and original task/link identities. Local timed checklist text and the same 45-minute Google event remained, with the child in its description.
+
+Native history review displayed the saved description/subtask and navigated to the retained note. A tagless local child initially produced a redundant recovery notice. The capture correction reserves the archived identity while showing that notice for #todoist capture attempts. Its regression checks the plain checklist before restoring original Markdown. The corrected installed build cleared source issues after full reload. Restoring original fixture bytes then opened the expected saved-deletion review, created no replacement intent and retained completed history through another reload.
+
+The matching v9 migration backup preserved original bytes. Cleanup removed the fixture event and subtree and restored prior Tasks preferences. Final refresh/reload verified task absence, event absence/cancellation, no fixture text, preserved two-task metadata/history, zero pending operations, zero source/reconciliation issues and no task-service error. Full validation has 934 passes, one inherited ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, the separate strict scorecard and production build pass. This closes the explicit provider-delete portion of A36. Provider deletion lacks a conditional tree-version precondition, and unknown completed descendants may have no locally saved details. Exact live feed/exporter checks, recurrence/history and release acceptance remain open.
+
 ### Live missing-source verification
 
 The v8-to-v9 migration retained the original bytes in a matching content-addressed backup. The first desktop check exposed unloaded Markdown views without editor instances. The stability guard now uses Obsidian's isDeferred API before accessing an editor. A dedicated lifecycle regression covers deferred and loaded tabs with focus transitions.
