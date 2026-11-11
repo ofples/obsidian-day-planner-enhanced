@@ -152,6 +152,12 @@ Disposable free-account probes verified the stable task ID, advancing counter, e
 
 Ten focused files have 162 passing cases. Full validation has 974 passes, the inherited ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics and production build pass. Occurrence freezing/history, exact undo, external completion reconciliation, child scheduling and release acceptance continue. This checkpoint supplies command-level evidence for A48–A50, with their full acceptance still pending.
 
+### Installed recurring-command verification
+
+The matching source build was installed in the isolated test vault with a full plugin backup, equal bundle hashes and the exact v10 registry bytes preserved before v11 migration. Native custom-pane search and checkbox input completed a disposable recurring parent. Direct readback confirmed the same task ID, one counter increment, the next date, preserved rule/description, child relationship and one active next task. The pane displayed that task under Tomorrow. Replaying the saved command UUID retained its counter.
+
+A deliberate stale displayed baseline was rejected before another provider completion. Native review disabled the saved completion, selected the current Todoist state and applied that choice. Readback confirmed cancellation of the stale intent and the unchanged counter. Product deletion removed both fixture tasks and retained their recovery record. Final refresh/reload confirmed all contract and pane fixture tasks absent, zero active fixture native calendar echoes, preserved completion readback, zero pending operations/schedules, zero source/reconciliation issues, restored pane preferences and no task-service error. Occurrence freezing/history and exact undo continue under M5.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

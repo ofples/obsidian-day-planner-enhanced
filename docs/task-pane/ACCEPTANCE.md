@@ -86,6 +86,12 @@ Disposable live free-account probes confirmed stable task IDs, advancing counter
 
 Full validation has 974 passes and the inherited inclusive-last-day ICS timeout, with nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics and production build pass. This verifies command groundwork for A48–A50. Full occurrence history, local/calendar freezing, exact occurrence undo, independent children and M6 release acceptance remain pending.
 
+### Installed recurring-command verification
+
+Matching bundle hashes and a full plugin backup preceded installation in the isolated vault. Migration preserved exact v10 registry bytes and loaded v11. Native search and checkbox input completed a disposable parent. Provider readback showed the same task ID, exactly one counter increment, the next date, the preserved repeat rule/description, original child relationship and one active next task. The native pane displayed the next task under Tomorrow. Replaying the original completion UUID retained the counter.
+
+A stale displayed baseline produced an unsent conflict. Native review disabled the saved completion and applied the selected current Todoist state. The stale intent became cancelled while the counter stayed unchanged. Product deletion removed the fixture tree and retained recovery history. Final refresh/reload verified all contract/pane fixture tasks absent, zero active fixture native calendar echoes, preserved completion readback, zero pending operations/schedules, zero source/reconciliation issues, restored pane preferences and no task-service error. This is installed command-level evidence. A47–A50 retain their full occurrence/history and child-workflow requirements.
+
 ## Failure-injection matrix
 
 Exercise each mutation at the boundaries before intent save, after intent save, after local write, after remote success with a lost response, after remote acknowledgment save, after Google write and before operation completion. Restart after every injected failure. Required outcomes are one task per create operation, one event per occurrence, preserved source text and a retriable or explicitly conflicted operation.
