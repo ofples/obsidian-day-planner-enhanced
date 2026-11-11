@@ -10,7 +10,7 @@ The pane opens from a command, a ribbon action or the Day Planner menu. It can b
 
 As a planner, I can open a task's details, edit its title, date, project, labels, priority, description and subtasks, or open it in Todoist. A checkbox completes a task. Scheduled, Date and Duration have separate labels. Schedule chips navigate to the existing note block and date. An unscheduled task has no schedule chip.
 
-Each row shows its title and only the metadata useful in the active grouping. Project names, date chips and sync state fit at 320px pane width. Group counts count unique matching tasks. A matching descendant retains its ancestor context without inflating counts. Source-native ordering breaks ties consistently.
+Each row shows its title and only the metadata useful in the active grouping. Project names, date chips and sync state fit at 320px pane width. Group counts count matching task branches, with a matched parent and its nested children counted once. A matching descendant retains its ancestor context without inflating counts. Undated children stay with their parent's date group. A child with its own date appears under that date. Source-native ordering breaks ties consistently.
 
 ## US-03 Schedule by dragging or keyboard
 

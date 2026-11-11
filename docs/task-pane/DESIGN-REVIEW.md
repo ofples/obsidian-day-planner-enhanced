@@ -28,7 +28,7 @@ Shared error surfaces cover permission loss, rate limit and retry states. Their 
 7. Unschedule used a trash icon. Use calendar-minus and retain the task.
 8. The conflict screen mixed whole-task choices, per-field choices and duplicate commit actions. Use per-field choices with one Apply choices button and no preselected winner.
 9. The narrow context menu foregrounded Delete. Show Schedule, Rename and Open in Todoist. Permanent deletion belongs to its separate explicit workflow.
-10. Counts and visible rows varied across generated boards. Implement counts from unique matching task identities and context ancestors.
+10. Counts and visible rows varied across generated boards. Count matching branches once, with nested children under their matched parent and context ancestors excluded from counts.
 11. Scheduling screenshots alone omitted ambiguous routing and copied links. Add boards for these workflows.
 12. The earlier details concept contained a deadline field. All new screens defer it.
 
@@ -43,6 +43,8 @@ The boards combine alternative screens for review. Actual dialogs appear one at 
 ## Final review
 
 The third pass was visually inspected. Shopping now has a consistent schedule chip and details value. The Markdown examples retain Admin as a local task and show the correct lower Today count. All eight final boards are saved in the gallery. The reviewed flows are ready to guide the staged implementation. The acceptance matrix covers runtime behavior and failure states beyond what a static board can demonstrate.
+
+The first actual desktop pane review exposed undated children appearing in a separate No date group from their dated parent. The implementation now groups those children with the parent and supports folding their tree. Explicitly dated children retain their own date group. Counts track matching branches, consistently with the parent-first mockups.
 
 ## Streamlined implementation decisions
 

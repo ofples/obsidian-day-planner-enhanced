@@ -89,11 +89,19 @@ Use deterministic provider responses for focused regression tests and a real dis
 | Evidence | State | Required record |
 | --- | --- | --- |
 | Baseline source | Confirmed | `82ae46ff` equals origin `feat/google-calendar-sync` |
-| New source checks | Pending | Exact milestone commit, focused tests, TypeScript, full lint, scorecard and build |
+| New source checks | M1 foundation verified | 17 focused passes, 695 full-suite passes, one inherited ICS timeout, TypeScript/Svelte, formatting/style lint, strict scorecard and build pass |
 | Inherited ICS timeout | Known baseline issue | `tests/ical.test.ts`, last visible day inclusive case, independently reproduced on upstream previously |
-| Synthetic desktop acceptance | Pending | Disposable vault, relevant screenshots, keyboard/popout/narrow checks |
-| Live Todoist acceptance | Pending | Disposable tasks, readback and cleanup for each mutation |
+| Synthetic desktop acceptance | M1 partial | Dockable pane, tree folding, cached/disconnected state, search and details inspected. Exhaustive keyboard/popout checks pending |
+| Live Todoist acceptance | M1 reads verified | Complete account snapshot fetched through the new adapter, SecretStorage connection persists across reload, project grouping/search/details work. Mutations pending |
 | Live Google acceptance | Pending | Stable event IDs, one exporter, description/color preservation and cleanup |
 | Working-vault installation | Pending | Matching backup, exact artifact hashes, reload and normal-entry readback |
 
 A passing focused suite establishes its covered behavior. The release record must state the inherited full-suite failure separately from new regressions. Completion requires the product scenarios above and honest evidence for any remaining external limitation.
+
+## M1 foundation evidence
+
+Checked on 2026-11-11 in an isolated desktop profile using Obsidian 1.13.7. Synthetic task data exercised parent trees, inherited grouping, selection and cached disconnected browsing. The provider adapter loaded a complete real account snapshot. Search narrowed the live pane to one task in its correct project/date group. Details opened the same task and exposed its provider link. Reopening the pane preserved the search and grouping. Its measured content width was 276px with zero horizontal overflow. Credentials persisted through plugin reload. Private screenshots and task-cache data are kept in ignored local test output.
+
+Automated M1 tests cover pagination, malformed/repeated/duplicate resources, omission of credentials from snapshots, rejected account switches, failed-refresh cache preservation, disconnect/unload races, refresh coalescing, rate limits, second-writer detection, timezone day grouping, ancestor context, orphans/cycles, tree folding and a 2,000-level tree.
+
+The new worktree initially checked out CRLF text despite LF repository attributes. Normalizing those bytes restored the recorded fixture offsets and formatting checks. The resulting source diff is restricted to the feature files. Full validation still stops at the inherited ICS test. The strict scorecard was run separately and passed.

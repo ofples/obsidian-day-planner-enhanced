@@ -1,0 +1,66 @@
+import { z } from "zod";
+
+export const taskSchema = z.object({
+  id: z.string().min(1),
+  title: z.string(),
+  description: z.string(),
+  projectId: z.string(),
+  parentId: z.string().nullable(),
+  labels: z.array(z.string()),
+  priority: z.number().int().min(1).max(4),
+  completed: z.boolean(),
+  order: z.number(),
+  due: z
+    .object({
+      date: z.string(),
+      recurring: z.boolean(),
+      text: z.string(),
+      timezone: z.string().nullable(),
+    })
+    .nullable(),
+});
+
+export const taskSnapshotSchema = z.object({
+  provider: z.string().min(1),
+  account: z.object({
+    id: z.string().min(1),
+    name: z.string(),
+    timezone: z.string(),
+  }),
+  projects: z.array(
+    z.object({ id: z.string().min(1), name: z.string(), order: z.number() }),
+  ),
+  tasks: z.array(taskSchema),
+  fetchedAt: z.iso.datetime(),
+});
+
+export const taskCacheSchema = z.object({
+  version: z.literal(1),
+  namespace: z.string().regex(/^[a-f0-9]{32}$/),
+  snapshot: taskSnapshotSchema.nullable(),
+});
+
+export type ProviderTask = z.infer<typeof taskSchema>;
+export type TaskSnapshot = z.infer<typeof taskSnapshotSchema>;
+export type TaskCache = z.infer<typeof taskCacheSchema>;
+
+export interface TaskProvider {
+  read(): Promise<TaskSnapshot>;
+}
+
+export interface TaskStorage {
+  read(): Promise<string | null>;
+  write(content: string): Promise<void>;
+  getSecret(key: string): string | null;
+  setSecret(key: string, value: string): void;
+}
+
+export class TaskReadError extends Error {
+  constructor(
+    message: string,
+    readonly retryAt?: number,
+    readonly needsReconnect = false,
+  ) {
+    super(message);
+  }
+}

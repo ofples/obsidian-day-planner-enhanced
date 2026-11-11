@@ -1,0 +1,137 @@
+import {
+  ItemView,
+  Modal,
+  Setting,
+  WorkspaceLeaf,
+  type ViewStateResult,
+} from "obsidian";
+import { mount, unmount } from "svelte";
+import { get, writable } from "svelte/store";
+
+import { taskViewStateSchema } from "../tasks/browser";
+import type { TaskService } from "../tasks/service";
+
+import TasksPane from "./components/tasks-pane.svelte";
+
+export const viewTypeTasks = "planner-tasks";
+
+export class TaskConnectModal extends Modal {
+  constructor(
+    app: ItemView["app"],
+    private readonly service: TaskService,
+  ) {
+    super(app);
+  }
+
+  onOpen() {
+    this.titleEl.setText("Connect Todoist");
+    let token = "";
+    let replaceAccount = false;
+    const status = this.contentEl.createEl("p", { attr: { role: "status" } });
+    new Setting(this.contentEl).setName("API token").addText((text) => {
+      text.inputEl.type = "password";
+      text.inputEl.autocomplete = "off";
+      text.inputEl.setAttribute("aria-label", "Todoist API token");
+      text.onChange((value) => {
+        token = value;
+      });
+    });
+    this.contentEl.createEl("a", {
+      text: "Find your API token",
+      href: "https://app.todoist.com/app/settings/integrations/developer",
+      attr: { target: "_blank", rel: "noopener noreferrer" },
+    });
+    if (get(this.service.state).snapshot)
+      new Setting(this.contentEl)
+        .setName("Switch account")
+        .setDesc(
+          "Allow replacing this connection with a different Todoist account.",
+        )
+        .addToggle((toggle) =>
+          toggle.onChange((value) => {
+            replaceAccount = value;
+          }),
+        );
+    new Setting(this.contentEl)
+      .addButton((button) =>
+        button
+          .setButtonText("Connect")
+          .setCta()
+          .onClick(async () => {
+            button.setDisabled(true);
+            status.setText("Connecting…");
+            try {
+              await this.service.connect(token, replaceAccount);
+              this.close();
+            } catch {
+              status.setText(
+                get(this.service.state).error ||
+                  "Enter a valid Todoist API token and try again.",
+              );
+            } finally {
+              button.setDisabled(false);
+            }
+          }),
+      )
+      .addButton((button) =>
+        button.setButtonText("Cancel").onClick(() => this.close()),
+      );
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+export class TasksView extends ItemView {
+  readonly preferences = writable(taskViewStateSchema.parse({}));
+  private component?: ReturnType<typeof mount>;
+
+  constructor(
+    leaf: WorkspaceLeaf,
+    private readonly service: TaskService,
+  ) {
+    super(leaf);
+  }
+  getViewType() {
+    return viewTypeTasks;
+  }
+  getDisplayText() {
+    return "Tasks";
+  }
+  getIcon() {
+    return "list-todo";
+  }
+  getState() {
+    return get(this.preferences);
+  }
+
+  async setState(state: unknown, result: ViewStateResult) {
+    const parsed = taskViewStateSchema.safeParse(state);
+    this.preferences.set(
+      parsed.success ? parsed.data : taskViewStateSchema.parse({}),
+    );
+    await super.setState(state, result);
+  }
+
+  async onOpen() {
+    this.component = mount(TasksPane, {
+      target: this.contentEl,
+      props: {
+        service: this.service,
+        preferences: this.preferences,
+        connect: () => new TaskConnectModal(this.app, this.service).open(),
+      },
+    });
+    void this.service.refresh();
+    this.registerInterval(
+      window.setInterval(() => {
+        if (this.containerEl.isShown()) void this.service.refresh();
+      }, 60_000),
+    );
+  }
+
+  async onClose() {
+    if (this.component) await unmount(this.component);
+  }
+}

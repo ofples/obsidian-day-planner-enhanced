@@ -46,6 +46,17 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
     const definitions: SettingDefinitionItem[] = [
       this.googleCalendarDefinition(),
       {
+        name: "Tasks",
+        desc: "Connect Todoist and browse tasks beside your schedule.",
+        render: (setting) => {
+          setting.addButton((button) =>
+            button
+              .setButtonText("Open tasks")
+              .onClick(() => this.plugin.openTasks()),
+          );
+        },
+      },
+      {
         name: "Restart Obsidian after changing settings",
         desc: "Any change to the settings requires a restart of Obsidian.",
         searchable: false,

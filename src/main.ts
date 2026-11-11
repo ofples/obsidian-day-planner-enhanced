@@ -71,6 +71,8 @@ import {
 import { VaultFacade } from "./service/vault-facade";
 import { WorkspaceFacade } from "./service/workspace-facade";
 import { type DayPlannerSettings, mergeStoredSettings } from "./settings";
+import { createTaskService } from "./tasks/obsidian";
+import type { TaskService } from "./tasks/service";
 import { createGetTasksApi } from "./tasks-plugin";
 import type { EditableTimeBlock, RemoteTimeBlock } from "./time-block-types";
 import type { ObsidianContext, OnUpdateFn, PointerDateTime } from "./types";
@@ -86,6 +88,7 @@ import { DayPlannerReleaseNotesView } from "./ui/release-notes";
 import { ScheduleExportModal } from "./ui/schedule-export-modal";
 import { DayPlannerSettingsTab } from "./ui/settings-tab";
 import { mountStatusBarWidget } from "./ui/status-bar-widget";
+import { TasksView, viewTypeTasks } from "./ui/tasks-view";
 import {
   createTimeTrackerCommandCheck,
   createTimeTrackerViewSynchronizer,
@@ -107,6 +110,7 @@ import { createBackgroundBatchScheduler } from "./util/scheduler";
 
 export default class DayPlanner extends Plugin {
   googleCalendarSync!: GoogleCalendarSync;
+  taskService!: TaskService;
   getSettings!: () => DayPlannerSettings;
   private settingsStore!: Writable<DayPlannerSettings>;
   private workspaceFacade!: WorkspaceFacade;
@@ -244,6 +248,27 @@ export default class DayPlanner extends Plugin {
     });
 
     this.initSettingsStore({ initialSettings, dispatch });
+    this.taskService = createTaskService(this);
+    try {
+      await this.taskService.initialize();
+      this.register(() => this.taskService.stop());
+      this.registerView(
+        viewTypeTasks,
+        (leaf) => new TasksView(leaf, this.taskService),
+      );
+      this.addCommand({
+        id: "show-tasks",
+        name: "Show tasks",
+        callback: () => this.openTasks(),
+      });
+      this.addRibbonIcon("list-todo", "Open tasks", () => {
+        void this.openTasks();
+      });
+    } catch {
+      new Notice(
+        "Tasks could not load its cache. Restore the task cache backup and reopen this vault.",
+      );
+    }
     this.googleCalendarSync = new GoogleCalendarSync(
       this,
       this.periodicNotes,
@@ -431,6 +456,15 @@ export default class DayPlanner extends Plugin {
         await this.showReleaseNotes();
       });
     }
+  }
+
+  async openTasks() {
+    const existing = this.app.workspace.getLeavesOfType(viewTypeTasks)[0];
+    const leaf = existing ?? this.app.workspace.getLeftLeaf(false);
+    if (!leaf) return;
+    if (!existing)
+      await leaf.setViewState({ type: viewTypeTasks, active: true });
+    await this.app.workspace.revealLeaf(leaf);
   }
 
   private registerCommands() {

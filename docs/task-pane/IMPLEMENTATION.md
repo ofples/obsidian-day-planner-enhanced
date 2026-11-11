@@ -45,8 +45,10 @@ Completion requires acceptance evidence for the supported workflows, a pushed br
 ## Current progress
 
 - M0 complete. Eight boards were reviewed across three passes. Targeted revisions corrected connection, capture, recurring occurrence, conflict, schedule-chip and count inconsistencies.
-- M1 starting after the reviewed design package commit.
+- M1 browser foundation implemented. Provider reads, SecretStorage connection, complete cached snapshots, account validation, lifecycle guards, date/project grouping, search, tree folding, read-only details and pane reopening work in an isolated desktop vault. Live reads loaded a complete account snapshot. Seventeen focused regression tests pass. Remaining M1 acceptance covers exhaustive keyboard/popout behavior and connection-dialog account-switch presentation, with working-vault installation scheduled in M6.
 - M2–M6 planned.
+
+The M1 code exposes browsing and connection actions. Task mutations, #todoist capture, scheduling and full reconciliation follow their dependent milestones. The working vault continues running the calendar baseline.
 
 ## Working conventions
 

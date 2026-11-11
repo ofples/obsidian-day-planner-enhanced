@@ -57,5 +57,15 @@
       "file": "08-task-creation-and-date-changes.png",
       "prompt": "Use case ui-mockup. High-fidelity Obsidian desktop dark theme, crisp Inter/system sans, charcoal #1e1e1e / #252525, off-white readable text, subtle hairlines, rounded checkboxes, small outline icons, muted blue, green, gray and purple planner blocks. Match the attached reference's restrained native Obsidian design. New synthetic tasks only. No ID strings, code metadata, technical engine text, decorative dashboards or device frames. Create a landscape design board with TWO clearly separated app screenshot panels, each with a narrow caption above the screenshot. Both panels must have legible concise UI and align all fields and time slots. Each panel is approximately 1100 pixels wide at high fidelity.  Panel A caption 'New task and routing'. A compact New task modal with title 'Buy plant ties', Project dropdown Karma, Date No date, Labels errands, Subtasks Add subtask, buttons Cancel and Add task. Adjacent small inline Markdown capture popover for '#todoist #work #karma' says 'Choose a project' with Work and Karma options because two project tags match, quiet 'Task stays local until resolved'. Panel B caption 'Date-only changes and scheduling'. Task details Review notes has Project Work, Date Tomorrow, Scheduled Tomorrow 14:00–14:30, duration 30 min and Open in Todoist. A native dialog 'Move scheduled task' shows destination Tomorrow, keep time 14:00 selected, buttons Cancel and Move. Small secondary callout 'No date' with action Remove from schedule. No deadlines. Distinguish Todoist date grouping from explicit schedule time using clear field labels."
     }
+  ],
+  "finalCorrections": [
+    {
+      "file": "02-browse-search-and-task-details.png",
+      "prompt": "Make one precise correction to this Obsidian design board. In the RIGHT screenshot Shopping is a scheduled task. Change its Scheduled field from the dash to 'Today 10:00–10:30', and change the Shopping row's right chip from Today to '10:00–10:30'. Preserve the entire remaining board exactly, including shopping subtree, typography, left screenshot, counts, details and buttons."
+    },
+    {
+      "file": "04-markdown-capture-and-linked-editing.png",
+      "prompt": "Make two text corrections to this Obsidian design board, preserving every other pixel and UI element. First, restore the word Admin in the TOP central Markdown line, so the complete first line reads '- [ ] 09:00 - 09:30 Admin #work'. Admin must stay absent from the top left Tasks pane. Second, the BOTTOM left Today group contains Shopping and Write summary, so change its count from 1 to 2. Keep everything else exactly, including clean tags and calendar-minus icons."
+    }
   ]
 }

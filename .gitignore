@@ -16,6 +16,8 @@ TODO.md
 .idea
 data.json
 gcal-state.json
+task-cache.json
+task-state.json
 .env
 .claude
 

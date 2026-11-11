@@ -1,0 +1,465 @@
+<script lang="ts">
+  import {
+    ChevronDown,
+    ChevronRight,
+    Circle,
+    ExternalLink,
+    RefreshCw,
+    Search,
+    X,
+  } from "lucide-svelte";
+  import type { Readable, Writable } from "svelte/store";
+
+  import { taskDay, taskGroups, type TaskViewState } from "../../tasks/browser";
+  import type { TaskBrowserState, TaskService } from "../../tasks/service";
+  import type { ProviderTask } from "../../tasks/types";
+
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Svelte validates these annotated props. ESLint's rune declaration returns any.
+  let {
+    service,
+    preferences,
+    connect,
+  }: {
+    service: TaskService;
+    preferences: Writable<TaskViewState>;
+    connect: () => void;
+  } = $props();
+  const browserState: Readable<TaskBrowserState> = $derived(service.state);
+  const groups = $derived(
+    $browserState.snapshot
+      ? taskGroups($browserState.snapshot, $preferences)
+      : [],
+  );
+  const selected: ProviderTask | undefined = $derived(
+    $browserState.snapshot?.tasks.find(
+      (task) => task.id === $preferences.selectedId,
+    ),
+  );
+  function toggleGroup(id: string) {
+    const collapsed = new Set($preferences.collapsed);
+    if (collapsed.has(id)) collapsed.delete(id);
+    else collapsed.add(id);
+    $preferences = { ...$preferences, collapsed: [...collapsed] };
+  }
+</script>
+
+<section class="task-pane" aria-label="Tasks">
+  <header>
+    <h2>Tasks</h2>
+    <div class="task-source">
+      <span>Todoist</span>
+      <button
+        aria-label="Refresh tasks"
+        disabled={!$browserState.connected ||
+          $browserState.loading ||
+          ($browserState.retryAt ?? 0) > Date.now()}
+        onclick={() => {
+          void service.refresh();
+        }}
+        title="Refresh tasks"><RefreshCw size={17} /></button
+      >
+      <button onclick={connect}
+        >{$browserState.connected ? "Connection" : "Connect"}</button
+      >
+    </div>
+    <div class="task-grouping" aria-label="Group tasks">
+      <button
+        aria-pressed={$preferences.groupBy === "date"}
+        onclick={() => {
+          $preferences = { ...$preferences, groupBy: "date" };
+        }}>Date</button
+      >
+      <button
+        aria-pressed={$preferences.groupBy === "project"}
+        onclick={() => {
+          $preferences = { ...$preferences, groupBy: "project" };
+        }}>Project</button
+      >
+    </div>
+    <label class="task-search"
+      ><Search size={16} /><input
+        aria-label="Search tasks"
+        placeholder="Search tasks"
+        type="search"
+        bind:value={$preferences.query}
+      /></label
+    >
+    {#if $browserState.snapshot}
+      <select
+        aria-label="Filter by project"
+        bind:value={$preferences.projectId}
+      >
+        <option value="">All projects</option>
+        {#each $browserState.snapshot.projects as project (project.id)}<option
+            value={project.id}>{project.name}</option
+          >{/each}
+      </select>
+    {/if}
+  </header>
+  <div class="task-status" aria-live="polite" role="status">
+    {#if $browserState.loading}Refreshing tasks…
+    {:else if $browserState.error}<span>{$browserState.error}</span>
+      {#if $browserState.needsReconnect || !$browserState.connected}
+        <button onclick={connect}>Reconnect</button>
+      {:else}
+        <button
+          disabled={($browserState.retryAt ?? 0) > Date.now()}
+          onclick={() => {
+            void service.refresh();
+          }}>Retry</button
+        >
+      {/if}
+    {:else if !$browserState.connected && $browserState.snapshot}<span
+        >Cached tasks · Disconnected</span
+      >
+    {:else if $browserState.snapshot}<span
+        >{$browserState.snapshot.account.name} · Updated {new Date(
+          $browserState.snapshot.fetchedAt,
+        ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span
+      >{/if}
+  </div>
+  {#if !$browserState.snapshot}
+    <div class="task-empty">
+      <h3>Connect Todoist</h3>
+      <p>Browse your tasks alongside your schedule.</p>
+      <button class="mod-cta" onclick={connect}>Connect Todoist</button>
+    </div>
+  {:else if !groups.length}
+    <div class="task-empty">
+      <p>
+        {$preferences.query || $preferences.projectId
+          ? "No tasks match your filters."
+          : "No active tasks."}
+      </p>
+      {#if $preferences.query || $preferences.projectId}<button
+          onclick={() => {
+            $preferences = { ...$preferences, query: "", projectId: "" };
+          }}>Clear filters</button
+        >{/if}
+    </div>
+  {:else}
+    <div class="task-groups">
+      {#each groups as group (group.id)}
+        <section class="task-group" aria-label={group.label}>
+          <button
+            class="task-group-heading"
+            aria-expanded={!$preferences.collapsed.includes(group.id)}
+            onclick={() => toggleGroup(group.id)}
+          >
+            {#if $preferences.collapsed.includes(group.id)}<ChevronRight
+                size={16}
+              />{:else}<ChevronDown size={16} />{/if}
+            <strong>{group.label}</strong><span>{group.count}</span>
+          </button>
+          {#if !$preferences.collapsed.includes(group.id)}
+            {#each group.rows as row (row.task.id)}
+              <div
+                style:--task-depth={Math.min(row.depth, 6)}
+                class="task-row-container"
+              >
+                {#if row.hasChildren}
+                  <button
+                    class="task-tree-toggle"
+                    aria-expanded={!$preferences.collapsed.includes(
+                      `task:${group.id}:${row.task.id}`,
+                    )}
+                    aria-label={`Toggle subtasks for ${row.task.title}`}
+                    onclick={() =>
+                      toggleGroup(`task:${group.id}:${row.task.id}`)}
+                  >
+                    {#if $preferences.collapsed.includes(`task:${group.id}:${row.task.id}`)}<ChevronRight
+                        size={14}
+                      />{:else}<ChevronDown size={14} />{/if}
+                  </button>
+                {/if}
+                <button
+                  class="task-row"
+                  class:task-context={row.context}
+                  class:task-selected={selected?.id === row.task.id}
+                  onclick={() => {
+                    $preferences = { ...$preferences, selectedId: row.task.id };
+                  }}
+                >
+                  <Circle size={15} />
+                  <span class="task-copy"
+                    ><span>{row.task.title || "Untitled task"}</span><small
+                      >{$browserState.snapshot?.projects.find(
+                        (project) => project.id === row.task.projectId,
+                      )?.name ?? "Unavailable project"}</small
+                    ></span
+                  >
+                  {#if row.task.due}<small class="task-date"
+                      >{taskDay(
+                        row.task,
+                        $browserState.snapshot?.account.timezone ?? "UTC",
+                      )}</small
+                    >{/if}
+                </button>
+              </div>
+            {/each}
+          {/if}
+        </section>
+      {/each}
+    </div>
+  {/if}
+  {#if selected}
+    <section class="task-details" aria-label="Task details">
+      <div class="task-detail-heading">
+        <h3>{selected.title}</h3>
+        <button
+          aria-label="Close task details"
+          onclick={() => {
+            $preferences = { ...$preferences, selectedId: null };
+          }}><X size={17} /></button
+        >
+      </div>
+      <dl>
+        <dt>Project</dt>
+        <dd>
+          {$browserState.snapshot?.projects.find(
+            (project) => project.id === selected.projectId,
+          )?.name ?? "Unavailable project"}
+        </dd>
+        <dt>Date</dt>
+        <dd>{selected.due?.text || selected.due?.date || "No date"}</dd>
+        {#if selected.due?.recurring}<dt>Repeats</dt>
+          <dd>{selected.due.text}</dd>{/if}
+        {#if selected.labels.length}<dt>Labels</dt>
+          <dd>{selected.labels.join(", ")}</dd>{/if}
+      </dl>
+      {#if selected.description}<p class="task-description">
+          {selected.description}
+        </p>{/if}
+      {#if $browserState.snapshot?.provider === "todoist"}<a
+          href={`https://app.todoist.com/app/task/${encodeURIComponent(selected.id)}`}
+          rel="noopener noreferrer"
+          target="_blank"><ExternalLink size={14} /> Open in Todoist</a
+        >{/if}
+    </section>
+  {/if}
+  {#if $browserState.connected}<footer>
+      <button onclick={() => service.disconnect()}>Disconnect Todoist</button>
+    </footer>{/if}
+</section>
+
+<style>
+  .task-pane {
+    display: flex;
+    flex-direction: column;
+
+    min-width: 0;
+    height: 100%;
+
+    font-family: var(--font-interface, "Inter"), system-ui, sans-serif;
+    color: var(--text-normal);
+  }
+
+  header {
+    display: grid;
+    gap: var(--size-4-3);
+    padding: var(--size-4-4);
+    border-bottom: 1px solid var(--background-modifier-border);
+  }
+
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
+
+  h2 {
+    font-size: var(--font-ui-large);
+  }
+
+  button {
+    cursor: pointer;
+    font-family: inherit;
+  }
+
+  input,
+  select {
+    font-family: inherit;
+  }
+
+  .task-row-container {
+    display: flex;
+    align-items: start;
+    padding-inline-start: calc(var(--task-depth) * 14px);
+  }
+
+  .task-tree-toggle {
+    flex-shrink: 0;
+
+    margin-top: var(--size-4-3);
+    padding: var(--size-2-1);
+
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .task-source,
+  .task-grouping,
+  .task-search,
+  .task-detail-heading {
+    display: flex;
+    gap: var(--size-4-2);
+    align-items: center;
+  }
+
+  .task-source span {
+    flex: 1;
+  }
+
+  .task-grouping button[aria-pressed="true"] {
+    background: var(--background-modifier-hover);
+  }
+
+  .task-search input {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .task-status {
+    padding: var(--size-4-2) var(--size-4-4);
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+  }
+
+  .task-status:empty {
+    display: none;
+  }
+
+  .task-status button {
+    margin-top: var(--size-4-2);
+  }
+
+  .task-empty {
+    display: grid;
+    gap: var(--size-4-4);
+    justify-items: start;
+    padding: var(--size-4-6);
+  }
+
+  .task-groups {
+    overflow: auto;
+    flex: 1;
+    min-height: 100px;
+  }
+
+  .task-group {
+    padding: var(--size-4-2);
+    border-bottom: 1px solid var(--background-modifier-border);
+  }
+
+  .task-group-heading {
+    display: flex;
+    gap: var(--size-4-2);
+    align-items: center;
+
+    width: 100%;
+
+    text-align: start;
+
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .task-group-heading span {
+    color: var(--text-muted);
+  }
+
+  .task-row {
+    display: flex;
+    gap: var(--size-4-2);
+    align-items: start;
+
+    width: 100%;
+    height: auto;
+    padding: var(--size-4-3);
+
+    text-align: start;
+
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .task-row > :global(svg) {
+    flex-shrink: 0;
+    margin-top: 3px;
+    color: var(--text-muted);
+  }
+
+  .task-copy {
+    display: grid;
+    flex: 1;
+    gap: var(--size-2-1);
+
+    min-width: 0;
+
+    overflow-wrap: anywhere;
+  }
+
+  .task-copy small,
+  .task-date {
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+  }
+
+  .task-date {
+    flex-shrink: 0;
+  }
+
+  .task-row:hover,
+  .task-selected {
+    background: var(--background-modifier-hover);
+  }
+
+  .task-context .task-copy {
+    color: var(--text-muted);
+  }
+
+  .task-details {
+    overflow: auto;
+    max-height: 45%;
+    padding: var(--size-4-4);
+    border-top: 1px solid var(--background-modifier-border);
+  }
+
+  .task-detail-heading h3 {
+    flex: 1;
+    font-size: var(--font-ui-medium);
+    overflow-wrap: anywhere;
+  }
+
+  dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--size-4-2) var(--size-4-4);
+    font-size: var(--font-ui-small);
+  }
+
+  dt {
+    color: var(--text-muted);
+  }
+
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .task-description {
+    margin-block: var(--size-4-3);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  a {
+    display: inline-flex;
+    gap: var(--size-4-2);
+    align-items: center;
+  }
+
+  footer {
+    padding: var(--size-4-2) var(--size-4-4);
+  }
+</style>
