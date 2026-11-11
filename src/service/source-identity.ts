@@ -4,6 +4,10 @@ export interface SourceIdentity {
   from: number;
 }
 
+export function nativeSourceBlockId(raw: string) {
+  return raw.split(/\r?\n/)[0]?.match(/\s\^([\w-]+)\s*$/)?.[1];
+}
+
 export function locateSource(
   text: string,
   source: { raw: string; from?: number },
@@ -69,13 +73,11 @@ export function resolveSourceIdentities<T extends SourceIdentity>(
         assign(uid, candidate);
     }
   };
-  const blockId = (raw: string) =>
-    raw.split(/\r?\n/)[0]?.match(/\s\^([\w-]+)\s*$/)?.[1];
   matchUnique(
     (old, next) =>
       old.path === next.path &&
-      Boolean(blockId(old.raw)) &&
-      blockId(old.raw) === blockId(next.raw),
+      Boolean(nativeSourceBlockId(old.raw)) &&
+      nativeSourceBlockId(old.raw) === nativeSourceBlockId(next.raw),
   );
   matchUnique((old, next) => old.raw === next.raw);
   options.matchers.forEach(matchUnique);

@@ -370,7 +370,10 @@ export function planTaskReconciliation(input: NotePlanInput) {
       raw !== candidate.raw ||
       mutations.length > 0 ||
       !sameInterval(interval, baseline) ||
-      Boolean(interval && (link.noteBase ?? link.source).raw !== candidate.raw),
+      Boolean(
+        interval && (link.noteBase ?? link.source).raw !== candidate.raw,
+      ) ||
+      Boolean(interval && !projection?.googleUid),
   };
 }
 
@@ -753,6 +756,7 @@ export class TaskReconciler {
     if (!this.current(snapshot)) return;
     if (get(this.capture.state).error)
       throw new TaskReadError(get(this.capture.state).error);
+    const inspection = await this.capture.inspectCurrentIdentities();
     let blocks: LocalBlock[] | undefined;
     for (const uid of Object.keys(this.service.registry.snapshot().links)) {
       if (!this.current(snapshot)) return;
@@ -782,12 +786,28 @@ export class TaskReconciler {
         )
       )
         continue;
-      const candidate = this.capture
-        .candidates()
-        .find((candidate) => candidate.uid === uid);
+      const candidate = inspection.candidates.find(
+        (candidate) => candidate.uid === uid,
+      );
       if (!candidate) {
-        const identityIssue = get(this.capture.state).identityIssues.find(
-          (issue) => issue.uids.includes(uid),
+        const missing = await this.capture.missingSource(uid, inspection);
+        if (missing === undefined) continue;
+        if (missing && this.current(snapshot)) {
+          await this.scheduler.reconcile({
+            linkUid: uid,
+            task: link.base,
+            source: link.source,
+            raw: link.source.raw,
+            interval: state.projections[uid]?.interval ?? null,
+            mutations: [],
+            expectedLink: link,
+            unlink: true,
+            missingSource: missing,
+          });
+          continue;
+        }
+        const identityIssue = inspection.identityIssues.find((issue) =>
+          issue.uids.includes(uid),
         );
         await this.issue(
           uid,

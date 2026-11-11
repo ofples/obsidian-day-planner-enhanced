@@ -1,8 +1,15 @@
 import { get, writable } from "svelte/store";
 
-import { resolveSourceIdentities } from "../service/source-identity";
+import {
+  nativeSourceBlockId,
+  resolveSourceIdentities,
+} from "../service/source-identity";
 
-import { captureTitle, type CaptureCandidate } from "./capture-parser";
+import {
+  captureTitle,
+  parseCaptureCandidates,
+  type CaptureCandidate,
+} from "./capture-parser";
 import {
   capturePathEnabled,
   taskAccountSettings,
@@ -14,6 +21,7 @@ import type { TaskService } from "./service";
 import { TaskReadError, type TaskSnapshot } from "./types";
 
 export interface CaptureIssue {
+  kind?: "identity";
   candidate: CaptureCandidate;
   message: string;
 }
@@ -21,6 +29,15 @@ export interface TaskIdentityIssue {
   path: string;
   uids: string[];
   message: string;
+  candidate?: CaptureCandidate;
+}
+
+function restoresSource(source: TaskSource, candidate: TaskSource) {
+  const blockId = nativeSourceBlockId(source.raw);
+  return blockId
+    ? nativeSourceBlockId(candidate.raw) === blockId
+    : source.raw.replace(/\r\n/g, "\n") ===
+        candidate.raw.replace(/\r\n/g, "\n");
 }
 
 export function routeCapture(
@@ -96,6 +113,8 @@ export class TaskCapture {
     private readonly host: {
       candidates(): CaptureCandidate[];
       ready?(): boolean;
+      paths?(): string[];
+      stableMissing?(): boolean;
       read(path: string): Promise<string | null>;
       stable(candidate: CaptureCandidate): boolean;
       settings(): TaskCaptureSettings;
@@ -127,15 +146,46 @@ export class TaskCapture {
     });
   }
 
-  inspectIdentities() {
-    const candidates = structuredClone(this.host.candidates());
+  inspectIdentities(input = this.host.candidates()) {
+    const candidates = structuredClone(input);
     const identityIssues: TaskIdentityIssue[] = [];
-    const previous = Object.fromEntries(
-      Object.entries(this.service.registry.snapshot().links).map(
-        ([uid, link]) => [uid, link.source],
-      ),
+    const state = this.service.registry.snapshot();
+    const detached = Object.entries(state.detached).filter(
+      ([, item]) => !item.restoredAt,
     );
-    for (const operation of this.service.registry.snapshot().schedules) {
+    const blocked = new Set<CaptureCandidate>();
+    for (const [uid, item] of detached) {
+      const matches = candidates.filter((candidate) =>
+        restoresSource(item.link.source, candidate),
+      );
+      if (!matches.length) continue;
+      const competing = [
+        ...Object.entries(state.links),
+        ...detached.map(([id, value]) => [id, value.link] as const),
+      ].filter(([, link]) => restoresSource(link.source, matches[0]!));
+      if (matches.length === 1 && competing.length === 1) matches[0]!.uid = uid;
+      else {
+        for (const candidate of matches) blocked.add(candidate);
+        if (
+          !identityIssues.some(
+            (issue) =>
+              issue.candidate?.path === matches[0]!.path &&
+              issue.candidate.from === matches[0]!.from,
+          )
+        )
+          identityIssues.push({
+            path: matches[0]!.path,
+            uids: competing.map(([id]) => id),
+            candidate: matches[0],
+            message:
+              "Several blocks could restore this task link. Keep one original block, then recheck its link.",
+          });
+      }
+    }
+    const previous = Object.fromEntries(
+      Object.entries(state.links).map(([uid, link]) => [uid, link.source]),
+    );
+    for (const operation of state.schedules) {
       if (!["pending", "prepared"].includes(operation.phase)) continue;
       for (const link of operation.plan?.links ?? []) {
         if (
@@ -151,23 +201,27 @@ export class TaskCapture {
       }
     }
     try {
-      resolveSourceIdentities<TaskSource>(candidates, previous, {
-        duplicate:
-          "Several note tasks share the same link. Review their identities before capture.",
-        ambiguous: (path) =>
-          `Task links are ambiguous in ${path}. Restore the previous task text before capturing more tasks there.`,
-        matchers: [
-          (old, next) => old.path === next.path && old.title === next.title,
-        ],
-        onAmbiguous: (path, uids) => {
-          identityIssues.push({
-            path,
-            uids,
-            message:
-              "Several note tasks could match this task. Review its note link.",
-          });
+      resolveSourceIdentities<TaskSource>(
+        candidates.filter((candidate) => !blocked.has(candidate)),
+        previous,
+        {
+          duplicate:
+            "Several note tasks share the same link. Review their identities before capture.",
+          ambiguous: (path) =>
+            `Task links are ambiguous in ${path}. Restore the previous task text before capturing more tasks there.`,
+          matchers: [
+            (old, next) => old.path === next.path && old.title === next.title,
+          ],
+          onAmbiguous: (path, uids) => {
+            identityIssues.push({
+              path,
+              uids,
+              message:
+                "Several note tasks could match this task. Review its note link.",
+            });
+          },
         },
-      });
+      );
     } catch (error) {
       throw new TaskReadError(
         error instanceof Error
@@ -178,7 +232,9 @@ export class TaskCapture {
     const ambiguousPaths = new Set(identityIssues.map((issue) => issue.path));
     return {
       candidates: candidates.filter(
-        (candidate) => candidate.uid || !ambiguousPaths.has(candidate.path),
+        (candidate) =>
+          !blocked.has(candidate) &&
+          (candidate.uid || !ambiguousPaths.has(candidate.path)),
       ),
       identityIssues,
     };
@@ -186,6 +242,96 @@ export class TaskCapture {
 
   candidates() {
     return this.inspectIdentities().candidates;
+  }
+
+  async inspectCurrentIdentities() {
+    const initial = this.inspectIdentities();
+    const links = this.service.registry.snapshot().links;
+    const assigned = new Set(
+      initial.candidates.map((candidate) => candidate.uid),
+    );
+    if (
+      !Object.entries(links).some(
+        ([uid, link]) => link.taskId && link.base && !assigned.has(uid),
+      )
+    )
+      return { ...initial, documents: undefined };
+    const inventory = this.host.paths?.();
+    const paths = [
+      ...new Set([
+        ...(inventory ??
+          this.host.candidates().map((candidate) => candidate.path)),
+        ...Object.values(links).map((link) => link.source.path),
+      ]),
+    ];
+    const documents = new Map<string, string | null>();
+    const unavailable = new Set<string>();
+    for (const path of paths) {
+      try {
+        documents.set(path, await this.host.read(path));
+      } catch {
+        unavailable.add(path);
+      }
+    }
+    const changedInventory =
+      this.host.paths &&
+      JSON.stringify(inventory!.toSorted()) !==
+        JSON.stringify(this.host.paths().toSorted());
+    const candidates = [...documents].flatMap(([path, text]) =>
+      text === null ? [] : parseCaptureCandidates(path, text),
+    );
+    const inspection = this.inspectIdentities(candidates);
+    if (unavailable.size || changedInventory) {
+      const uncertain = new Set(
+        Object.entries(links)
+          .filter(
+            ([uid, link]) =>
+              unavailable.has(link.source.path) ||
+              !inspection.candidates.some((candidate) => candidate.uid === uid),
+          )
+          .map(([uid]) => uid),
+      );
+      return {
+        candidates: inspection.candidates.filter(
+          (candidate) => candidate.uid && !uncertain.has(candidate.uid),
+        ),
+        identityIssues: [
+          ...inspection.identityIssues,
+          ...Object.entries(links)
+            .filter(([uid]) => uncertain.has(uid))
+            .map<TaskIdentityIssue>(([uid, link]) => ({
+              path: link.source.path,
+              uids: [uid],
+              message:
+                "A note is unavailable or still indexing. Recheck its link after the notes are ready.",
+            })),
+        ],
+        documents: undefined,
+      };
+    }
+    return { ...inspection, documents };
+  }
+
+  async missingSource(
+    uid: string,
+    inspection: Awaited<ReturnType<TaskCapture["inspectCurrentIdentities"]>>,
+  ) {
+    if (!this.ready() || this.host.stableMissing?.() === false)
+      return undefined;
+    if (
+      inspection.candidates.some((candidate) => candidate.uid === uid) ||
+      inspection.identityIssues.some((issue) => issue.uids.includes(uid))
+    )
+      return null;
+    const link = this.service.registry.snapshot().links[uid];
+    if (!link || !inspection.documents?.has(link.source.path)) return null;
+    const document = inspection.documents.get(link.source.path)!;
+    if (
+      (await this.host.read(link.source.path)) !== document ||
+      this.host.stableMissing?.() === false
+    )
+      return undefined;
+    return { document };
   }
 
   ready() {
@@ -210,14 +356,106 @@ export class TaskCapture {
 
   private async scanStable() {
     const browser = get(this.service.state);
-    if (
-      !browser.writable ||
-      !browser.snapshot ||
-      !this.host.settings().enabled ||
-      this.host.ready?.() === false
-    )
+    if (!browser.writable || !browser.snapshot || this.host.ready?.() === false)
       return;
-    const { candidates, identityIssues } = this.inspectIdentities();
+    const { candidates, identityIssues } =
+      await this.inspectCurrentIdentities();
+    const issues: CaptureIssue[] = identityIssues.flatMap((issue) =>
+      issue.candidate
+        ? [
+            {
+              kind: "identity",
+              candidate: issue.candidate,
+              message: issue.message,
+            },
+          ]
+        : [],
+    );
+    const detached = this.service.registry.snapshot().detached;
+    for (const candidate of candidates) {
+      const uid = candidate.uid;
+      if (!uid || !detached[uid] || detached[uid]!.restoredAt) continue;
+      const state = this.service.registry.snapshot();
+      const item = state.detached[uid];
+      if (
+        !uid ||
+        !item ||
+        item.restoredAt ||
+        state.links[uid] ||
+        !(await this.sourceIsCurrent(candidate))
+      )
+        continue;
+      if (
+        item.link.provider !== browser.snapshot.provider ||
+        item.link.accountId !== browser.snapshot.account.id ||
+        state.schedules.some(
+          (operation) =>
+            operation.provider === item.link.provider &&
+            operation.accountId === item.link.accountId &&
+            operation.task.id === item.link.taskId &&
+            !["complete", "cancelled"].includes(operation.phase),
+        ) ||
+        Object.values(state.links).some(
+          (link) =>
+            link.provider === item.link.provider &&
+            link.accountId === item.link.accountId &&
+            link.taskId === item.link.taskId,
+        )
+      ) {
+        issues.push({
+          kind: "identity",
+          candidate,
+          message:
+            "Reconnect the original account and finish this task's saved link recovery before restoring this note.",
+        });
+        continue;
+      }
+      await this.service.registry.change((current) => {
+        const currentBrowser = get(this.service.state);
+        if (
+          this.closed ||
+          !currentBrowser.writable ||
+          currentBrowser.snapshot?.provider !== item.link.provider ||
+          currentBrowser.snapshot.account.id !== item.link.accountId ||
+          JSON.stringify(current.detached[uid]) !== JSON.stringify(item) ||
+          current.links[uid] ||
+          current.schedules.some(
+            (operation) =>
+              operation.provider === item.link.provider &&
+              operation.accountId === item.link.accountId &&
+              operation.task.id === item.link.taskId &&
+              !["complete", "cancelled"].includes(operation.phase),
+          ) ||
+          Object.values(current.links).some(
+            (link) =>
+              link.provider === item.link.provider &&
+              link.accountId === item.link.accountId &&
+              link.taskId === item.link.taskId,
+          )
+        )
+          throw new TaskReadError(
+            "This restored task link changed. Recheck its latest source.",
+          );
+        current.links[uid] = {
+          ...item.link,
+          source: {
+            path: candidate.path,
+            raw: candidate.raw,
+            from: candidate.from,
+            title: candidate.title,
+          },
+        };
+        if (item.projection)
+          current.projections[uid] = {
+            ...item.projection,
+            source: current.links[uid]!.source,
+            googleUid: undefined,
+            googleEventId: undefined,
+          };
+        current.detached[uid]!.restoredAt = new Date().toISOString();
+        delete current.issues[uid];
+      });
+    }
     const links = this.service.registry.snapshot().links;
     const changed = candidates.filter(
       (candidate) =>
@@ -242,7 +480,6 @@ export class TaskCapture {
           };
       });
     }
-    const issues: CaptureIssue[] = [];
     for (const candidate of candidates) {
       if (this.closed || !get(this.service.state).writable) return;
       if (

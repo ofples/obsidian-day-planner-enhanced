@@ -59,6 +59,12 @@ export function createTaskCapture(
       const file = vault.getFileByPath(path);
       return file ? vault.read(file) : null;
     },
+    paths: () => vault.getMarkdownFiles().map((file) => file.path),
+    stableMissing: () =>
+      composing.size === 0 &&
+      !workspace
+        .getLeavesOfType("markdown")
+        .some((leaf) => (leaf.view as MarkdownView).editor.hasFocus()),
     settings: () => get(settings).taskCapture,
     stable: (candidate) =>
       !workspace.getLeavesOfType("markdown").some((leaf) => {

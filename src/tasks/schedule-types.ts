@@ -93,6 +93,7 @@ export const scheduleOperationSchema = z
     unlink: z.boolean().optional(),
     unlinkNoteBase: taskSourceSchema.optional(),
     repairCaptureTag: z.boolean().optional(),
+    missingSource: z.object({ document: z.string().nullable() }).optional(),
     providerChanges: taskPatchSchema.optional(),
     providerSteps: z
       .array(
@@ -143,6 +144,21 @@ export const scheduleOperationSchema = z
     createdAt: z.iso.datetime(),
     error: z.string().optional(),
   })
+  .refine(
+    (operation) =>
+      !operation.missingSource ||
+      (operation.unlink === true &&
+        operation.previous !== undefined &&
+        operation.raw === operation.previous.raw &&
+        operation.plan?.links.length === 1 &&
+        operation.plan.links[0]!.uid === operation.linkUid &&
+        operation.plan.links[0]!.task.id === operation.task.id &&
+        JSON.stringify(operation.plan.links[0]!.source) ===
+          JSON.stringify(operation.previous) &&
+        !operation.plan.edits.length &&
+        !operation.plan.block),
+    { message: "Missing-source recovery retains the note without writing it." },
+  )
   .refine(
     (operation) =>
       !operation.unlink ||

@@ -151,6 +151,7 @@ export class TaskScheduler {
     expectedLink?: TaskLink;
     unlink?: boolean;
     repairCaptureTag?: boolean;
+    missingSource?: { document: string | null };
   }) {
     await this.pending;
     const browser = get(this.service.state),
@@ -203,11 +204,21 @@ export class TaskScheduler {
       unlink: input.unlink,
       unlinkNoteBase: input.unlink ? link.noteBase : undefined,
       repairCaptureTag: input.repairCaptureTag,
+      missingSource: input.missingSource,
       providerSteps: input.mutations.map((step) => ({
         ...step,
         id: crypto.randomUUID(),
       })),
-      phase: "pending",
+      phase: input.missingSource ? "prepared" : "pending",
+      plan: input.missingSource
+        ? {
+            edits: [],
+            links: [
+              { uid: input.linkUid, task: input.task, source: input.source },
+            ],
+            interval: input.interval,
+          }
+        : undefined,
       createdAt: new Date().toISOString(),
     });
     await this.service.registry.change((current) => {
@@ -716,54 +727,40 @@ export class TaskScheduler {
     }
     if (!this.current(operation)) return;
     if (operation.phase === "prepared") {
-      await this.calendar.editNotes(async (notes, blocks) => {
-        if (!this.current(operation)) return;
-        const plan = operation.plan!;
-        const current =
-          plan.block && blocks.find((block) => block.uid === plan.block!.uid);
+      if (operation.missingSource) {
         if (
-          current &&
-          current.raw !== plan.block!.raw &&
-          current.raw !== operation.previous?.raw
-        )
-          throw new TaskProjectionConflict(
-            "The scheduled note changed after it was written. Review its current content before continuing.",
-          );
-        const alreadyApplied = await this.editsApplied(plan.edits);
-        if (plan.block)
-          await notes.applyWrite({ block: plan.block, edits: plan.edits });
-        else if (!alreadyApplied) await notes.applyEdits(plan.edits);
-        if (!this.current(operation)) return;
-        await this.service.registry.change((state) => {
-          for (const link of plan.links)
-            state.links[link.uid] = {
-              provider: operation.provider,
-              accountId: operation.accountId,
-              taskId: link.task.id,
-              source: link.source,
-              noteBase:
-                state.links[link.uid]?.noteBase ??
-                state.links[link.uid]?.source ??
-                link.source,
-              base: state.links[link.uid]?.base ?? link.task,
-            };
-          state.projections[operation.linkUid] = {
-            provider: operation.provider,
-            accountId: operation.accountId,
-            taskId: operation.task.id,
-            linkUid: operation.linkUid,
-            googleUid: plan.interval ? operation.googleUid : undefined,
-            googleEventId: state.projections[operation.linkUid]?.googleEventId,
-            occurrenceKey: operation.occurrenceKey,
-            source: plan.links[0]!.source,
-            interval: plan.interval,
-            base: operation.task,
-          };
-          state.schedules.find((item) => item.id === operation.id)!.phase =
-            "local-applied";
+          (await this.host.read(operation.previous!.path)) !==
+          operation.missingSource.document
+        ) {
+          await this.update(operation.id, {
+            phase: "cancelled",
+            error: undefined,
+          });
+          return;
+        }
+        await this.acknowledgeLocal(operation);
+      } else {
+        await this.calendar.editNotes(async (notes, blocks) => {
+          if (!this.current(operation)) return;
+          const plan = operation.plan!;
+          const current =
+            plan.block && blocks.find((block) => block.uid === plan.block!.uid);
+          if (
+            current &&
+            current.raw !== plan.block!.raw &&
+            current.raw !== operation.previous?.raw
+          )
+            throw new TaskProjectionConflict(
+              "The scheduled note changed after it was written. Review its current content before continuing.",
+            );
+          const alreadyApplied = await this.editsApplied(plan.edits);
+          if (plan.block)
+            await notes.applyWrite({ block: plan.block, edits: plan.edits });
+          else if (!alreadyApplied) await notes.applyEdits(plan.edits);
+          if (!this.current(operation)) return;
+          await this.acknowledgeLocal(operation);
         });
-        this.publish();
-      });
+      }
       operation = this.saved(operation.id);
     }
     if (!this.current(operation)) return;
@@ -895,6 +892,17 @@ export class TaskScheduler {
           ? result.task
           : operation.task;
       const link = state.links[operation.linkUid]!;
+      if (operation.missingSource)
+        state.detached[operation.linkUid] = {
+          reason: "missing",
+          link: {
+            ...link,
+            noteBase: operation.unlinkNoteBase ?? link.noteBase,
+          },
+          projection: state.projections[operation.linkUid],
+          operationId: operation.id,
+          detachedAt: new Date().toISOString(),
+        };
       const fields =
         operation.providerSteps?.flatMap((step) =>
           Object.keys(mutationFields(step.mutation)),
@@ -928,6 +936,41 @@ export class TaskScheduler {
       }
       saved.phase = "calendar-pending";
       saved.error = undefined;
+    });
+    this.publish();
+  }
+
+  private async acknowledgeLocal(operation: ScheduleOperation) {
+    if (!this.current(operation)) return;
+    const plan = operation.plan!;
+    await this.service.registry.change((state) => {
+      if (!this.current(operation)) return;
+      for (const link of plan.links)
+        state.links[link.uid] = {
+          provider: operation.provider,
+          accountId: operation.accountId,
+          taskId: link.task.id,
+          source: link.source,
+          noteBase:
+            state.links[link.uid]?.noteBase ??
+            state.links[link.uid]?.source ??
+            link.source,
+          base: state.links[link.uid]?.base ?? link.task,
+        };
+      state.projections[operation.linkUid] = {
+        provider: operation.provider,
+        accountId: operation.accountId,
+        taskId: operation.task.id,
+        linkUid: operation.linkUid,
+        googleUid: plan.interval ? operation.googleUid : undefined,
+        googleEventId: state.projections[operation.linkUid]?.googleEventId,
+        occurrenceKey: operation.occurrenceKey,
+        source: plan.links[0]!.source,
+        interval: plan.interval,
+        base: operation.task,
+      };
+      state.schedules.find((item) => item.id === operation.id)!.phase =
+        "local-applied";
     });
     this.publish();
   }

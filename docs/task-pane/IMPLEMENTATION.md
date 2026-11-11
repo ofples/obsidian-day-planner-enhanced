@@ -56,7 +56,7 @@ The feature worktree exposes browsing, connection, task editing, tagged Markdown
 
 ### Next reconciliation work
 
-The automatic comparison and journal handle direct timed-note edits, which also receive normal timeline move/resize writes. Both conflict controllers revalidate their latest comparison. Calendar-only retries yield to later edits after durable task acknowledgment. Explicit unlink and tag-removal decisions are implemented below. Complete missing-source handling and remote-delete choices. Verify exact live feed selection and native exporter collision handling. Recurrence and independently scheduled children retain their M5 acceptance requirements.
+The automatic comparison and journal handle direct timed-note edits, which also receive normal timeline move/resize writes. Both conflict controllers revalidate their latest comparison. Calendar-only retries yield to later edits after durable task acknowledgment. Explicit unlink, tag-removal decisions and missing-source recovery are implemented below. Complete permanent remote-delete choices, exact live internet-feed selection and native exporter collision handling. Recurrence and independently scheduled children retain their M5 acceptance requirements.
 
 ### Custom panel implementation
 
@@ -87,6 +87,12 @@ Native drag retests reached trusted entry/over handlers with accepted move effec
 Capture and routing now opens Task calendar feeds inline. The full settings entry reuses the same custom Svelte form. It retains exact Google IDs and internet-feed URLs, unavailable saved selections, the hide-feeds switch and the schedule-to-task-date choice. Google calendar names and IDs distinguish sources. Internet-feed URLs stay out of visible text. Loading and saving validate the original task account, and a late load after closing cannot update another surface. Saves preserve current routing and unrelated settings. Selection arrays are copied into ordinary arrays before settings subscribers dispatch through Redux. Four component cases and one pane-entry case cover exact selections, unavailable sources, cancellation, loading failure/retry, account replacement and concurrent unrelated settings. The calendar-display subset has 24 passing cases. Full validation has 881 passes and the inherited ICS timeout. Required source checks, strict scorecard and production build pass.
 
 Native controls loaded 11 calendars and saved the exact Todoist source. The live display check excluded its two events and retained 32 other events, including after a full isolated-window reload. The affected test settings were restored to their original values. Exact live internet-feed and native-exporter collision checks remain open.
+
+### Missing-source recovery
+
+Registry v9 adds durable missing-link recovery and original-byte migration backup. A fresh note inventory distinguishes a deleted source from stale indexing, moved content and unreadable notes. Existing matches in readable notes continue when another note is unavailable. Missing-source detachment waits for Markdown editing/composition to finish. The coordinator stores a local-only intent, validates the current document, acknowledges detachment and retains the original link/projection in one transaction. Existing calendar predecessors and explicit removals remain retryable.
+
+Restoring an original block reattaches the original Todoist task before capture can create another task. It preserves the common baseline for provider edits made during the gap. Its Google mapping is resolved again through the existing note identity machinery, including after a verified event deletion. Restored copies, active canonical links, account changes and incomplete recovery reserve the candidate for review. A Recheck link action keeps identity review distinct from project routing. Existing link restoration also works with automatic capture disabled. The six-file focused subset has 122 passing cases. Full validation has 901 passes and the inherited ICS timeout. Native/disposable-provider verification follows in the isolated vault.
 
 ## Working conventions
 

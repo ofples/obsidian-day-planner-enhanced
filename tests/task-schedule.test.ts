@@ -56,6 +56,8 @@ async function harness() {
     failCalendar = false,
     loseCalendarResponse = false;
   let stable = true;
+  let failWriteCountdown = 0;
+  const calendarSettings = structuredClone(defaultSettings);
   let calendarState: CalendarSyncState = {
     version: 2,
     namespace: "c".repeat(32),
@@ -112,7 +114,7 @@ async function harness() {
     new ObsidianCalendarNotes(
       app,
       daily,
-      defaultSettings,
+      calendarSettings,
       "2026-11-01T00:00:00Z",
       "2026-12-01T00:00:00Z",
       calendarState,
@@ -252,6 +254,8 @@ async function harness() {
     },
     readState: async () => taskDisk,
     writeState: async (text: string) => {
+      if (failWriteCountdown && --failWriteCountdown === 0)
+        throw new Error("task state interrupted");
       if (failTaskWrite) throw new Error("task state offline");
       taskDisk = text;
     },
@@ -277,6 +281,8 @@ async function harness() {
         ),
       read: host.read,
       stable: () => stable,
+      stableMissing: () => stable,
+      paths: () => [...texts.keys()],
       ready: () => true,
       settings: host.settings,
     });
@@ -324,6 +330,23 @@ async function harness() {
     setStable(value: boolean) {
       stable = value;
     },
+    failWriteAfter(count: number) {
+      failWriteCountdown = count;
+    },
+    async syncCalendar(syncDeletions = false) {
+      calendarSettings.googleCalendar.syncDeletions = syncDeletions;
+      return syncCalendar({
+        state: calendarState,
+        api,
+        notes,
+        save: async () => {
+          calendarDisk = JSON.stringify(calendarState);
+        },
+        timeMin: "2026-11-01T00:00:00Z",
+        timeMax: "2026-12-01T00:00:00Z",
+        importEvents: false,
+      });
+    },
     async settle() {
       await scheduler.resume();
       await vi.waitUntil(() => !get(service.state).loading);
@@ -361,6 +384,310 @@ async function harness() {
 }
 
 describe("linked task scheduling", () => {
+  test("a restored note before missing-source acknowledgment cancels stale detachment", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const p = h.scheduler.projection(root.id)!;
+    const link = h.service.registry.snapshot().links[p.linkUid]!;
+    const before = h.texts.get(p.source.path)!;
+    await h.scheduler.reconcile({
+      linkUid: p.linkUid,
+      task: link.base!,
+      source: link.source,
+      raw: link.source.raw,
+      interval: p.interval,
+      mutations: [],
+      unlink: true,
+      missingSource: { document: "" },
+      expectedLink: link,
+    });
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "cancelled",
+    );
+    expect(h.service.registry.snapshot().detached).toEqual({});
+    expect(h.service.registry.snapshot().links[p.linkUid]).toEqual(link);
+    expect(h.texts.get(p.source.path)).toBe(before);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("provider edits made while a note is deleted reconcile after restoring its original link", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const p = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(p.source.path)!;
+    h.texts.set(p.source.path, before.replace(p.source.raw, ""));
+    await h.reconcile();
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      title: "Remote title",
+      description: "Remote description",
+    });
+    await h.service.refresh();
+    h.texts.set(p.source.path, before);
+    await h.reconcile();
+    expect(h.service.registry.snapshot().links[p.linkUid]?.taskId).toBe(
+      root.id,
+    );
+    expect(h.texts.get(p.source.path)).toContain("Remote title");
+    expect(h.tasks.get(root.id)?.description).toBe("Remote description");
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(
+      p.googleEventId,
+    );
+    expect(h.events.size).toBe(1);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("missing-source journals reject note edits and provider mutations", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const p = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(p.source.path)!;
+    h.texts.set(p.source.path, before.replace(p.source.raw, ""));
+    await h.reconcile();
+    const operation = h.service.registry
+      .snapshot()
+      .schedules.find((x) => x.missingSource)!;
+    for (const patch of [
+      { unlink: false },
+      { raw: "- [ ] Different" },
+      { syncTaskDate: true },
+      { providerChanges: { title: "Unexpected" } },
+      {
+        plan: {
+          ...operation.plan,
+          edits: [{ path: "Other.md", before: "", after: "Unexpected" }],
+        },
+      },
+    ])
+      await expect(
+        h.service.registry.change((state) => {
+          Object.assign(
+            state.schedules.find((x) => x.id === operation.id)!,
+            patch,
+          );
+        }),
+      ).rejects.toThrow();
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("deleting a scheduled subtree detaches its task links and restores their original identities on undo", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path)!;
+    const original = h.service.registry.snapshot().links;
+    const writes = h.apply.mock.calls.length;
+    const noteWrites = h.process.mock.calls.length;
+    const after = before.replace(projection.source.raw, "");
+    h.texts.set(projection.source.path, after);
+    await h.reconcile();
+    expect(h.texts.get(projection.source.path)).toBe(after);
+    expect(h.process).toHaveBeenCalledTimes(noteWrites);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(
+      Object.values(h.service.registry.snapshot().detached)
+        .map((x) => x.link.taskId)
+        .toSorted(),
+    ).toEqual([child.id, root.id].toSorted());
+    expect(get(h.reconciler.state).issues).toEqual([]);
+    await h.restart();
+    h.texts.set(projection.source.path, before);
+    await h.indexNotes();
+    expect(Object.keys(h.service.registry.snapshot().links).toSorted()).toEqual(
+      Object.keys(original).toSorted(),
+    );
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid]?.taskId,
+    ).toBe(root.id);
+    await h.reconcile();
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(
+      projection.googleEventId,
+    );
+    expect(h.events.size).toBe(1);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect(h.texts.get(projection.source.path)).toBe(before);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("restoring a deleted block adopts a fresh calendar identity after verified event deletion", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const old = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(old.source.path)!;
+    h.texts.set(old.source.path, before.replace(old.source.raw, ""));
+    await h.reconcile();
+    await h.syncCalendar(true);
+    expect(h.events.size).toBe(0);
+    expect(h.calendarState.records[old.googleUid!]?.deleted).toBe(true);
+    await h.restart();
+    h.texts.set(old.source.path, before);
+    await h.reconcile();
+    const restored = h.scheduler.projection(root.id)!;
+    expect(restored.linkUid).toBe(old.linkUid);
+    expect(restored.googleUid).not.toBe(old.googleUid);
+    expect(restored.googleEventId).not.toBe(old.googleEventId);
+    expect(h.events.size).toBe(1);
+    expect(h.service.registry.snapshot().links[old.linkUid]?.taskId).toBe(
+      root.id,
+    );
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("a deleted note file detaches its registered tasks without writing or deleting provider tasks", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const writes = h.apply.mock.calls.length;
+    h.texts.delete(projection.source.path);
+    await h.reconcile();
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(
+      h.service.registry.snapshot().detached[projection.linkUid]?.link.taskId,
+    ).toBe(root.id);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect(h.tasks.size).toBe(2);
+    expect(h.texts.has(projection.source.path)).toBe(false);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("missing-source detachment waits while notes are being edited", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    h.texts.set(projection.source.path, "");
+    h.setStable(false);
+    await h.reconcile();
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid]?.taskId,
+    ).toBe(root.id);
+    expect(h.service.registry.snapshot().detached).toEqual({});
+    h.setStable(true);
+    await h.reconcile();
+    expect(h.service.registry.snapshot().links).toEqual({});
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test.each([1, 2, 3])(
+    "missing-source journal resumes after interrupted registry write %i",
+    async (write) => {
+      const h = await harness();
+      await h.scheduler.schedule(root.id, interval);
+      await h.settle();
+      const projection = h.scheduler.projection(root.id)!;
+      const before = h.texts.get(projection.source.path)!;
+      h.texts.set(
+        projection.source.path,
+        before.replace(projection.source.raw, ""),
+      );
+      h.failWriteAfter(write);
+      await h.reconciler.scan();
+      expect(h.tasks.size).toBe(2);
+      await h.restart();
+      await h.settle();
+      await h.reconcile();
+      expect(h.service.registry.snapshot().links).toEqual({});
+      expect(
+        h.service.registry.snapshot().detached[projection.linkUid]?.link.taskId,
+      ).toBe(root.id);
+      h.texts.set(projection.source.path, before);
+      await h.reconcile();
+      expect(
+        h.service.registry.snapshot().links[projection.linkUid]?.taskId,
+      ).toBe(root.id);
+      expect(h.events.size).toBe(1);
+      h.scheduler.stop();
+      h.reconciler.stop();
+      h.service.stop();
+    },
+  );
+
+  test("deletion during an uncertain calendar export retains recovery through restart and undo", async () => {
+    const h = await harness();
+    h.setLoseCalendarResponse(true);
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path)!;
+    const eventId = [...h.events.keys()][0]!;
+    h.texts.set(
+      projection.source.path,
+      before.replace(projection.source.raw, ""),
+    );
+    await h.reconcile();
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(
+      h.service.registry.snapshot().schedules.find((x) => x.missingSource)
+        ?.phase,
+    ).toBe("calendar-pending");
+    h.texts.set(projection.source.path, before);
+    await h.indexNotes();
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeUndefined();
+    await h.restart();
+    h.setLoseCalendarResponse(false);
+    h.setFailCalendar(false);
+    await h.settle();
+    await h.reconcile();
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(eventId);
+    expect(h.events.size).toBe(1);
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid]?.taskId,
+    ).toBe(root.id);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("ambiguous restored copies require a link decision and create no replacement Todoist task", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path)!;
+    h.texts.set(
+      projection.source.path,
+      before.replace(projection.source.raw, ""),
+    );
+    await h.reconcile();
+    const writes = h.apply.mock.calls.length;
+    h.texts.set(projection.source.path, before + "\n" + projection.source.raw);
+    await h.indexNotes();
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    h.texts.set(projection.source.path, before);
+    await h.reconcile();
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid]?.taskId,
+    ).toBe(root.id);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
   test("capture-tag removal pauses propagation until keeping the link restores independent edits", async () => {
     const h = await harness();
     await h.scheduler.schedule(root.id, interval);

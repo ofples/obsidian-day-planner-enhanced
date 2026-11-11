@@ -578,11 +578,14 @@
                 >{issue.message}</small
               >
             </div>
-            <button
-              class="task-text-button"
-              onclick={() => startAction({ kind: "route", issue })}
-              >Choose project</button
-            >
+            {#if issue.kind === "identity"}<button
+                class="task-text-button"
+                onclick={() => capture.scan()}>Recheck link</button
+              >{:else}<button
+                class="task-text-button"
+                onclick={() => startAction({ kind: "route", issue })}
+                >Choose project</button
+              >{/if}
           </div>{/each}
         {#each $browserState.operations as operation (operation.id)}<div
             class="task-review-row"

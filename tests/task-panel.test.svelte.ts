@@ -13,6 +13,7 @@ import {
 import { defaultSettingsForTests } from "../src/settings";
 import { taskViewStateSchema } from "../src/tasks/browser";
 import type { TaskCapture } from "../src/tasks/capture";
+import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 import type { TaskOperation } from "../src/tasks/operations";
 import type { TaskReconciler } from "../src/tasks/reconcile";
 import type { TaskBrowserState, TaskService } from "../src/tasks/service";
@@ -98,7 +99,7 @@ function render(
     }),
   );
   flushSync();
-  return { target, state, action, mutate, fallbackSettings };
+  return { target, state, action, mutate, fallbackSettings, capture };
 }
 
 function press(element: EventTarget, key: string, isComposing = false) {
@@ -114,6 +115,32 @@ function press(element: EventTarget, key: string, isComposing = false) {
 }
 
 describe("custom Tasks panel", () => {
+  test("restored identity issues offer a recheck without entering project capture", () => {
+    const h = render();
+    h.capture.state.set({
+      issues: [
+        {
+          kind: "identity",
+          candidate: parseCaptureCandidates(
+            "Tasks.md",
+            "- [ ] Shopping #todoist",
+          )[0]!,
+          message: "Keep one original block, then recheck its link.",
+        },
+      ],
+      identityIssues: [],
+      error: "",
+    });
+    flushSync();
+    const buttons = Array.from(h.target.querySelectorAll("button"));
+    expect(
+      buttons.some((button) => button.textContent === "Choose project"),
+    ).toBe(false);
+    buttons.find((button) => button.textContent === "Recheck link")!.click();
+    flushSync();
+    expect(h.capture.scan).toHaveBeenCalledOnce();
+    expect(get(h.action)).toBeNull();
+  });
   test("capture settings opens calendar feeds in the same custom panel", () => {
     const h = render({ kind: "settings" });
     const button = Array.from(h.target.querySelectorAll("button")).find(

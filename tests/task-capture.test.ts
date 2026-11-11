@@ -98,6 +98,144 @@ async function setup(initial = "- [ ] Buy rice #todoist #karma") {
 }
 
 describe("tagged task capture", () => {
+  test.each(["capture-disabled", "other-account", "already-linked"])(
+    "restoration respects %s and never creates a replacement task",
+    async (mode) => {
+      const h = await setup();
+      await h.capture.scan();
+      await h.service.refresh();
+      await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+      const [uid, link] = Object.entries(
+        h.service.registry.snapshot().links,
+      )[0]!;
+      const extra = "- [ ] Another reference #todoist";
+      await h.service.registry.change((state) => {
+        state.detached[uid] = {
+          reason: "missing",
+          link,
+          operationId: crypto.randomUUID(),
+          detachedAt: new Date().toISOString(),
+        };
+        delete state.links[uid];
+        if (mode === "already-linked")
+          state.links.other = {
+            ...link,
+            source: parseCaptureCandidates("Other.md", extra)[0]!,
+          };
+      });
+      if (mode === "other-account")
+        h.service.state.update((state) => ({
+          ...state,
+          snapshot: {
+            ...state.snapshot!,
+            account: { ...state.snapshot!.account, id: "other" },
+          },
+        }));
+      const capture = new TaskCapture(h.service, {
+        ...h.host,
+        candidates: () => [
+          ...h.host.candidates(),
+          ...(mode === "already-linked"
+            ? parseCaptureCandidates("Other.md", extra)
+            : []),
+        ],
+        read: async (path) => (path === "Other.md" ? extra : link.source.raw),
+        settings: () =>
+          taskCaptureSettingsSchema.parse({
+            enabled: mode !== "capture-disabled",
+          }),
+      });
+      await capture.scan();
+      expect(h.apply).toHaveBeenCalledTimes(1);
+      if (mode === "capture-disabled")
+        expect(h.service.registry.snapshot().links[uid]?.taskId).toBe(
+          link.taskId,
+        );
+      else {
+        expect(h.service.registry.snapshot().links[uid]).toBeUndefined();
+        expect(get(capture.state).issues[0]?.kind).toBe("identity");
+      }
+      h.service.stop();
+    },
+  );
+  test("a moved source is read across current note paths before a stale index can capture it twice", async () => {
+    const h = await setup();
+    await h.capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    const [uid, link] = Object.entries(h.service.registry.snapshot().links)[0]!;
+    const capture = new TaskCapture(h.service, {
+      ...h.host,
+      candidates: () => [],
+      paths: () => ["Tasks.md", "Moved.md"],
+      read: async (path) => (path === "Moved.md" ? link.source.raw : ""),
+    });
+    await capture.scan();
+    expect(h.service.registry.snapshot().links[uid]?.source.path).toBe(
+      "Moved.md",
+    );
+    expect(h.apply).toHaveBeenCalledTimes(1);
+    expect(get(capture.state).error).toBe("");
+    h.service.stop();
+  });
+
+  test("an unavailable note prevents missing-source proof while preserving known readable links", async () => {
+    const h = await setup("- [ ] First #todoist\n- [ ] Second #todoist");
+    await h.capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    const original = h.service.registry.snapshot().links;
+    const first = Object.entries(original).find(([, link]) =>
+      link.source.title.startsWith("First"),
+    )!;
+    const second = Object.entries(original).find(([, link]) =>
+      link.source.title.startsWith("Second"),
+    )!;
+    const capture = new TaskCapture(h.service, {
+      ...h.host,
+      candidates: () => [],
+      paths: () => ["Tasks.md", "Unavailable.md"],
+      read: async (path) => {
+        if (path === "Unavailable.md") throw Error("note unavailable");
+        return first[1].source.raw + "\n\n- [ ] New #todoist";
+      },
+    });
+    await capture.scan();
+    const inspection = await capture.inspectCurrentIdentities();
+    expect(inspection.candidates.map((candidate) => candidate.uid)).toEqual([
+      first[0],
+    ]);
+    expect(await capture.missingSource(second[0], inspection)).toBeNull();
+    expect(h.service.registry.snapshot().links).toEqual(original);
+    expect(h.apply).toHaveBeenCalledTimes(2);
+    h.service.stop();
+  });
+
+  test("two archived identical links produce one review item and no new provider task", async () => {
+    const h = await setup("- [ ] Same #todoist\n- [ ] Same #todoist");
+    await h.capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    await h.service.registry.change((state) => {
+      for (const [uid, link] of Object.entries(state.links)) {
+        state.detached[uid] = {
+          reason: "missing",
+          link,
+          operationId: crypto.randomUUID(),
+          detachedAt: new Date().toISOString(),
+        };
+        delete state.links[uid];
+      }
+    });
+    h.setText("- [ ] Same #todoist");
+    await h.capture.scan();
+    expect(get(h.capture.state).issues).toHaveLength(1);
+    expect(get(h.capture.state).issues[0]?.kind).toBe("identity");
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(h.apply).toHaveBeenCalledTimes(2);
+    h.service.stop();
+  });
+
   test("ambiguous note edits preserve links and allow capture in another note", async () => {
     const h = await setup("- [ ] First #todoist\n- [ ] Second #todoist");
     await h.capture.scan();

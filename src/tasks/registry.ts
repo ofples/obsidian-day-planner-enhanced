@@ -19,6 +19,29 @@ export const taskLinkSchema = z.object({
   base: taskSchema.nullable(),
 });
 
+const detachedTaskLinkSchema = z
+  .object({
+    reason: z.literal("missing"),
+    link: taskLinkSchema,
+    projection: taskProjectionSchema.optional(),
+    operationId: z.uuid(),
+    detachedAt: z.iso.datetime(),
+    restoredAt: z.iso.datetime().optional(),
+  })
+  .refine(
+    (item) =>
+      item.link.taskId !== null &&
+      item.link.base?.id === item.link.taskId &&
+      (!item.projection ||
+        (item.projection.provider === item.link.provider &&
+          item.projection.accountId === item.link.accountId &&
+          item.projection.taskId === item.link.taskId)),
+    {
+      message:
+        "Detached task links retain their original account and task identity.",
+    },
+  );
+
 const taskReconcileIssueSchema = z.object({
   id: z.uuid(),
   provider: z.string(),
@@ -33,13 +56,14 @@ const taskReconcileIssueSchema = z.object({
 export type TaskReconcileIssue = z.infer<typeof taskReconcileIssueSchema>;
 
 const taskRegistrySchema = z.object({
-  version: z.literal(8),
+  version: z.literal(9),
   namespace: z.string().regex(/^[a-f0-9]{32}$/),
   operations: z.array(taskOperationSchema),
   links: z.record(z.string(), taskLinkSchema),
   schedules: z.array(scheduleOperationSchema),
   projections: z.record(z.string(), taskProjectionSchema),
   issues: z.record(z.string(), taskReconcileIssueSchema),
+  detached: z.record(z.string(), detachedTaskLinkSchema),
 });
 
 const legacyRegistrySchema = taskRegistrySchema.extend({
@@ -51,10 +75,12 @@ const legacyRegistrySchema = taskRegistrySchema.extend({
     z.literal(5),
     z.literal(6),
     z.literal(7),
+    z.literal(8),
   ]),
   schedules: z.array(scheduleOperationSchema).default([]),
   projections: z.record(z.string(), taskProjectionSchema).default({}),
   issues: z.record(z.string(), taskReconcileIssueSchema).default({}),
+  detached: z.record(z.string(), detachedTaskLinkSchema).default({}),
 });
 
 export type TaskRegistryState = z.infer<typeof taskRegistrySchema>;
@@ -82,19 +108,20 @@ export class TaskRegistry {
     this.state =
       this.lastSaved === null
         ? {
-            version: 8,
+            version: 9,
             namespace: this.namespace,
             operations: [],
             links: {},
             schedules: [],
             projections: {},
             issues: {},
+            detached: {},
           }
         : taskRegistrySchema.parse(
             legacy.success
               ? {
                   ...legacy.data,
-                  version: 8,
+                  version: 9,
                   links: Object.fromEntries(
                     Object.entries(legacy.data.links).map(([uid, link]) => [
                       uid,
