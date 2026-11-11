@@ -2,6 +2,16 @@
 
 This development fork adds **Google Calendar two-way sync for daily-note time blocks**. See [setup, behavior and verification status](GOOGLE-CALENDAR.md). The sync is optional and automatic synchronization is off by default. Upstream project: [jagaldol/obsidian-day-planner-enhanced](https://github.com/jagaldol/obsidian-day-planner-enhanced).
 
+### Share a schedule
+
+Open the timeline's **More options** menu (or the pane menu in a regular tab) and choose **Export schedule as PNG…**. Preview the selected day, choose whether to include subtasks, then click **Save PNG**. The image is saved in the vault's `Schedule Exports` folder and opened in a tab. Existing exports are kept with numbered filenames.
+
+The export uses a light background, date heading, time ranges and cards that expand to fit their text. It includes the selected day's displayed local and internet-calendar entries; nested items appear once, with checkbox state and indentation. Hidden task statuses remain hidden. Markdown links use their display labels, and tracking comments/block IDs are excluded. It does not fetch or embed attachment images. Very large schedules report an image-size limit instead of silently clipping content.
+
+Short timeline blocks automatically show subtasks inline when the nested list would be clipped, with the full list available on hover. Roomier blocks retain their nested lists. Checkbox source lines and note content are unchanged.
+
+Sharing changes were checked with component/unit tests and a headless Chromium harness, including a real 2160 × 2164 PNG, inline checkbox clicks, font changes and returning to the stacked layout. Installed Obsidian and mobile acceptance remain pending.
+
 **Readable nested schedules for Obsidian.**
 
 Day Planner Enhanced is an [Obsidian](https://obsidian.md/) community plugin for people who plan in nested Markdown lists. Child items stay readable inside their parent block instead of appearing again as separate Timeline or All Day entries.

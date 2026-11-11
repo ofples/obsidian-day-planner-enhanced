@@ -7,6 +7,7 @@ import { isNotVoid } from "typed-assert";
 
 import {
   dateRangeContextKey,
+  obsidianContextKey,
   isInSidebarContextKey,
   viewTypeTimeline,
 } from "../constants";
@@ -14,7 +15,7 @@ import type { DateRange, DateRanges } from "../redux/date-ranges";
 import type { PeriodicNotes } from "../service/periodic-notes";
 import type { WorkspaceFacade } from "../service/workspace-facade";
 import type { DayPlannerSettings } from "../settings";
-import type { ComponentContext } from "../types";
+import type { ComponentContext, ObsidianContext } from "../types";
 import {
   handleActiveFileChange,
   handleActiveLeafChange,
@@ -69,6 +70,12 @@ export default class TimelineView extends ItemView {
     super.onPaneMenu(menu, source);
 
     addTimelineViewMenuItems(menu, {
+      exportSchedule: (day) => {
+        const context = this.componentContext.get(
+          obsidianContextKey,
+        ) as ObsidianContext;
+        context.exportSchedule(day);
+      },
       reSync: this.reSync,
       initWeeklyView: this.initWeeklyView,
       openTimelineSettingsModal: this.openTimelineSettingsModal,

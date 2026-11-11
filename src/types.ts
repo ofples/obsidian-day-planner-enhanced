@@ -65,6 +65,7 @@ export type PointerDateTime = {
 export type Signal<T> = { current: T };
 
 export interface ObsidianContext {
+  exportSchedule: (day: Moment) => void;
   workspaceFacade: WorkspaceFacade;
   periodicNotes: PeriodicNotes;
   initWeeklyView: () => Promise<void>;

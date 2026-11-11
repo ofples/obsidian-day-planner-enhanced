@@ -129,6 +129,56 @@
   const stackedHeaderRequiredHeightPx = $derived(
     stackedHeaderBaseHeightPx + nestedItemsRequiredHeightPx,
   );
+  let measuredRequiredHeightPx = $state(0);
+  let availableHeightPx = $state<number>();
+  const inlineNestedItems = $derived(
+    !timeBlock.isAllDayEvent &&
+      nestedItemCount > 0 &&
+      (availableHeightPx ?? blockHeightPx) <
+        Math.max(
+          20 + nestedItemsRequiredHeightPx + 11,
+          measuredRequiredHeightPx,
+        ),
+  );
+
+  function observeNestedLayout(element: HTMLDivElement) {
+    const layout = element.closest<HTMLElement>(".rendered-markdown");
+    if (!layout || typeof ResizeObserver === "undefined") return;
+    const view = element.ownerDocument.defaultView ?? window;
+    let frame = 0;
+    let measurementKey = "";
+    const measure = () => {
+      frame = 0;
+      if (timeBlock.isAllDayEvent) return;
+      const wasInline = inlineNestedItems;
+      const style = view.getComputedStyle(layout);
+      const key = `${layout.clientWidth}:${style.fontSize}:${style.fontFamily}`;
+      if (key !== measurementKey) {
+        measurementKey = key;
+        measuredRequiredHeightPx = 0;
+      }
+      availableHeightPx = layout.clientHeight || undefined;
+      // Measure in the normal layout only. Keeping this value while inline avoids
+      // oscillating between the two modes when the compact row itself fits.
+      if (!wasInline) {
+        measuredRequiredHeightPx =
+          element.getBoundingClientRect().bottom -
+          layout.getBoundingClientRect().top +
+          (parseFloat(style.paddingBottom) || 0);
+      }
+    };
+    const observer = new ResizeObserver(() => {
+      // Apply layout changes after observer delivery, avoiding resize-loop errors.
+      if (frame) view.cancelAnimationFrame(frame);
+      frame = view.requestAnimationFrame(measure);
+    });
+    observer.observe(layout);
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+      if (frame) view.cancelAnimationFrame(frame);
+    };
+  }
   const useStackedHeader = $derived(
     !isCompact && blockHeightPx >= stackedHeaderRequiredHeightPx,
   );
@@ -162,7 +212,7 @@
     : isCompact
       ? "var(--rendered-markdown-compact-padding, 3px 11px)"
       : "var(--rendered-markdown-timed-padding, 6px 11px 5px)"}
-  class="rendered-markdown planner-sticky-block-content"
+  class={`rendered-markdown planner-sticky-block-content${inlineNestedItems ? " has-inline-children" : ""}`}
   {bottomDecoration}
   {completed}
 >
@@ -225,6 +275,12 @@
           "lines-after-first-wrapper",
           useStackedHeader && "is-stacked-header",
         ]}
+        title={inlineNestedItems
+          ? nestedItems
+              .map((item) => item.text.replace(/<!--.*?-->/g, ""))
+              .join(" · ")
+          : undefined}
+        {@attach observeNestedLayout}
         {@attach createRenderMarkdownAttachment({
           renderMarkdown,
           markdown: nestedListItems,
@@ -572,5 +628,75 @@
   .first-line-wrapper.is-compact :global(p),
   .first-line-wrapper.is-compact :global(li) {
     white-space: nowrap;
+  }
+
+  :global(.rendered-markdown.has-inline-children) {
+    flex-direction: row;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  :global(.has-inline-children) .time-summary-row {
+    flex: 0 1 auto;
+    max-width: 60%;
+  }
+
+  :global(.has-inline-children) .lines-after-first-wrapper {
+    overflow: hidden;
+    flex: 1 1 0;
+
+    margin: 0;
+    padding: 0;
+
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  :global(.has-inline-children) .lines-after-first-wrapper :global(ul),
+  :global(.has-inline-children) .lines-after-first-wrapper :global(ol),
+  :global(.has-inline-children) .lines-after-first-wrapper :global(li),
+  :global(.has-inline-children) .lines-after-first-wrapper :global(li > p) {
+    display: inline;
+
+    margin: 0;
+    padding: 0;
+
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+
+  :global(.has-inline-children)
+    .lines-after-first-wrapper
+    :global(ul > li::before),
+  :global(.has-inline-children)
+    .lines-after-first-wrapper
+    :global(ul > li:has(> code)::before),
+  :global(.has-inline-children)
+    .lines-after-first-wrapper
+    :global(ul > li:has(> p > code)::before) {
+    content: " · ";
+
+    position: static;
+    transform: none;
+
+    display: inline;
+
+    background: none;
+  }
+
+  :global(.has-inline-children) .lines-after-first-wrapper :global(hr) {
+    display: none;
+  }
+
+  :global(.has-inline-children)
+    .lines-after-first-wrapper
+    :global(ul > li::after) {
+    display: none;
+  }
+
+  :global(.has-inline-children) .lines-after-first-wrapper :global(li code) {
+    min-width: 0;
+    margin-inline-end: 4px;
   }
 </style>

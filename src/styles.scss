@@ -331,3 +331,20 @@ body:has(.modal.day-planner-nested-items-modal) .popover.hover-popover {
 .planner-settings-warning {
   margin-bottom: var(--size-4-6);
 }
+// A scrollable on-screen preview; the PNG itself retains its full height.
+.planner-export-modal {
+  .planner-export-preview {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+  }
+
+  .planner-export-buttons {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    background: var(--background-primary);
+  }
+}

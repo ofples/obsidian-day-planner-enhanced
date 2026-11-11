@@ -35,6 +35,59 @@ afterEach(() => {
 });
 
 describe("RenderedMarkdown", () => {
+  test("short blocks put children inline without changing checkbox targets; roomy and all-day blocks keep lists", () => {
+    const target = document.createElement("div");
+    const settings = writable({ ...defaultSettingsForTests, zoomLevel: 2 });
+    const toggleCheckboxInFile = vi.fn(async () => {});
+    const renderMarkdown = (element: HTMLElement, markdown: string) => {
+      element.textContent = markdown;
+      for (const _ of markdown.matchAll(/\[[^\]]\]/gu)) {
+        const item = document.createElement("li");
+        item.dataset.task = " ";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        item.appendChild(input);
+        element.appendChild(item);
+      }
+      return () => element.replaceChildren();
+    };
+    const context = new Map([
+      [
+        obsidianContextKey,
+        { settingsStore: settings, renderMarkdown, toggleCheckboxInFile },
+      ],
+    ]);
+    const timeBlock = {
+      ...baseTimeBlock,
+      durationMinutes: 15,
+      text: "Admin",
+      children: [
+        createNestedListItem("a", "Call supplier", 8),
+        createNestedListItem("b", "Send message", 12),
+      ],
+    };
+    const props = $state({ timeBlock });
+    document.body.appendChild(target);
+    const component = mount(RenderedMarkdown, { context, target, props });
+    flushSync();
+    expect(target.querySelector(".has-inline-children")).not.toBeNull();
+    expect(
+      target.querySelector(".lines-after-first-wrapper")?.getAttribute("title"),
+    ).toContain("Call supplier");
+    target
+      .querySelector<HTMLInputElement>(".lines-after-first-wrapper input")!
+      .click();
+    expect(toggleCheckboxInFile).toHaveBeenCalledWith("path", 8);
+    settings.set({ ...defaultSettingsForTests, zoomLevel: 5 });
+    props.timeBlock = { ...timeBlock, durationMinutes: 60 };
+    flushSync();
+    expect(target.querySelector(".has-inline-children")).toBeNull();
+    props.timeBlock = { ...timeBlock, isAllDayEvent: true };
+    flushSync();
+    expect(target.querySelector(".has-inline-children")).toBeNull();
+    expect(target.textContent).toContain("Send message");
+    unmount(component);
+  });
   test("filters nested statuses without shifting checkbox source lines or mutating children", () => {
     const target = document.createElement("div");
     const settings = writable(defaultSettingsForTests);

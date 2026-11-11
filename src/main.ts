@@ -82,6 +82,7 @@ import { useTimeBlocks } from "./ui/hooks/use-time-blocks";
 import { createLogEntryEditModalOpener } from "./ui/log-entry-edit-modal";
 import MultiDayView from "./ui/multi-day-view";
 import { DayPlannerReleaseNotesView } from "./ui/release-notes";
+import { ScheduleExportModal } from "./ui/schedule-export-modal";
 import { DayPlannerSettingsTab } from "./ui/settings-tab";
 import { mountStatusBarWidget } from "./ui/status-bar-widget";
 import {
@@ -805,6 +806,15 @@ export default class DayPlanner extends Plugin {
     };
 
     const defaultObsidianContext: ObsidianContext = {
+      exportSchedule: (day) => {
+        const blocks = get(editContext.getDisplayedTimeBlocksForTimeline(day));
+        new ScheduleExportModal(
+          this.app,
+          day.clone(),
+          [...blocks.noTime, ...blocks.withTime],
+          get(settingsStore),
+        ).open();
+      },
       periodicNotes: this.periodicNotes,
       openLogEntryEditModal,
       openTimelineSettingsModal,

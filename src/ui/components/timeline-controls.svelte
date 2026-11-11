@@ -14,6 +14,7 @@
   import { ChevronLeft, ChevronRight } from "./lucide";
 
   const {
+    exportSchedule,
     workspaceFacade,
     periodicNotes,
     reSync,
@@ -60,6 +61,7 @@
     const menu = new Menu();
 
     addTimelineViewMenuItems(menu, {
+      exportSchedule,
       reSync,
       initWeeklyView,
       openTimelineSettingsModal,

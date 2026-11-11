@@ -7,6 +7,7 @@ import type { ObsidianContext } from "../types";
 import { addColumnSelectionItems } from "./column-selection-menu";
 
 export interface TimelineViewMenuProps {
+  exportSchedule: ObsidianContext["exportSchedule"];
   reSync: ObsidianContext["reSync"];
   initWeeklyView: ObsidianContext["initWeeklyView"];
   openTimelineSettingsModal: ObsidianContext["openTimelineSettingsModal"];
@@ -20,6 +21,7 @@ export function addTimelineViewMenuItems(
   props: TimelineViewMenuProps,
 ) {
   const {
+    exportSchedule,
     reSync,
     initWeeklyView,
     openTimelineSettingsModal,
@@ -60,7 +62,18 @@ export function addTimelineViewMenuItems(
       .onClick(reSync),
   );
 
-  // Note: a section of their own makes Obsidian separate them with lines
+  menu.addItem((item) =>
+    item
+      .setSection("action")
+      .setTitle("Export schedule as PNG…")
+      .setIcon("image-down")
+      .onClick(() => {
+        const day = getSelectedDay();
+        if (day) exportSchedule(day);
+      }),
+  );
+
+  // A section of their own makes Obsidian separate them with lines.
   addColumnSelectionItems({ menu, settingsStore, section: "columns" });
 
   menu.addItem((item) =>
