@@ -94,10 +94,18 @@ Registry v9 adds durable missing-link recovery and original-byte migration backu
 
 Restoring an original block reattaches the original Todoist task before capture can create another task. It preserves the common baseline for provider edits made during the gap. Its Google mapping is resolved again through the existing note identity machinery, including after a verified event deletion. Restored copies, active canonical links, account changes and incomplete recovery reserve the candidate for review. A Recheck link action keeps identity review distinct from project routing. Existing link restoration also works with automatic capture disabled. The six-file focused subset has 122 passing cases. Full validation has 901 passes and the inherited ICS timeout. Native/disposable-provider verification follows in the isolated vault.
 
-## Working conventions
-
 ### Deferred view validation
 
 The first isolated v8-to-v9 migration preserved the exact original bytes in its content-addressed backup. Live source stability inspection exposed deferred Markdown tabs without editor instances. Stability checks now skip those unloaded views through Obsidian's documented isDeferred API. A lifecycle regression covers deferred tabs alongside a loaded focused/unfocused editor. Full validation has 902 passes and the inherited ICS timeout. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass. Live recovery verification continues against the corrected build.
+
+### Live missing-source acceptance
+
+The isolated build migrated v8 to v9 with exact original bytes preserved in the matching migration backup. A disposable parent and child were created through the existing task service and scheduled through the shared coordinator. Removing their fixture subtree detached the note links without adding a provider operation. Authoritative reads retained the Todoist title, description and parent/child relationship. After a full window reload, restoring the original note bytes reattached the original root link and retained its 45-minute Google event and child description.
+
+A second cycle enabled the existing calendar deletion policy for the disposable fixture. Ordinary calendar sync deleted that event and retained its tombstone. After another full reload, restoring the note kept the original Todoist task/link and created one fresh event identity with the original interval and child description. Cleanup verified both provider endpoints returned 404, both known events were absent/cancelled and the fixture subtree was removed. Original test settings were restored. Final readback had zero pending schedules, zero review issues and no task-service error. The working vault continues running the calendar baseline.
+
+The seven-file recovery subset has 123 passing cases. Full validation has 902 passes and the inherited ICS timeout, with nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass. Permanent remote deletion, live internet-feed selection, native exporter collision handling, M5 and remaining M6 acceptance continue. Full-window reload also returned to an earlier search value during native verification. Investigate leaf-state persistence in M6.
+
+## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.
