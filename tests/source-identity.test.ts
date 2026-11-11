@@ -1,5 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 
+import { parseCaptureCandidates } from "../src/tasks/capture-parser";
+
 import {
   resolveSourceIdentities,
   type SourceIdentity,
@@ -17,6 +19,123 @@ const options = {
 };
 
 describe("shared source identities", () => {
+  test.each(["reorder", "move", "preassigned", "partial-edit"])(
+    "nested identities follow exact parent blocks through %s",
+    (scenario) => {
+      const earlier = "- [x] Earlier\n  - [ ] Same\n    - [ ] Deep";
+      const current = "- [ ] Current\n  - [ ] Same\n    - [ ] Deep";
+      const previous = Object.fromEntries(
+        parseCaptureCandidates("Tasks.md", earlier + "\n\n" + current).map(
+          (candidate, index) => [String(index), candidate],
+        ),
+      );
+      const movedCurrent =
+        scenario === "partial-edit"
+          ? current.replace("Current", "Changed current")
+          : current;
+      const next = parseCaptureCandidates(
+        scenario === "move" ? "Moved.md" : "Tasks.md",
+        movedCurrent + "\n\n" + earlier,
+      );
+      if (scenario === "preassigned") next[3]!.uid = "0";
+      const onAmbiguous = vi.fn();
+      resolveSourceIdentities(next, previous, {
+        ...options,
+        preserveNested: true,
+        onAmbiguous,
+      });
+      expect(next.map((candidate) => candidate.uid)).toEqual([
+        scenario === "partial-edit" ? undefined : "3",
+        "4",
+        "5",
+        "0",
+        "1",
+        "2",
+      ]);
+      if (scenario === "partial-edit")
+        expect(onAmbiguous).toHaveBeenCalledExactlyOnceWith("Tasks.md", ["3"]);
+    },
+  );
+
+  test("changed parents reserve ambiguous identical children for review", () => {
+    const text = "- [ ] First\n  - [ ] Same\n\n- [ ] Second\n  - [ ] Same";
+    const previous = Object.fromEntries(
+      parseCaptureCandidates("Tasks.md", text).map((candidate, index) => [
+        String(index),
+        candidate,
+      ]),
+    );
+    const next = parseCaptureCandidates(
+      "Tasks.md",
+      "- [ ] Changed second\n  - [ ] Same\n\n- [ ] Changed first\n  - [ ] Same",
+    );
+    const onAmbiguous = vi.fn();
+    resolveSourceIdentities(next, previous, {
+      ...options,
+      preserveNested: true,
+      onAmbiguous,
+    });
+    expect(next.map((candidate) => candidate.uid)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    expect(onAmbiguous).toHaveBeenCalledExactlyOnceWith("Tasks.md", [
+      "0",
+      "1",
+      "2",
+      "3",
+    ]);
+  });
+
+  test("matched edited parents retain identical children within their own scopes", () => {
+    const first = "- [ ] 08:00 - 08:30 First\n  - [ ] Same\n  - [ ] Same";
+    const second = "- [ ] 09:00 - 09:30 Second\n  - [ ] Same";
+    const previous = Object.fromEntries(
+      parseCaptureCandidates("Tasks.md", first + "\n\n" + second).map(
+        (candidate, index) => [String(index), candidate],
+      ),
+    );
+    const next = parseCaptureCandidates(
+      "Tasks.md",
+      second.replace("09:00 - 09:30", "10:00 - 10:30") +
+        "\n\n" +
+        first.replace("- [ ] 08:00 - 08:30", "- [x] 11:00 - 11:30"),
+    );
+    resolveSourceIdentities(next, previous, {
+      ...options,
+      preserveNested: true,
+      matchers: [(old, candidate) => old.title === candidate.title],
+    });
+    expect(next.map((candidate) => candidate.uid)).toEqual([
+      "3",
+      "4",
+      "0",
+      "1",
+      "2",
+    ]);
+  });
+
+  test("copied parent blocks retain their original nested IDs for review", () => {
+    const text = "- [ ] Parent\n  - [ ] Same";
+    const previous = Object.fromEntries(
+      parseCaptureCandidates("Tasks.md", text).map((candidate, index) => [
+        String(index),
+        candidate,
+      ]),
+    );
+    const next = parseCaptureCandidates("Tasks.md", text + "\n\n" + text);
+    const onAmbiguous = vi.fn();
+    resolveSourceIdentities(next, previous, {
+      ...options,
+      preserveNested: true,
+      onAmbiguous,
+    });
+    expect(next.every((candidate) => !candidate.uid)).toBe(true);
+    expect(onAmbiguous).toHaveBeenCalledExactlyOnceWith("Tasks.md", ["0", "1"]);
+  });
+
   test("strict callers retain their ambiguous-edit rejection", () => {
     expect(() =>
       resolveSourceIdentities(

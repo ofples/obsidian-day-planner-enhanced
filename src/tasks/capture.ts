@@ -238,6 +238,7 @@ export class TaskCapture {
         {
           duplicate:
             "Several note tasks share the same link. Review their identities before capture.",
+          preserveNested: true,
           ambiguous: (path) =>
             `Task links are ambiguous in ${path}. Restore the previous task text before capturing more tasks there.`,
           matchers: [

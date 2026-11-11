@@ -84,6 +84,8 @@ Existing Google-linked blocks retain their canonical identity when opted into To
 
 Task identity inspection reports unresolved link IDs per note after all safe matches finish. Exclude unmatched candidates in those notes from capture. Exact matched links remain available, and unrelated notes continue processing. Reconciliation persists an individual source issue for each affected link. Preserve those original links and commands until a recovery decision. Shared matcher callers retain strict ambiguity rejection unless they request these diagnostics explicitly.
 
+Task capture enables nested-source preservation in the shared matcher. Match unique containers before assigning repeated child text by order. An exact whole-block match proves contained source positions through their relative offsets, including moved notes and previously reserved historical parents. Changed parents can retain their own scope through a unique native block ID or configured field matcher. Ordered duplicate-child matching stays within a resolved parent identity. Unresolved parent edits and copied blocks retain their ambiguity diagnostics. Other matcher callers keep their existing behavior.
+
 ## Field reconciliation
 
 | Field | Obsidian representation | Propagation and resolution |

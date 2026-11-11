@@ -296,6 +296,12 @@ The checked historical note and child text remained at the original date. Google
 
 Cleanup removed the fixture task tree and managed events and restored the original note bytes or file absence. Its first preference restoration reloaded before the debounced save completed. Native restoration was subsequently confirmed in the saved workspace and through another reload. Final provider/state readback found zero active native echoes, restored pane/calendar settings, retained history/recovery records and no task-service error. Title/time editing in this check used the vault API. Checkbox, focus, history and navigation input used the native desktop. External recurring completion, exact undo and remaining M5/M6 acceptance continue.
 
+### Nested occurrence identity regression
+
+Reordering checked historical and open current blocks in one note originally exchanged their identical child identities. The regression now retains both parent/child link pairs, their captured history baseline and the completion counter through restart, with no extra provider command. Shared matcher checks also cover moved notes, preassigned historical parents, partially edited containers, identical siblings beneath edited parents, unresolved parent edits and copied parent blocks. These cases preserve existing ambiguity diagnostics and reserve copies for review.
+
+The three-file subset has 123 passes. Full validation has 1,010 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Required source checks, the separate strict scorecard and production build pass. Installed native/provider verification of the new nested matching remains pending. The preceding installed Markdown-completion evidence applies to its earlier source build.
+
 ### Missing-source recovery foundation
 
 Regression checks cover deleted timed parent/child blocks, a deleted note file, exact Undo after restart, provider edits while detached and a fresh export identity after ordinary calendar deletion. Missing-source intents issue no note or provider write. Tests interrupt intent, local acknowledgment and archive acknowledgment writes, then restart and restore the same Todoist link. An uncertain calendar create carries its original event identity through deletion, restart and restoration. An already restored document cancels a stale detachment intent.

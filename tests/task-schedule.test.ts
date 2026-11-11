@@ -875,6 +875,62 @@ describe("recurring occurrence freezing", () => {
     h.service.stop();
   });
 
+  test("reordering historical and current blocks keeps identical children attached to their occurrence", async () => {
+    const { h, projection } = await scheduled();
+    const completion = await h.service.complete(h.tasks.get(root.id)!);
+    await h.service.refresh();
+    await h.reconcile();
+    await h.scheduler.schedule(root.id, {
+      start: "2026-11-11T10:00:00Z",
+      end: "2026-11-11T10:30:00Z",
+    });
+    await h.settle();
+    const current = h.scheduler.projection(root.id)!;
+    const state = h.service.registry.snapshot();
+    const historical = state.occurrences[completion.id]!;
+    const oldChildUid = Object.entries(historical.links).find(
+      ([, link]) => link.taskId === child.id,
+    )![0];
+    const currentChildUid = Object.entries(state.links).find(
+      ([, link]) => link.taskId === child.id,
+    )![0];
+    const before = structuredClone(historical.before);
+    const candidates = h.capture.candidates();
+    const oldRoot = candidates.find(
+      (candidate) => candidate.uid === projection.linkUid,
+    )!;
+    const currentRoot = candidates.find(
+      (candidate) => candidate.uid === current.linkUid,
+    )!;
+    h.texts.set(
+      projection.source.path,
+      `# Day planner\n\n${currentRoot.raw}\n\n${oldRoot.raw}\n`,
+    );
+    const commands = h.apply.mock.calls.length;
+    await h.indexNotes();
+    await h.capture.scan();
+    const reordered = h.capture.candidates();
+    for (const [parentUid, childUid] of [
+      [projection.linkUid, oldChildUid],
+      [current.linkUid, currentChildUid],
+    ]) {
+      const parent = reordered.find(
+        (candidate) => candidate.uid === parentUid,
+      )!;
+      const nested = reordered.find((candidate) => candidate.uid === childUid)!;
+      expect(nested.parentFrom).toBe(parent.from);
+    }
+    await h.restart();
+    await h.reconcile();
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.before,
+    ).toEqual(before);
+    expect(h.apply).toHaveBeenCalledTimes(commands);
+    expect(get(h.capture.state).identityIssues).toEqual([]);
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    h.service.stop();
+  });
+
   test("a calendar-only history retry remains independent of scheduling the next occurrence across restart", async () => {
     const { h, projection } = await scheduled();
     h.setFailCalendar(true);
