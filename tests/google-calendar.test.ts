@@ -100,6 +100,43 @@ beforeEach(() => {
 });
 
 describe("calendar reconciliation", () => {
+  test("subtask-only edits backfill descriptions using the latest color version without note writes", async () => {
+    const h = harness();
+    const block = { ...local(), raw: "- [ ] Work\n  - [x] Completed child" };
+    const colored = { ...event(), etag: '"v2"', colorId: "3" };
+    h.setBlocks([block]);
+    h.api.syncColor = vi.fn(async () => colored);
+    h.api.syncSubtasks = vi.fn(async (remote) => ({
+      ...remote,
+      description: "children",
+    }));
+    expect((await h.run()).pushed).toBe(2);
+    expect(h.api.syncSubtasks).toHaveBeenCalledWith(colored, block);
+    expect(h.api.update).not.toHaveBeenCalled();
+    expect(h.notes.write).not.toHaveBeenCalled();
+  });
+  test("a remote title change sends the rewritten block to description sync", async () => {
+    const h = harness();
+    const rewritten = {
+      ...local(other),
+      raw: "- [ ] Changed title\n  - [ ] Child",
+    };
+    h.setEvents([event(other)]);
+    vi.mocked(h.notes.write).mockResolvedValue(rewritten);
+    h.api.syncSubtasks = vi.fn(async (remote) => remote);
+    await h.run();
+    expect(h.api.syncSubtasks).toHaveBeenCalledWith(event(other), rewritten);
+  });
+  test("skips description writes if the note changes during color sync", async () => {
+    const h = harness();
+    h.api.syncColor = vi.fn(async (remote) => {
+      vi.mocked(h.notes.isUnchanged).mockResolvedValue(false);
+      return remote;
+    });
+    h.api.syncSubtasks = vi.fn(async (remote) => remote);
+    expect((await h.run()).conflicts).toHaveLength(1);
+    expect(h.api.syncSubtasks).not.toHaveBeenCalled();
+  });
   test("display-only events are not written as note tasks", async () => {
     const h = harness(false);
     h.setBlocks([]);
@@ -218,6 +255,7 @@ describe("calendar reconciliation", () => {
       `dp${h.state.namespace}${uid}`,
       uid,
       base,
+      local(),
     );
   });
   test("a successful POST followed by a crash is adopted rather than duplicated", async () => {

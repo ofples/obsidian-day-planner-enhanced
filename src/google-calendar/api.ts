@@ -4,11 +4,13 @@ import type { DayPlannerSettings } from "../settings";
 
 import type { GoogleCalendarAuth } from "./auth";
 import { plannerEventColor, type EventColors } from "./colors";
+import { renderSubtasks, withSubtasks } from "./subtasks";
 import type {
   CalendarApi,
   CalendarSnapshot,
   GoogleEvent,
   GoogleCalendarInfo,
+  LocalBlock,
 } from "./types";
 
 export class CalendarHttpError extends Error {
@@ -165,13 +167,24 @@ export class GoogleCalendarApi implements CalendarApi {
     };
   }
 
-  async create(id: string, uid: string, snapshot: CalendarSnapshot) {
+  async create(
+    id: string,
+    uid: string,
+    snapshot: CalendarSnapshot,
+    block?: LocalBlock,
+  ) {
+    const subtasks = block ? renderSubtasks(block.raw) : "";
     try {
       return await this.request<GoogleEvent>(this.eventsPath(), "POST", {
         id,
         ...this.body(snapshot),
+        ...(subtasks ? { description: withSubtasks("", subtasks) } : {}),
         extendedProperties: {
-          private: { dayPlannerVault: this.namespace, dayPlannerBlock: uid },
+          private: {
+            dayPlannerVault: this.namespace,
+            dayPlannerBlock: uid,
+            ...(subtasks ? { dayPlannerSubtasks: "1" } : {}),
+          },
         },
       });
     } catch (error) {
@@ -205,6 +218,34 @@ export class GoogleCalendarApi implements CalendarApi {
       `${this.eventsPath()}/${encodeURIComponent(event.id)}?sendUpdates=none`,
       "PATCH",
       { colorId },
+      event.etag,
+    );
+  }
+
+  async syncSubtasks(event: GoogleEvent, block: LocalBlock) {
+    const subtasks = renderSubtasks(block.raw);
+    const description = withSubtasks(
+      event.description ?? "",
+      subtasks,
+      event.extendedProperties?.private?.["dayPlannerSubtasks"] === "1",
+    );
+    if (description === (event.description ?? "")) return event;
+    if (!event.etag)
+      throw new Error(
+        "Google event has no version; refusing to update its subtasks.",
+      );
+    return this.request<GoogleEvent>(
+      `${this.eventsPath()}/${encodeURIComponent(event.id)}?sendUpdates=none`,
+      "PATCH",
+      {
+        description,
+        extendedProperties: {
+          private: {
+            ...event.extendedProperties?.private,
+            dayPlannerSubtasks: subtasks ? "1" : null,
+          },
+        },
+      },
       event.etag,
     );
   }

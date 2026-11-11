@@ -2,14 +2,16 @@ import { webcrypto } from "node:crypto";
 import { requestUrl, type App } from "obsidian";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-vi.mock("obsidian", () => ({
+vi.mock("obsidian", async () => ({
   requestUrl: vi.fn(),
   Platform: { isDesktopApp: true },
+  moment: (await import("moment")).default,
 }));
 
 import { GoogleCalendarApi } from "../src/google-calendar/api";
 import { GoogleCalendarAuth } from "../src/google-calendar/auth";
-import type { GoogleEvent } from "../src/google-calendar/types";
+import type { GoogleEvent, LocalBlock } from "../src/google-calendar/types";
+import { renderSubtasks, withSubtasks } from "../src/google-calendar/subtasks";
 import { defaultSettings } from "../src/settings";
 
 const snapshot = {
@@ -38,6 +40,77 @@ beforeEach(() => {
 });
 
 describe("Google REST transport", () => {
+  const block: LocalBlock = {
+    uid: "block",
+    path: "Daily/2026-11-11.md",
+    snapshot,
+    raw: "- [ ] 10:00 - 11:00 Work\n    - [ ] First child",
+  };
+  test("creates new events with nested tasks and an owned description section", async () => {
+    const { api } = setup();
+    vi.mocked(requestUrl).mockResolvedValue(response(200, event));
+    await api.create("new", block.uid, snapshot, block);
+    const body = JSON.parse(
+      (vi.mocked(requestUrl).mock.calls[0]![0] as { body: string }).body,
+    );
+    expect(body.description).toBe(withSubtasks("", renderSubtasks(block.raw)));
+    expect(body.extendedProperties.private).toEqual({
+      dayPlannerVault: "namespace",
+      dayPlannerBlock: "block",
+      dayPlannerSubtasks: "1",
+    });
+  });
+  test("description PATCH preserves other content and private properties with conditional versioning", async () => {
+    const { api } = setup();
+    const existing = {
+      ...event,
+      description: "Existing details",
+      extendedProperties: { private: { other: "keep" } },
+    };
+    const description = withSubtasks(
+      existing.description,
+      renderSubtasks(block.raw),
+    );
+    const updated = {
+      ...existing,
+      description,
+      extendedProperties: {
+        private: { other: "keep", dayPlannerSubtasks: "1" },
+      },
+    };
+    vi.mocked(requestUrl).mockResolvedValue(response(200, updated));
+    expect(await api.syncSubtasks(existing, block)).toBe(updated);
+    const arg = vi.mocked(requestUrl).mock.calls[0]![0] as {
+      body: string;
+      headers: Record<string, string>;
+    };
+    expect(JSON.parse(arg.body)).toEqual({
+      description,
+      extendedProperties: { private: updated.extendedProperties.private },
+    });
+    expect(arg.headers["If-Match"]).toBe(event.etag);
+    vi.mocked(requestUrl).mockClear();
+    expect(await api.syncSubtasks(updated, block)).toBe(updated);
+    expect(requestUrl).not.toHaveBeenCalled();
+    await api.syncSubtasks(updated, { ...block, raw: "- [ ] Work" });
+    expect(
+      JSON.parse(
+        (vi.mocked(requestUrl).mock.calls[0]![0] as { body: string }).body,
+      ),
+    ).toEqual({
+      description: "Existing details",
+      extendedProperties: {
+        private: { other: "keep", dayPlannerSubtasks: null },
+      },
+    });
+  });
+  test("refuses unversioned description writes", async () => {
+    const { api } = setup();
+    await expect(
+      api.syncSubtasks({ ...event, etag: "" }, block),
+    ).rejects.toThrow("no version");
+    expect(requestUrl).not.toHaveBeenCalled();
+  });
   test("color refresh PATCH uses the latest version and only changes color", async () => {
     const { api } = setup();
     vi.mocked(requestUrl).mockResolvedValueOnce(

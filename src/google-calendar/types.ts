@@ -78,6 +78,7 @@ export interface CalendarApi {
     id: string,
     uid: string,
     snapshot: CalendarSnapshot,
+    block?: LocalBlock,
   ): Promise<GoogleEvent>;
   update(event: GoogleEvent, snapshot: CalendarSnapshot): Promise<GoogleEvent>;
   remove(event: GoogleEvent): Promise<void>;
@@ -85,6 +86,7 @@ export interface CalendarApi {
     event: GoogleEvent,
     snapshot: CalendarSnapshot,
   ): Promise<GoogleEvent>;
+  syncSubtasks?(event: GoogleEvent, block: LocalBlock): Promise<GoogleEvent>;
 }
 
 export interface CalendarNotes {

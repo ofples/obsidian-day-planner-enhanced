@@ -97,6 +97,7 @@ export async function syncCalendar({
   for (const [uid, record] of Object.entries(state.records)) {
     if (record.deleted) continue;
     const local = byUid.get(uid);
+    let descriptionBlock = local;
     const remote =
       byEvent.get(record.eventId) ?? (await api.get(record.eventId));
     let colorEvent = remote;
@@ -161,6 +162,7 @@ export async function syncCalendar({
       result.pushed++;
     } else if (remoteChanged && !localChanged) {
       const updated = await notes.write(uid, remoteSnapshot, local);
+      descriptionBlock = updated;
       record.path = updated.path;
       record.base = remoteSnapshot;
       result.pulled++;
@@ -169,12 +171,19 @@ export async function syncCalendar({
     }
     if (!(remoteChanged && !localChanged)) record.path = local.path;
     await save();
-    if (
-      api.syncColor &&
-      colorEvent &&
-      (await api.syncColor(colorEvent, record.base)) !== colorEvent
-    )
-      result.pushed++;
+    if (api.syncColor && colorEvent) {
+      const colored = await api.syncColor(colorEvent, record.base);
+      if (colored !== colorEvent) result.pushed++;
+      colorEvent = colored;
+    }
+    if (api.syncSubtasks && colorEvent && descriptionBlock) {
+      if (!(await notes.isUnchanged(descriptionBlock))) {
+        conflict("note changed while preparing subtasks; retry");
+        continue;
+      }
+      if ((await api.syncSubtasks(colorEvent, descriptionBlock)) !== colorEvent)
+        result.pushed++;
+    }
   }
 
   for (const local of locals) {
@@ -187,7 +196,8 @@ export async function syncCalendar({
     const eventId = `dp${state.namespace}${local.uid}`;
     let event: GoogleEvent | null =
       byEvent.get(eventId) ?? (await api.get(eventId));
-    if (!event) event = await api.create(eventId, local.uid, local.snapshot);
+    if (!event)
+      event = await api.create(eventId, local.uid, local.snapshot, local);
     const existing = snapshotOf(event);
     if (!existing || !sameSnapshot(existing, local.snapshot)) {
       result.conflicts.push(
@@ -203,7 +213,8 @@ export async function syncCalendar({
     linkedEvents.add(event.id);
     await save();
     result.pushed++;
-    await api.syncColor?.(event, local.snapshot);
+    event = (await api.syncColor?.(event, local.snapshot)) ?? event;
+    if (await notes.isUnchanged(local)) await api.syncSubtasks?.(event, local);
   }
 
   if (!importEvents) return result;
@@ -251,7 +262,9 @@ export async function syncCalendar({
     delete state.pendingImport;
     await save();
     result.pulled++;
-    await api.syncColor?.(event, snapshot);
+    const colored = (await api.syncColor?.(event, snapshot)) ?? event;
+    if (await notes.isUnchanged(local))
+      await api.syncSubtasks?.(colored, local);
   }
   return result;
 }
