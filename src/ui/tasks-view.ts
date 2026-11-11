@@ -7,6 +7,7 @@ import {
 import { mount, unmount } from "svelte";
 import { get, writable, type Writable } from "svelte/store";
 
+import type { GoogleCalendarSync } from "../google-calendar/service";
 import type { DayPlannerSettings } from "../settings";
 import { taskViewStateSchema } from "../tasks/browser";
 import type { TaskCapture } from "../tasks/capture";
@@ -34,6 +35,7 @@ export class TasksView extends ItemView {
     private readonly defaultDuration: () => number = () => 30,
     private readonly reconciler?: TaskReconciler,
     private readonly settings?: Writable<DayPlannerSettings>,
+    private readonly calendar?: Pick<GoogleCalendarSync, "calendars">,
   ) {
     super(leaf);
   }
@@ -82,6 +84,7 @@ export class TasksView extends ItemView {
         preferences: this.preferences,
         captureSettings: this.captureSettings,
         settings: this.settings,
+        calendar: this.calendar,
         revealTask: (task: ProviderTask) => {
           if (this.scheduler) handle(this.scheduler.reveal(task.id));
         },

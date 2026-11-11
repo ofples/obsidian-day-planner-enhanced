@@ -395,6 +395,7 @@ export default class DayPlanner extends Plugin {
             () => this.getSettings().defaultDurationMinutes,
             this.taskReconciler,
             this.settingsStore,
+            this.googleCalendarSync,
           ),
       );
     this.addCommand({

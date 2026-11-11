@@ -82,6 +82,10 @@ The isolated Obsidian window is accessible through the authorized Windows helper
 
 Native drag retests reached trusted entry/over handlers with accepted move effects, including after a full application reload, but ended before drop. End-to-end native drag remains pending. Opening workflows and details now collapses expanded review content to keep narrow forms visible. Tests cover that transition and unlink sentence spacing. Missing-source behavior, remote deletion, exact live feed/exporter checks, recurrence/history and remaining release acceptance continue under M4–M6.
 
+### Custom task calendar settings
+
+Capture and routing now opens Task calendar feeds inline. The full settings entry reuses the same custom Svelte form. It retains exact Google IDs and internet-feed URLs, unavailable saved selections, the hide-feeds switch and the schedule-to-task-date choice. Google calendar names and IDs distinguish sources. Internet-feed URLs stay out of visible text. Loading and saving validate the original task account, and a late load after closing cannot update another surface. Saves preserve current routing and unrelated settings. Four component cases and one pane-entry case cover exact selections, unavailable sources, cancellation, loading failure/retry, account replacement and concurrent unrelated settings. The calendar-display subset has 24 passing cases. Native acceptance follows against the isolated build.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

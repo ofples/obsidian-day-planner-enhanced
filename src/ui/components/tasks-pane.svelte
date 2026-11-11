@@ -26,6 +26,7 @@
   import { tick } from "svelte";
   import { readable, type Readable, type Writable } from "svelte/store";
 
+  import type { GoogleCalendarSync } from "../../google-calendar/service";
   import type { DayPlannerSettings } from "../../settings";
   import {
     taskDay,
@@ -47,6 +48,7 @@
   import type { TaskPanelAction } from "../task-panel-state";
   import "../task-panel.css";
 
+  import TaskPanelCalendars from "./task-panel-calendars.svelte";
   import TaskPanelCaptureSettings from "./task-panel-capture-settings.svelte";
   import TaskPanelConflict from "./task-panel-conflict.svelte";
   import TaskPanelConnect from "./task-panel-connect.svelte";
@@ -65,6 +67,7 @@
     defaultDuration = 30,
     captureSettings,
     settings,
+    calendar,
     completeTask,
     reopenTask,
     retry,
@@ -80,6 +83,7 @@
     defaultDuration?: number;
     captureSettings: () => void;
     settings?: Writable<DayPlannerSettings>;
+    calendar?: Pick<GoogleCalendarSync, "calendars">;
     completeTask: (task: ProviderTask) => void;
     reopenTask: (task: ProviderTask) => void;
     retry: (id: string) => void;
@@ -637,8 +641,18 @@
             {service}
           />
         {:else if $action.kind === "settings" && settings}<TaskPanelCaptureSettings
+            calendarSettings={calendar
+              ? () => startAction({ kind: "calendars" })
+              : undefined}
             cancel={cancelAction}
             {capture}
+            saved={actionSaved($action)}
+            {service}
+            {settings}
+          />
+        {:else if $action.kind === "calendars" && settings && calendar}<TaskPanelCalendars
+            {calendar}
+            cancel={cancelAction}
             saved={actionSaved($action)}
             {service}
             {settings}

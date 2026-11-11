@@ -18,12 +18,14 @@
     settings,
     saved,
     cancel,
+    calendarSettings,
   }: {
     service: TaskService;
     capture: TaskCapture;
     settings: Writable<DayPlannerSettings>;
     saved: () => void;
     cancel: () => void;
+    calendarSettings?: () => void;
   } = $props();
   const opened = untrack(() => ({
     snapshot: get(service.state).snapshot,
@@ -154,6 +156,11 @@
   onsubmit={submit}
 >
   <h3>Capture and routing</h3>
+  {#if calendarSettings}<button
+      class="task-text-button"
+      onclick={calendarSettings}
+      type="button">Task calendar feeds</button
+    >{/if}
   <label class="task-check-label"
     ><input
       class="task-toggle"

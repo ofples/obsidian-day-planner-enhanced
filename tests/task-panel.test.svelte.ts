@@ -86,6 +86,7 @@ function render(
         action,
         reconciler,
         settings: writable(defaultSettingsForTests),
+        calendar: { calendars: async () => [] },
         preferences: writable(taskViewStateSchema.parse({})),
         captureSettings: fallbackSettings,
         completeTask: vi.fn(),
@@ -113,6 +114,19 @@ function press(element: EventTarget, key: string, isComposing = false) {
 }
 
 describe("custom Tasks panel", () => {
+  test("capture settings opens calendar feeds in the same custom panel", () => {
+    const h = render({ kind: "settings" });
+    const button = Array.from(h.target.querySelectorAll("button")).find(
+      (item) => item.textContent === "Task calendar feeds",
+    )!;
+    button.click();
+    flushSync();
+    expect(get(h.action)?.kind).toBe("calendars");
+    expect(
+      h.target.querySelector('form[aria-label="Task calendar feeds"]'),
+    ).not.toBeNull();
+    expect(h.fallbackSettings).not.toHaveBeenCalled();
+  });
   test.each(["Cancel", "Close", "Escape"])(
     "%s restores a removed capture tag before closing its decision",
     async (close) => {

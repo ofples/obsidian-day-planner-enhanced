@@ -7,6 +7,7 @@ export type TaskPanelAction =
   | { kind: "schedule"; task: ProviderTask }
   | { kind: "connect" }
   | { kind: "settings" }
+  | { kind: "calendars" }
   | { kind: "route"; issue: CaptureIssue }
   | { kind: "unschedule"; task: ProviderTask }
   | {
