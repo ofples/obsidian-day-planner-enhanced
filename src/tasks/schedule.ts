@@ -16,6 +16,7 @@ import {
   type TaskMutation,
 } from "./operations";
 import { rewriteTaskNote } from "./reconcile-markdown";
+import type { TaskLink } from "./registry";
 import {
   newTaskMarkdown,
   scheduleNoteTitle,
@@ -147,6 +148,7 @@ export class TaskScheduler {
     interval: ScheduleInterval | null;
     googleUid?: string;
     mutations: { mutation: TaskMutation; base: ProviderTask }[];
+    expectedLink?: TaskLink;
   }) {
     const browser = get(this.service.state),
       snapshot = browser.snapshot;
@@ -158,7 +160,9 @@ export class TaskScheduler {
       !link ||
       link.provider !== snapshot.provider ||
       link.accountId !== snapshot.account.id ||
-      link.taskId !== input.task.id
+      link.taskId !== input.task.id ||
+      (input.expectedLink &&
+        JSON.stringify(input.expectedLink) !== JSON.stringify(link))
     )
       throw new TaskReadError(
         "The note link changed. Refresh before reconciling it.",

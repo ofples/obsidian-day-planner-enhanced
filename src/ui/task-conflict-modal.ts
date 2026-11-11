@@ -3,28 +3,35 @@ import { get } from "svelte/store";
 
 import type {
   TaskConflictChoices,
-  TaskConflictReview,
+  TaskConflictDisplay,
+  TaskConflictController,
+  TaskConflictValues,
 } from "../tasks/conflict";
 import type { TaskService } from "../tasks/service";
-import { TaskReadError, type ProviderTask } from "../tasks/types";
+import { TaskReadError } from "../tasks/types";
 
 const fieldNames: Record<string, string> = {
   title: "Title",
   description: "Description",
   placement: "Project and parent",
   schedule: "Task date and duration",
+  interval: "Planned interval",
+  projectId: "Project",
   completed: "Completion",
   labels: "Labels",
   priority: "Priority",
 };
 
-export class TaskConflictModal extends Modal {
+export class TaskConflictModal<
+  Review extends TaskConflictDisplay,
+> extends Modal {
   private closed = false;
 
   constructor(
     app: App,
     private readonly service: TaskService,
     private readonly id: string,
+    private readonly controller: TaskConflictController<Review>,
   ) {
     super(app);
   }
@@ -39,7 +46,7 @@ export class TaskConflictModal extends Modal {
 
   private async load() {
     try {
-      const review = await this.service.inspectConflict(this.id);
+      const review = await this.controller.inspectConflict(this.id);
       if (!this.closed) this.render(review);
     } catch (error) {
       if (this.closed) return;
@@ -62,12 +69,18 @@ export class TaskConflictModal extends Modal {
       : "Could not load the latest comparison. Try again when connected.";
   }
 
-  private value(values: Partial<ProviderTask> | null) {
+  private value(values: TaskConflictValues | null) {
     if (!values) return "Unavailable";
     const snapshot = get(this.service.state).snapshot;
     return Object.entries(values)
       .map(([field, value]) => {
-        if (value == null) return "None";
+        if (value == null) {
+          if ("interval" in values && field === "due")
+            return "Task date cleared";
+          if ("interval" in values && field === "duration")
+            return "Provider duration cleared";
+          return "None";
+        }
         if (field === "projectId")
           return (
             snapshot?.projects.find((project) => project.id === value)?.name ??
@@ -79,25 +92,27 @@ export class TaskConflictModal extends Modal {
             String(value)
           );
         if (field === "completed") return value ? "Completed" : "Open";
+        if (field === "interval")
+          return `${new Date(values.interval!.start).toLocaleString()} – ${new Date(values.interval!.end).toLocaleString()}`;
         if (field === "due") {
           const due = values.due!;
-          return [due.date, due.timezone, due.recurring ? due.text : null]
+          const date = [due.date, due.timezone, due.recurring ? due.text : null]
             .filter(Boolean)
             .join(" · ");
+          return "interval" in values ? `Task date ${date}` : date;
         }
         if (field === "duration")
-          return `${values.duration!.amount} ${values.duration!.unit}`;
+          return `${"interval" in values ? "Provider duration " : ""}${values.duration!.amount} ${values.duration!.unit}`;
         if (Array.isArray(value)) return value.join(", ") || "None";
         return String(value) || "Empty";
       })
       .join("\n");
   }
 
-  private render(review: TaskConflictReview, changed = false) {
+  private render(review: Review, changed = false) {
     this.contentEl.empty();
     this.contentEl.createEl("p", {
-      text:
-        review.current?.title ?? review.operation.base?.title ?? "Saved task",
+      text: review.title,
     });
     if (changed)
       this.contentEl.createEl("p", {
@@ -116,13 +131,18 @@ export class TaskConflictModal extends Modal {
         busy || review.fields.some((field) => !choices[field.key]),
       );
     for (const field of review.fields) {
+      const name = field.fields.includes("interval")
+        ? "Planned interval"
+        : field.key.startsWith("label:")
+          ? `Label ${field.key.slice(6)}`
+          : (fieldNames[field.key] ?? field.key);
       this.contentEl.createEl("h3", {
-        text: fieldNames[field.key] ?? field.key,
+        text: name,
       });
       const list = this.contentEl.createEl("dl");
       for (const [label, value] of [
         ["Original", field.base],
-        ["Saved change", field.local],
+        [review.localLabel ?? "Saved change", field.local],
         ["Current Todoist", field.remote],
       ] as const) {
         list.createEl("dt", { text: label });
@@ -130,20 +150,24 @@ export class TaskConflictModal extends Modal {
       }
       if (!field.localAllowed && review.current)
         this.contentEl.createEl("p", {
-          text: "This recurring occurrence has advanced. Review the current occurrence after keeping its completion state.",
+          text:
+            field.localUnavailableReason ??
+            "This recurring occurrence has advanced. Review the current occurrence after keeping its completion state.",
         });
       if (!field.conflict)
         choices[field.key] = field.localAllowed ? "local" : "remote";
       new Setting(this.contentEl)
         .setName("Resolution")
         .addDropdown((dropdown) => {
-          dropdown.selectEl.setAttribute(
-            "aria-label",
-            `Resolve ${fieldNames[field.key] ?? field.key}`,
-          );
+          dropdown.selectEl.setAttribute("aria-label", `Resolve ${name}`);
           dropdown.addOption("", "Choose a value");
           if (field.localAllowed)
-            dropdown.addOption("local", "Use saved change");
+            dropdown.addOption(
+              "local",
+              review.localLabel === "Current note"
+                ? "Use current note"
+                : "Use saved change",
+            );
           dropdown.addOption("remote", "Use current Todoist");
           dropdown.setValue(choices[field.key] ?? "").onChange((value) => {
             if (value === "local" || value === "remote")
@@ -159,7 +183,7 @@ export class TaskConflictModal extends Modal {
       busy = true;
       updateButton();
       try {
-        const result = await this.service.resolveConflict(review, selected);
+        const result = await this.controller.resolveConflict(review, selected);
         if (this.closed) return;
         if (result.kind === "changed") this.render(result.review, true);
         else this.close();

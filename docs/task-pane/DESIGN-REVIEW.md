@@ -48,6 +48,8 @@ The first actual desktop pane review exposed undated children appearing in a sep
 
 The M3 desktop review moved schedule chips below full-width task titles and wrapped the selected-task actions after finding narrow-pane overflow. The M4 conflict dialog was compared again with board six. Removing its additional whole-task commit button restored the reviewed per-field flow. It shows original, saved and current values, leaves contested choices empty and disables Apply choices until they are resolved. A newer provider edit refreshes the comparison and clears those choices. Measured overflow in both refined surfaces was zero. Native pointer and OS input-method checks remain in acceptance.
 
+The source-conflict variant reuses this dialog with Current note and Current Todoist labels. A planned interval is presented with its coupled task date and supported duration. Its live desktop comparison retained the reviewed single Apply choices flow, refreshed after a newer provider edit and measured zero horizontal overflow. Empty local titles offer the valid provider value while retaining the note for recovery.
+
 ## Streamlined implementation decisions
 
 - Use one adaptive details surface, docked on wide layouts and modal on narrow layouts.

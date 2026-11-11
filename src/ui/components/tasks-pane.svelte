@@ -35,6 +35,7 @@
     reopenTask,
     retry,
     reviewConflict,
+    reviewNoteConflict,
     capture,
     captureSettings,
     routeCapture,
@@ -56,6 +57,7 @@
     reopenTask: (task: ProviderTask) => void;
     retry: (id: string) => void;
     reviewConflict: (id: string) => void;
+    reviewNoteConflict: (id: string) => void;
     capture: TaskCapture;
     captureSettings: () => void;
     routeCapture: (issue: CaptureIssue) => void;
@@ -191,6 +193,14 @@
           <span
             >{issue.source?.title ?? issue.remote?.title ?? "Linked task"}</span
           ><small>{issue.message}</small>
+          {#if !issue.fields.some( (field) => ["source", "task", "recurrence"].includes(field), )}<button
+              disabled={!$browserState.writable ||
+                $browserState.loading ||
+                $scheduleState.operations.some(
+                  (operation) => operation.linkUid === issue.linkUid,
+                )}
+              onclick={() => reviewNoteConflict(issue.id)}>Review fields</button
+            >{/if}
           <button
             onclick={() => {
               void reconciler?.scan();

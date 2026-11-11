@@ -13,6 +13,12 @@ import {
   taskAccountSettings,
   type TaskCaptureSettings,
 } from "./capture-settings";
+import type {
+  TaskConflictChoices,
+  TaskConflictDisplay,
+  TaskConflictField,
+  TaskConflictValues,
+} from "./conflict";
 import {
   isOutstanding,
   mutationFields,
@@ -26,12 +32,49 @@ import type { TaskLink, TaskReconcileIssue } from "./registry";
 import type { TaskScheduler } from "./schedule";
 import {
   intervalForTaskDate,
+  scheduleIntervalSchema,
   taskOccurrenceKey,
   type ScheduleInterval,
   type TaskProjection,
 } from "./schedule-types";
 import type { TaskService } from "./service";
-import { TaskReadError, type ProviderTask, type TaskSnapshot } from "./types";
+import {
+  TaskReadError,
+  taskSchema,
+  type ProviderTask,
+  type TaskSnapshot,
+} from "./types";
+
+interface NoteFieldComparison {
+  key: string;
+  base: unknown;
+  local: unknown;
+  remote: unknown;
+}
+interface NotePlanInput {
+  link: TaskLink;
+  candidate: CaptureCandidate;
+  remote: ProviderTask;
+  projection?: TaskProjection;
+  block?: LocalBlock;
+  snapshot: TaskSnapshot;
+  settings: TaskCaptureSettings;
+  choices?: TaskConflictChoices;
+}
+export interface TaskNoteConflictReview extends TaskConflictDisplay {
+  issue: TaskReconcileIssue;
+  fingerprint: string;
+}
+
+function comparisonValues(key: string, value: unknown): TaskConflictValues {
+  if (key === "schedule")
+    return { interval: scheduleIntervalSchema.nullable().parse(value) };
+  if (key.startsWith("label:"))
+    return {
+      labels: taskSchema.shape.completed.parse(value) ? [key.slice(6)] : [],
+    };
+  return taskSchema.partial().parse({ [key]: value });
+}
 
 function sameInterval(
   first: ScheduleInterval | null,
@@ -43,15 +86,7 @@ function sameInterval(
         Date.parse(first.end) === Date.parse(second.end);
 }
 
-export function planTaskReconciliation(input: {
-  link: TaskLink;
-  candidate: CaptureCandidate;
-  remote: ProviderTask;
-  projection?: TaskProjection;
-  block?: LocalBlock;
-  snapshot: TaskSnapshot;
-  settings: TaskCaptureSettings;
-}) {
+export function planTaskReconciliation(input: NotePlanInput) {
   const { link, candidate, remote, projection, block, snapshot, settings } =
     input;
   const base = link.base!;
@@ -79,6 +114,7 @@ export function planTaskReconciliation(input: {
       ),
     );
   const conflicts: string[] = [];
+  const comparisons: NoteFieldComparison[] = [];
   const merge = <T>(
     field: string,
     localBase: T,
@@ -87,11 +123,25 @@ export function planTaskReconciliation(input: {
     upstream: T,
     same: (first: T, second: T) => boolean = (first, second) =>
       JSON.stringify(first) === JSON.stringify(second),
+    remoteChangedOverride = false,
   ) => {
     const localChanged = !same(localBase, local),
-      remoteChanged = !same(remoteBase, upstream);
-    if (localChanged && remoteChanged && !same(local, upstream))
-      conflicts.push(field);
+      remoteChanged = remoteChangedOverride || !same(remoteBase, upstream);
+    const invalidTitle =
+      field === "title" && typeof local === "string" && !local.trim();
+    if (
+      localChanged &&
+      (invalidTitle || (remoteChanged && !same(local, upstream)))
+    ) {
+      comparisons.push({
+        key: field,
+        base: remoteBase,
+        local,
+        remote: upstream,
+      });
+      if (input.choices?.[field] === "remote") return upstream;
+      if (input.choices?.[field] !== "local") conflicts.push(field);
+    }
     return localChanged ? local : upstream;
   };
   const desiredTitle = merge(
@@ -104,7 +154,11 @@ export function planTaskReconciliation(input: {
   const titleChanged =
     (link.noteBase ? title(noteBase) : base.title) !== title(candidate) ||
     base.title !== remote.title;
-  if (!desiredTitle.trim())
+  if (
+    !desiredTitle.trim() &&
+    desiredTitle !== remote.title &&
+    !conflicts.includes("title")
+  )
     throw new TaskReadError(
       "Enter a title before synchronizing this linked task.",
     );
@@ -200,6 +254,13 @@ export function planTaskReconciliation(input: {
     localInterval,
     remoteInterval,
     sameInterval,
+    Boolean(
+      remoteScheduleChanged &&
+        (remote.due === null ||
+          (snapshot.account.capabilities?.duration &&
+            base.duration &&
+            !remote.duration)),
+    ),
   );
   const desired = {
     ...remote,
@@ -278,11 +339,28 @@ export function planTaskReconciliation(input: {
     add({ kind: completed ? "complete" : "reopen", taskId: remote.id });
   return {
     conflicts: [...new Set(conflicts)],
+    comparisons,
     raw,
     mutations,
     interval,
     source: candidate,
     googleUid: block?.uid,
+    localScheduleDue: localInterval
+      ? {
+          date: localInterval.start,
+          text: remote.due?.recurring ? remote.due.text : "",
+          recurring: remote.due?.recurring ?? false,
+          timezone: remote.due?.timezone ?? snapshot.account.timezone,
+        }
+      : remote.due,
+    localScheduleDuration: localInterval
+      ? {
+          amount:
+            (Date.parse(localInterval.end) - Date.parse(localInterval.start)) /
+            60_000,
+          unit: "minute" as const,
+        }
+      : remote.duration,
     changed:
       raw !== candidate.raw ||
       mutations.length > 0 ||
@@ -358,6 +436,194 @@ export class TaskReconciler {
       browser.snapshot?.provider === snapshot.provider &&
       browser.snapshot.account.id === snapshot.account.id
     );
+  }
+
+  private async conflictContext(id: string) {
+    await this.pending;
+    await this.capture.scan();
+    const snapshot = get(this.service.state).snapshot;
+    if (!snapshot || !this.current(snapshot))
+      throw new TaskReadError(
+        "Reconnect the original task account before reviewing this note.",
+      );
+    const state = this.service.registry.snapshot();
+    const issue = Object.values(state.issues).find(
+      (issue) =>
+        issue.id === id &&
+        issue.provider === snapshot.provider &&
+        issue.accountId === snapshot.account.id,
+    );
+    const link = issue && state.links[issue.linkUid];
+    if (!issue || !link?.taskId || !link.base)
+      throw new TaskReadError(
+        "This note conflict changed. Recheck the linked task.",
+      );
+    if (
+      issue.fields.some((field) =>
+        ["source", "task", "recurrence"].includes(field),
+      )
+    )
+      throw new TaskReadError(
+        "Restore this note/task link or review its recurring occurrence before choosing field values.",
+      );
+    if (
+      state.schedules.some(
+        (operation) =>
+          operation.linkUid === issue.linkUid &&
+          !["complete", "cancelled"].includes(operation.phase),
+      ) ||
+      state.operations.some(
+        (operation) =>
+          operation.provider === issue.provider &&
+          operation.accountId === issue.accountId &&
+          operationTaskId(operation) === issue.taskId &&
+          isOutstanding(operation),
+      )
+    )
+      throw new TaskReadError(
+        "Finish this task's saved change before reviewing another note conflict.",
+      );
+    const candidate = this.capture
+      .candidates()
+      .find((candidate) => candidate.uid === issue.linkUid);
+    if (!candidate || !(await this.capture.sourceIsCurrent(candidate)))
+      throw new TaskReadError(
+        "Leave the linked task's edited line and reopen its comparison.",
+      );
+    const remote = await this.service.readTask(link.taskId);
+    if (!remote || !this.current(snapshot))
+      throw new TaskReadError(
+        "The linked task/account is unavailable. Recheck its connection.",
+      );
+    const projection = state.projections[issue.linkUid];
+    let block: LocalBlock | undefined;
+    if (
+      projection?.interval ||
+      getTimeRangeMatch(candidate.raw.split(/\r?\n/)[0] ?? "")
+    )
+      block = (await this.scheduler.scanNotes()).find(
+        (block) =>
+          block.path === candidate.path &&
+          block.from === candidate.from &&
+          block.raw === candidate.raw,
+      );
+    if (
+      !this.current(snapshot) ||
+      !(await this.capture.sourceIsCurrent(candidate)) ||
+      JSON.stringify(this.service.registry.snapshot().links[issue.linkUid]) !==
+        JSON.stringify(link)
+    )
+      throw new TaskReadError(
+        "The linked note changed during comparison. Reopen its latest values.",
+      );
+    const input: NotePlanInput = {
+      link,
+      candidate,
+      remote,
+      projection,
+      block,
+      snapshot,
+      settings: this.settings(),
+    };
+    const plan = planTaskReconciliation(input);
+    if (plan.conflicts.includes("recurrence"))
+      throw new TaskReadError(
+        "This recurring occurrence changed. Review its occurrence history before applying values.",
+      );
+    const values = (
+      comparison: NoteFieldComparison,
+      side: "base" | "local" | "remote",
+    ): TaskConflictValues => {
+      const result = comparisonValues(comparison.key, comparison[side]);
+      if (comparison.key !== "schedule") return result;
+      result.due =
+        side === "local"
+          ? plan.localScheduleDue
+          : side === "base"
+            ? link.base!.due
+            : remote.due;
+      if (snapshot.account.capabilities?.duration)
+        result.duration =
+          side === "local"
+            ? plan.localScheduleDuration
+            : side === "base"
+              ? link.base!.duration
+              : remote.duration;
+      return result;
+    };
+    const fields: TaskConflictField[] = plan.comparisons.map((comparison) => ({
+      key: comparison.key,
+      fields: Object.keys(
+        values(comparison, "local"),
+      ) as (keyof TaskConflictValues)[],
+      base: values(comparison, "base"),
+      local: values(comparison, "local"),
+      remote: values(comparison, "remote"),
+      conflict: true,
+      localAllowed:
+        comparison.key !== "title" ||
+        Boolean(taskSchema.shape.title.parse(comparison.local).trim()),
+      localUnavailableReason:
+        comparison.key === "title"
+          ? "Enter a nonempty note title to use it, or keep the provider title."
+          : undefined,
+    }));
+    const review: TaskNoteConflictReview = {
+      issue,
+      current: remote,
+      title: remote.title,
+      localLabel: "Current note",
+      fields,
+      fingerprint: JSON.stringify({
+        issue: issue.id,
+        link,
+        candidate,
+        remote,
+        owner: { provider: snapshot.provider, account: snapshot.account },
+        interval: block?.snapshot,
+        account: taskAccountSettings(input.settings, snapshot),
+      }),
+    };
+    return { input, review };
+  }
+
+  async inspectConflict(id: string) {
+    return (await this.conflictContext(id)).review;
+  }
+
+  async resolveConflict(
+    review: TaskNoteConflictReview,
+    choices: TaskConflictChoices,
+  ): Promise<
+    { kind: "changed"; review: TaskNoteConflictReview } | { kind: "saved" }
+  > {
+    const fresh = await this.conflictContext(review.issue.id);
+    if (fresh.review.fingerprint !== review.fingerprint)
+      return { kind: "changed", review: fresh.review };
+    if (
+      Object.keys(choices).some(
+        (key) => !fresh.review.fields.some((field) => field.key === key),
+      ) ||
+      fresh.review.fields.some(
+        (field) =>
+          !["local", "remote"].includes(choices[field.key] ?? "") ||
+          (choices[field.key] === "local" && !field.localAllowed),
+      )
+    )
+      throw new TaskReadError("Choose a value for every conflicting field.");
+    const plan = planTaskReconciliation({ ...fresh.input, choices });
+    if (plan.conflicts.length)
+      throw new TaskReadError(
+        "Review the remaining field conflicts before applying this comparison.",
+      );
+    await this.scheduler.reconcile({
+      ...plan,
+      linkUid: fresh.review.issue.linkUid,
+      task: fresh.input.remote,
+      expectedLink: fresh.input.link,
+    });
+    this.publish();
+    return { kind: "saved" };
   }
 
   private async issue(
@@ -520,6 +786,7 @@ export class TaskReconciler {
             ...plan,
             linkUid: uid,
             task: remote,
+            expectedLink: link,
           });
           blocks = undefined;
         } else if (

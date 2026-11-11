@@ -209,8 +209,22 @@ export class TasksView extends ItemView {
         reopenTask: (task: ProviderTask) =>
           handle(this.service.mutate({ kind: "reopen", taskId: task.id })),
         retry: (id: string) => handle(this.service.retryOperation(id)),
+        reviewNoteConflict: (id: string) => {
+          if (this.reconciler)
+            new TaskConflictModal(
+              this.app,
+              this.service,
+              id,
+              this.reconciler,
+            ).open();
+        },
         reviewConflict: (id: string) =>
-          new TaskConflictModal(this.app, this.service, id).open(),
+          new TaskConflictModal(
+            this.app,
+            this.service,
+            id,
+            this.service,
+          ).open(),
       },
     });
     void this.service.refresh();

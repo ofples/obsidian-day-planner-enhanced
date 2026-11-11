@@ -5,22 +5,41 @@ import {
   type TaskMutation,
   type TaskOperation,
 } from "./operations";
+import type { ScheduleInterval } from "./schedule-types";
 import { TaskReadError, type ProviderTask } from "./types";
+
+export type TaskConflictValues = Partial<ProviderTask> & {
+  interval?: ScheduleInterval | null;
+};
 
 export interface TaskConflictField {
   key: string;
-  fields: (keyof ProviderTask)[];
-  base: Partial<ProviderTask> | null;
-  local: Partial<ProviderTask>;
-  remote: Partial<ProviderTask> | null;
+  fields: (keyof TaskConflictValues)[];
+  base: TaskConflictValues | null;
+  local: TaskConflictValues;
+  remote: TaskConflictValues | null;
   conflict: boolean;
   localAllowed: boolean;
+  localUnavailableReason?: string;
 }
 
-export interface TaskConflictReview {
-  operation: TaskOperation;
+export interface TaskConflictDisplay {
+  title: string;
+  localLabel?: string;
   current: ProviderTask | null;
   fields: TaskConflictField[];
+}
+
+export interface TaskConflictReview extends TaskConflictDisplay {
+  operation: TaskOperation;
+}
+
+export interface TaskConflictController<Review extends TaskConflictDisplay> {
+  inspectConflict(id: string): Promise<Review>;
+  resolveConflict(
+    review: Review,
+    choices: TaskConflictChoices,
+  ): Promise<{ kind: "changed"; review: Review } | { kind: "saved" }>;
 }
 
 export type TaskConflictChoices = Record<string, "local" | "remote">;
@@ -72,7 +91,12 @@ export function reviewTaskConflict(
         ),
     };
   });
-  return { operation, current, fields };
+  return {
+    operation,
+    current,
+    fields,
+    title: current?.title ?? operation.base?.title ?? "Saved task",
+  };
 }
 
 /** Resolve into fresh commands so an acknowledged UUID is never reused with new fields. */

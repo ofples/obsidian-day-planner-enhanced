@@ -318,6 +318,277 @@ async function harness() {
 }
 
 describe("linked task scheduling", () => {
+  test("a cleared provider date conflicts with a simultaneous note move and stays cleared when chosen", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md",
+      writes = h.apply.mock.calls.length;
+    const originalRange = `${window.moment(interval.start).format("HH:mm")} - ${window.moment(interval.end).format("HH:mm")}`;
+    const movedRange = `${window.moment(interval.start).add(1, "hour").format("HH:mm")} - ${window.moment(interval.end).add(1, "hour").format("HH:mm")}`;
+    h.texts.set(path, h.texts.get(path)!.replace(originalRange, movedRange));
+    h.tasks.set(root.id, { ...h.tasks.get(root.id)!, due: null });
+    await h.service.refresh();
+    await h.reconcile();
+    const review = await h.reconciler.inspectConflict(
+      Object.values(h.service.registry.snapshot().issues)[0]!.id,
+    );
+    expect(review.fields[0]?.remote?.due).toBeNull();
+    expect(review.fields[0]?.local.due?.date).toBe("2026-11-11T10:00:00.000Z");
+    await h.reconciler.resolveConflict(review, { schedule: "remote" });
+    await h.settle();
+    expect(h.texts.get(path)).toContain(originalRange);
+    expect(h.tasks.get(root.id)?.due).toBeNull();
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("a blank local title can be restored from the provider without sending an empty update", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md",
+      writes = h.apply.mock.calls.length;
+    h.texts.set(path, h.texts.get(path)!.replace("Work #todoist", "#todoist"));
+    await h.reconcile();
+    const review = await h.reconciler.inspectConflict(
+      Object.values(h.service.registry.snapshot().issues)[0]!.id,
+    );
+    expect(review.fields[0]).toMatchObject({
+      key: "title",
+      localAllowed: false,
+    });
+    await expect(
+      h.reconciler.resolveConflict(review, { title: "local" }),
+    ).rejects.toThrow("every conflicting field");
+    await h.reconciler.resolveConflict(review, { title: "remote" });
+    await h.settle();
+    expect(h.texts.get(path)).toContain("Work #todoist");
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("concurrent source conflict submissions persist one projection change", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md";
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Work #todoist", "Local #todoist"),
+    );
+    h.tasks.set(root.id, { ...h.tasks.get(root.id)!, title: "Remote" });
+    await h.service.refresh();
+    await h.reconcile();
+    const review = await h.reconciler.inspectConflict(
+      Object.values(h.service.registry.snapshot().issues)[0]!.id,
+    );
+    const count = h.service.registry.snapshot().schedules.length;
+    const results = await Promise.allSettled([
+      h.reconciler.resolveConflict(review, { title: "local" }),
+      h.reconciler.resolveConflict(review, { title: "local" }),
+    ]);
+    expect(
+      results.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
+    await h.settle();
+    expect(h.service.registry.snapshot().schedules).toHaveLength(count + 1);
+    expect(h.tasks.get(root.id)?.title).toBe("Local");
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("note conflict choices merge the saved note title with independent provider edits", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md",
+      eventId = h.scheduler.projection(root.id)!.googleEventId;
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Work #todoist", "**Local title** #todoist"),
+    );
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      title: "Remote title",
+      description: "Keep remote description",
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    const issue = Object.values(h.service.registry.snapshot().issues)[0]!;
+    const review = await h.reconciler.inspectConflict(issue.id);
+    expect(review.fields).toMatchObject([
+      {
+        key: "title",
+        local: { title: "Local title" },
+        remote: { title: "Remote title" },
+      },
+    ]);
+    await h.reconciler.resolveConflict(review, { title: "local" });
+    await h.settle();
+    expect(h.tasks.get(root.id)).toMatchObject({
+      title: "Local title",
+      description: "Keep remote description",
+    });
+    expect(h.texts.get(path)).toContain("**Local title** #todoist");
+    expect(h.texts.get(path)).toContain("- [ ] Child");
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(eventId);
+    expect(h.service.registry.snapshot().issues).toEqual({});
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("choosing the provider title preserves local native IDs and sends no provider update", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md",
+      writes = h.apply.mock.calls.length;
+    h.texts.set(
+      path,
+      h.texts
+        .get(path)!
+        .replace(
+          "Work #todoist #work",
+          "Local #todoist #work <!-- keep --> ^native",
+        ),
+    );
+    h.tasks.set(root.id, { ...h.tasks.get(root.id)!, title: "Remote" });
+    await h.service.refresh();
+    await h.reconcile();
+    const review = await h.reconciler.inspectConflict(
+      Object.values(h.service.registry.snapshot().issues)[0]!.id,
+    );
+    await h.reconciler.resolveConflict(review, { title: "remote" });
+    await h.settle();
+    expect(h.texts.get(path)).toContain(
+      "Remote #todoist #work <!-- keep --> ^native",
+    );
+    expect(h.texts.get(path)).toContain("- [ ] Child");
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("a note/provider edit during source conflict review requires a refreshed choice", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md";
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Work #todoist", "Local #todoist"),
+    );
+    h.tasks.set(root.id, { ...h.tasks.get(root.id)!, title: "Remote" });
+    await h.service.refresh();
+    await h.reconcile();
+    const review = await h.reconciler.inspectConflict(
+      Object.values(h.service.registry.snapshot().issues)[0]!.id,
+    );
+    const count = h.service.registry.snapshot().schedules.length;
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Local #todoist", "Local again #todoist"),
+    );
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      description: "New remote description",
+    });
+    const result = await h.reconciler.resolveConflict(review, {
+      title: "local",
+    });
+    expect(result.kind).toBe("changed");
+    expect(h.service.registry.snapshot().schedules).toHaveLength(count);
+    if (result.kind === "changed") {
+      expect(result.review.fields[0]?.local.title).toBe("Local again");
+      await h.reconciler.resolveConflict(result.review, { title: "local" });
+      await h.settle();
+    }
+    expect(h.tasks.get(root.id)).toMatchObject({
+      title: "Local again",
+      description: "New remote description",
+    });
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("a chosen provider interval moves the note while preserving task date and event identity", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md",
+      eventId = h.scheduler.projection(root.id)!.googleEventId;
+    const oldStart = window.moment(interval.start).format("HH:mm"),
+      oldEnd = window.moment(interval.end).format("HH:mm");
+    const localStart = window
+        .moment(interval.start)
+        .add(1, "hour")
+        .format("HH:mm"),
+      localEnd = window.moment(interval.end).add(1, "hour").format("HH:mm");
+    h.texts.set(
+      path,
+      h.texts
+        .get(path)!
+        .replace(`${oldStart} - ${oldEnd}`, `${localStart} - ${localEnd}`),
+    );
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      due: { date: "2026-11-12", recurring: false, text: "", timezone: null },
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    const review = await h.reconciler.inspectConflict(
+      Object.values(h.service.registry.snapshot().issues)[0]!.id,
+    );
+    expect(review.fields[0]?.fields).toEqual(["interval", "due"]);
+    await h.reconciler.resolveConflict(review, { schedule: "remote" });
+    await h.settle();
+    expect(h.texts.get("Daily/2026-11-12.md")).toContain(
+      `${oldStart} - ${oldEnd}`,
+    );
+    expect(h.texts.get(path)).not.toContain("- [ ] Child");
+    expect(h.tasks.get(root.id)?.due?.date).toBe("2026-11-12");
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(eventId);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("failed source resolution intent leaves note/provider values and the conflict intact", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md";
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Work #todoist", "Local #todoist"),
+    );
+    h.tasks.set(root.id, { ...h.tasks.get(root.id)!, title: "Remote" });
+    await h.service.refresh();
+    await h.reconcile();
+    const review = await h.reconciler.inspectConflict(
+      Object.values(h.service.registry.snapshot().issues)[0]!.id,
+    );
+    h.setFailTaskWrite(true);
+    await expect(
+      h.reconciler.resolveConflict(review, { title: "remote" }),
+    ).rejects.toThrow("task state offline");
+    expect(h.texts.get(path)).toContain("Local #todoist");
+    expect(h.tasks.get(root.id)?.title).toBe("Remote");
+    expect(Object.values(h.service.registry.snapshot().issues)).toHaveLength(1);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
   test("a captured untimed note gains navigation while a provider date stays unscheduled", async () => {
     const h = await harness();
     const path = "Projects/Work.md",
