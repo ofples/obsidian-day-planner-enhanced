@@ -274,6 +274,12 @@ Native history review displayed the saved description/subtask and navigated to t
 
 The matching v9 migration backup preserved original bytes. Cleanup removed the fixture event and subtree and restored prior Tasks preferences. Final refresh/reload verified task absence, event absence/cancellation, no fixture text, preserved two-task metadata/history, zero pending operations, zero source/reconciliation issues and no task-service error. Full validation has 934 passes, one inherited ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, the separate strict scorecard and production build pass. This closes the explicit provider-delete portion of A36. Provider deletion lacks a conditional tree-version precondition, and unknown completed descendants may have no locally saved details. Exact live feed/exporter checks, recurrence/history and release acceptance remain open.
 
+### Desktop internet-feed verification
+
+Controlled HTTP fixtures exercised actual Obsidian fetching and parsing. Their URLs differed by a query string. Both events initially reached the displayed timeline. Native custom settings selected one exact feed and saved hiding. The display then retained the other feed through explicit refresh, native date navigation and full-window reload. The form measured zero horizontal overflow. Disconnect restored both events after the reactive update, and reconnecting the same account reapplied its saved exclusion.
+
+Cleanup restored the original empty internet-calendar list and original account settings, reloaded and verified zero fixture events and exclusions. The helper server was stopped. This adds desktop HTTP-source evidence for A32 and A33 alongside the earlier live Google-source readback. Actual Todoist native-exporter collision handling remains open under A34. Source validation counts remain at the preceding 934-pass checkpoint with the inherited ICS timeout.
+
 ### Live missing-source verification
 
 The v8-to-v9 migration retained the original bytes in a matching content-addressed backup. The first desktop check exposed unloaded Markdown views without editor instances. The stability guard now uses Obsidian's isDeferred API before accessing an editor. A dedicated lifecycle regression covers deferred and loaded tabs with focus transitions.

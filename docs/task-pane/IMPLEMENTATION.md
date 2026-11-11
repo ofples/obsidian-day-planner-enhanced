@@ -56,7 +56,7 @@ The feature worktree exposes browsing, connection, task editing, tagged Markdown
 
 ### Next reconciliation work
 
-The automatic comparison and journal handle direct timed-note edits, which also receive normal timeline move/resize writes. Both conflict controllers revalidate their latest comparison. Calendar-only retries yield to later edits after durable task acknowledgment. Explicit unlink, tag-removal decisions, missing-source recovery and permanent remote deletion are implemented and verified below. Complete exact live internet-feed selection and native exporter collision handling. Recurrence and independently scheduled children retain their M5 acceptance requirements.
+The automatic comparison and journal handle direct timed-note edits, which also receive normal timeline move/resize writes. Both conflict controllers revalidate their latest comparison. Calendar-only retries yield to later edits after durable task acknowledgment. Explicit unlink, tag-removal decisions, missing-source recovery and permanent remote deletion are implemented and verified below. Desktop HTTP feed checks verify exact internet-feed exclusion. Complete native exporter collision handling. Recurrence and independently scheduled children retain their M5 acceptance requirements.
 
 ### Custom panel implementation
 
@@ -121,6 +121,12 @@ The isolated v9-to-v10 migration retained the exact original bytes in its matchi
 Native history review displayed the saved description and child and opened the retained source note. That live check exposed a redundant deleted-task notice on a tagless local child. The corrected capture guard reserves that source identity and shows recovery review when a #todoist tag is present. The regression covers a clean local checklist before Undo. After installing the correction and a full reload, the plain note had no source issue. Restoring the original fixture bytes produced the expected saved-deletion review and no replacement creation intent. Another full reload retained the completed history, absent provider tasks and original event.
 
 Cleanup removed the fixture event and note subtree and restored the prior Tasks preferences. Final refresh/reload verified both provider tasks absent, the event absent/cancelled, fixture text absent, the two-task recovery record intact, zero pending task/schedule operations, zero source/reconciliation issues and no task-service error. Source checks, strict scorecard and build pass. Full validation has 934 passes and the inherited ICS timeout, with nine skips and 17 todo cases. Private identities and proof journals remain in ignored output. The working vault continues running the calendar baseline. Exact live internet-feed/native exporter checks, M5 and remaining M6 acceptance continue.
+
+### Desktop internet-feed acceptance
+
+Two controlled HTTP calendar fixtures exercised Obsidian's actual feed fetcher, parser, custom settings and displayed timeline pipeline. Their source URLs differed by a query string. Both events initially displayed. Native settings enabled feed hiding and selected one exact source. The selected event disappeared while the other remained, including after explicit feed refresh, native date navigation and full-window reload. The custom form measured zero horizontal overflow.
+
+The existing task-service disconnect restored both events after the reactive display update. Reconnecting the same account reapplied its saved exact-source exclusion. The test configuration originally had zero internet calendars. Cleanup restored the original calendar list and account settings, reloaded the isolated window and verified zero fixture events and zero fixture exclusions. The local HTTP helper was stopped. These checks use controlled feed data. Earlier live Google-calendar readback covers the selected Todoist Google source. Native exporter collision handling, M5 and remaining M6 acceptance continue.
 
 ## Working conventions
 
