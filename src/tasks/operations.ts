@@ -73,6 +73,7 @@ export const taskOperationSchema = z
     attempts: z.number().int().nonnegative(),
     retryAt: z.number().optional(),
     error: z.string().optional(),
+    resolutionIds: z.array(z.uuid()).optional(),
   })
   .refine(
     (operation) =>
@@ -90,7 +91,7 @@ export type TaskPatch = z.infer<typeof taskPatchSchema>;
 export type TaskMutation = z.infer<typeof taskMutationSchema>;
 export type TaskOperation = z.infer<typeof taskOperationSchema>;
 
-function mutationFields(mutation: TaskMutation) {
+export function mutationFields(mutation: TaskMutation) {
   switch (mutation.kind) {
     case "create":
       return mutation.task;
@@ -212,4 +213,43 @@ export function operationTaskId(operation: TaskOperation) {
 
 export function isOutstanding(operation: TaskOperation) {
   return !["complete", "cancelled"].includes(operation.status);
+}
+
+/** Follow replacement commands without replaying the superseded provider UUID. */
+export function resolvedTaskOperation(
+  operations: TaskOperation[],
+  id: string,
+):
+  | { status: "complete"; task?: ProviderTask }
+  | { status: "pending" | "conflict" } {
+  const byId = new Map(
+    operations.map((operation) => [operation.id, operation]),
+  );
+  const root = byId.get(id);
+  if (!root) return { status: "conflict" };
+  const pending = [id];
+  const visited = new Set<string>();
+  let task: ProviderTask | undefined;
+  for (let index = 0; index < pending.length; index++) {
+    const next = pending[index]!;
+    const operation = byId.get(next);
+    if (
+      !operation ||
+      visited.has(next) ||
+      operation.provider !== root.provider ||
+      operation.accountId !== root.accountId ||
+      operationTaskId(operation) !== operationTaskId(root)
+    )
+      return { status: "conflict" };
+    visited.add(next);
+    if (operation.status === "cancelled" && operation.resolutionIds) {
+      task = operation.readback ?? task;
+      pending.splice(index + 1, 0, ...operation.resolutionIds);
+    } else if (operation.status === "complete")
+      task = operation.readback ?? task;
+    else if (["conflict", "failed", "cancelled"].includes(operation.status))
+      return { status: "conflict" };
+    else return { status: "pending" };
+  }
+  return { status: "complete", task };
 }

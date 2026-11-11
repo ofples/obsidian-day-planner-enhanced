@@ -10,6 +10,7 @@ import {
   type TaskCaptureSettings,
 } from "./capture-settings";
 import { TaskDrag } from "./drag";
+import { resolvedTaskOperation } from "./operations";
 import {
   newTaskMarkdown,
   scheduleNoteTitle,
@@ -17,6 +18,7 @@ import {
 } from "./schedule-markdown";
 import {
   scheduleIntervalSchema,
+  intervalForTaskDate,
   scheduleOperationSchema,
   type ScheduleInterval,
   type ScheduleOperation,
@@ -358,8 +360,13 @@ export class TaskScheduler {
     this.publish();
     for (const operation of get(this.state).operations) {
       if (!this.current(operation)) continue;
-      if (operation.phase === "conflict") continue;
       try {
+        if (
+          ["conflict", "provider-pending"].includes(operation.phase) &&
+          (await this.resumeResolution(operation))
+        )
+          continue;
+        if (operation.phase === "conflict") continue;
         await this.process(operation);
       } catch (error) {
         if (!this.current(operation)) return;
@@ -375,6 +382,61 @@ export class TaskScheduler {
         });
       }
     }
+  }
+
+  private async resumeResolution(operation: ScheduleOperation) {
+    const state = this.service.registry.snapshot();
+    const original = state.operations.find(
+      (item) => item.id === operation.providerOperationId,
+    );
+    if (!original?.resolutionIds) return false;
+    const result = resolvedTaskOperation(state.operations, original.id);
+    if (result.status !== "complete") return true;
+    if (!result.task || operation.target.kind !== "schedule")
+      throw new TaskProjectionConflict(
+        "This task is unavailable. Review its linked note before continuing the schedule.",
+      );
+    const projection = state.projections[operation.linkUid];
+    const source = state.links[operation.linkUid]?.source ?? projection?.source;
+    if (!projection || !source)
+      throw new TaskProjectionConflict(
+        "Restore the saved note projection before resolving this schedule.",
+      );
+    const snapshot = get(this.service.state).snapshot!;
+    const interval = intervalForTaskDate(
+      operation.target.interval,
+      result.task,
+      snapshot.account.timezone,
+      snapshot.account.capabilities?.duration === true,
+    );
+    const replacement = scheduleOperationSchema.parse({
+      ...operation,
+      id: crypto.randomUUID(),
+      providerOperationId: crypto.randomUUID(),
+      task: result.task,
+      target: { kind: "schedule", interval },
+      previous: source,
+      previousInterval: projection.interval ?? undefined,
+      raw: source.raw,
+      children: [],
+      generatedTaskIds: [result.task.id],
+      syncTaskDate: false,
+      providerChanges: undefined,
+      phase: "pending",
+      plan: undefined,
+      error: undefined,
+      createdAt: new Date().toISOString(),
+    });
+    await this.service.registry.change((current) => {
+      const saved = current.schedules.find((item) => item.id === operation.id)!;
+      if (!["conflict", "provider-pending"].includes(saved.phase)) return;
+      saved.phase = "cancelled";
+      saved.error = undefined;
+      current.schedules.push(replacement);
+    });
+    this.again = true;
+    this.publish();
+    return true;
   }
 
   private async process(initial: ScheduleOperation) {

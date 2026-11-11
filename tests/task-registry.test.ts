@@ -29,8 +29,8 @@ describe("task registry migration", () => {
     const registry = new TaskRegistry(storage, namespace);
     await registry.initialize();
     expect(events).toEqual(["backup", "write"]);
-    expect(registry.snapshot().version).toBe(3);
-    expect(JSON.parse(disk).version).toBe(3);
+    expect(registry.snapshot().version).toBe(4);
+    expect(JSON.parse(disk).version).toBe(4);
   });
 
   test("failed backup preserves the original registry", async () => {

@@ -11,7 +11,10 @@ import {
   taskDropAllowed,
   taskDropUsesPlanner,
 } from "../src/tasks/schedule-markdown";
-import { resolveScheduleInput } from "../src/tasks/schedule-types";
+import {
+  intervalForTaskDate,
+  resolveScheduleInput,
+} from "../src/tasks/schedule-types";
 import { TaskService } from "../src/tasks/service";
 import type { TaskSnapshot } from "../src/tasks/types";
 
@@ -73,6 +76,54 @@ async function dragFixture() {
 }
 
 describe("task scheduling input", () => {
+  test("provider date-only edits preserve the linked local clock and elapsed duration", () => {
+    const interval = {
+      start: "2026-11-11T18:15:00Z",
+      end: "2026-11-11T18:45:00Z",
+    };
+    expect(
+      intervalForTaskDate(
+        interval,
+        { due: { date: "2026-11-13", timezone: null } },
+        "Asia/Kolkata",
+      ),
+    ).toEqual({
+      start: "2026-11-13T18:15:00.000Z",
+      end: "2026-11-13T18:45:00.000Z",
+    });
+    expect(
+      intervalForTaskDate(
+        interval,
+        { due: { date: "2026-11-13T12:00:00Z", timezone: "Asia/Kolkata" } },
+        "UTC",
+      ),
+    ).toEqual({
+      start: "2026-11-13T12:00:00.000Z",
+      end: "2026-11-13T12:30:00.000Z",
+    });
+    expect(
+      intervalForTaskDate(interval, { due: null }, "Asia/Kolkata"),
+    ).toEqual(interval);
+    expect(
+      intervalForTaskDate(
+        interval,
+        { due: null, duration: { amount: 45, unit: "minute" } },
+        "Asia/Kolkata",
+        true,
+      ),
+    ).toEqual({
+      start: "2026-11-11T18:15:00.000Z",
+      end: "2026-11-11T19:00:00.000Z",
+    });
+    expect(() =>
+      intervalForTaskDate(
+        { start: "2026-03-07T07:30:00Z", end: "2026-03-07T08:00:00Z" },
+        { due: { date: "2026-03-08", timezone: "America/New_York" } },
+        "UTC",
+      ),
+    ).toThrow("invalid local clock");
+  });
+
   test("local dates resolve to timezone-aware overnight intervals", () => {
     expect(
       resolveScheduleInput("2026-11-11", "23:45", 30, "Asia/Kolkata"),

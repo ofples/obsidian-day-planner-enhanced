@@ -109,6 +109,67 @@ export type ScheduleInterval = z.infer<typeof scheduleIntervalSchema>;
 export type TaskProjection = z.infer<typeof taskProjectionSchema>;
 export type ScheduleOperation = z.infer<typeof scheduleOperationSchema>;
 
+/** A date-only provider edit retains the linked interval's local clock time and length. */
+export function intervalForTaskDate(
+  interval: ScheduleInterval,
+  task: {
+    due: { date: string; timezone: string | null } | null;
+    duration?: { amount: number; unit: "minute" | "day" } | null;
+  },
+  zone: string,
+  syncDuration = false,
+): ScheduleInterval {
+  if (!task.due && (!syncDuration || !task.duration)) return interval;
+  const timezone = task.due?.timezone ?? zone;
+  const dateValue = task.due?.date;
+  const original = DateTime.fromISO(interval.start).setZone(timezone);
+  const date = !dateValue
+    ? original
+    : dateValue.includes("T")
+      ? DateTime.fromISO(dateValue, { zone: timezone })
+      : DateTime.fromISO(`${dateValue}T${original.toFormat("HH:mm")}`, {
+          zone: timezone,
+        });
+  if (
+    !date.isValid ||
+    (dateValue &&
+      !dateValue.includes("T") &&
+      date.toFormat("HH:mm") !== original.toFormat("HH:mm"))
+  )
+    throw new Error(
+      "This provider date falls in an invalid local clock time. Choose its schedule time explicitly.",
+    );
+  if (
+    dateValue &&
+    !/(?:Z|[+-]\d{2}:\d{2})$/i.test(dateValue) &&
+    date.getPossibleOffsets().length > 1 &&
+    !date.getPossibleOffsets().some((value) => value.offset === original.offset)
+  )
+    throw new Error(
+      "Choose an explicit offset for this repeated local clock time.",
+    );
+  const chosen =
+    !dateValue || /(?:Z|[+-]\d{2}:\d{2})$/i.test(dateValue)
+      ? date
+      : (date
+          .getPossibleOffsets()
+          .find((value) => value.offset === original.offset) ?? date);
+  return scheduleIntervalSchema.parse({
+    start: chosen.toUTC().toISO(),
+    end: chosen
+      .plus({
+        milliseconds:
+          syncDuration && task.duration
+            ? task.duration.amount *
+              (task.duration.unit === "day" ? 1440 : 1) *
+              60_000
+            : Date.parse(interval.end) - Date.parse(interval.start),
+      })
+      .toUTC()
+      .toISO(),
+  });
+}
+
 export function resolveScheduleInput(
   date: string,
   time: string,

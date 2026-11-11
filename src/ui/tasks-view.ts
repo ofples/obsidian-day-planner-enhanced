@@ -19,6 +19,7 @@ import { TaskReadError, type ProviderTask } from "../tasks/types";
 import TasksPane from "./components/tasks-pane.svelte";
 import { askForConfirmation } from "./confirmation-modal";
 import { TaskCaptureRouteModal } from "./task-capture-modal";
+import { TaskConflictModal } from "./task-conflict-modal";
 import { TaskEditorModal } from "./task-editor-modal";
 import { TaskScheduleModal } from "./task-schedule-modal";
 
@@ -205,6 +206,8 @@ export class TasksView extends ItemView {
         reopenTask: (task: ProviderTask) =>
           handle(this.service.mutate({ kind: "reopen", taskId: task.id })),
         retry: (id: string) => handle(this.service.retryOperation(id)),
+        reviewConflict: (id: string) =>
+          new TaskConflictModal(this.app, this.service, id).open(),
       },
     });
     void this.service.refresh();

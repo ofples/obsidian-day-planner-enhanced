@@ -46,6 +46,8 @@ The third pass was visually inspected. Shopping now has a consistent schedule ch
 
 The first actual desktop pane review exposed undated children appearing in a separate No date group from their dated parent. The implementation now groups those children with the parent and supports folding their tree. Explicitly dated children retain their own date group. Counts track matching branches, consistently with the parent-first mockups.
 
+The M3 desktop review moved schedule chips below full-width task titles and wrapped the selected-task actions after finding narrow-pane overflow. The M4 conflict dialog was compared again with board six. Removing its additional whole-task commit button restored the reviewed per-field flow. It shows original, saved and current values, leaves contested choices empty and disables Apply choices until they are resolved. A newer provider edit refreshes the comparison and clears those choices. Measured overflow in both refined surfaces was zero. Native pointer and OS input-method checks remain in acceptance.
+
 ## Streamlined implementation decisions
 
 - Use one adaptive details surface, docked on wide layouts and modal on narrow layouts.

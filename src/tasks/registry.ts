@@ -19,7 +19,7 @@ export const taskLinkSchema = z.object({
 });
 
 const taskRegistrySchema = z.object({
-  version: z.literal(3),
+  version: z.literal(4),
   namespace: z.string().regex(/^[a-f0-9]{32}$/),
   operations: z.array(taskOperationSchema),
   links: z.record(z.string(), taskLinkSchema),
@@ -28,7 +28,7 @@ const taskRegistrySchema = z.object({
 });
 
 const legacyRegistrySchema = taskRegistrySchema.extend({
-  version: z.union([z.literal(1), z.literal(2)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   schedules: z.array(scheduleOperationSchema).default([]),
   projections: z.record(z.string(), taskProjectionSchema).default({}),
 });
@@ -58,7 +58,7 @@ export class TaskRegistry {
     this.state =
       this.lastSaved === null
         ? {
-            version: 3,
+            version: 4,
             namespace: this.namespace,
             operations: [],
             links: {},
@@ -66,7 +66,7 @@ export class TaskRegistry {
             projections: {},
           }
         : taskRegistrySchema.parse(
-            legacy.success ? { ...legacy.data, version: 3 } : stored,
+            legacy.success ? { ...legacy.data, version: 4 } : stored,
           );
     if (this.state.namespace !== this.namespace)
       throw new Error(

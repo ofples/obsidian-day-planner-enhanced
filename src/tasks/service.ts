@@ -1,6 +1,12 @@
 import { get, writable } from "svelte/store";
 
 import {
+  reviewTaskConflict,
+  taskConflictMutations,
+  type TaskConflictChoices,
+  type TaskConflictReview,
+} from "./conflict";
+import {
   isOutstanding,
   operationTaskId,
   taskMutationSchema,
@@ -276,6 +282,123 @@ export class TaskService {
     });
     this.publish();
     this.requestRefresh();
+  }
+
+  async inspectConflict(id: string): Promise<TaskConflictReview> {
+    await this.pending;
+    const generation = this.generation;
+    const operation = this.registry
+      .snapshot()
+      .operations.find((item) => item.id === id);
+    const snapshot = this.cache.snapshot;
+    if (
+      !operation ||
+      operation.status !== "conflict" ||
+      operation.provider !== snapshot?.provider ||
+      operation.accountId !== snapshot.account.id ||
+      !get(this.state).writable
+    )
+      throw new TaskReadError(
+        "Reconnect the original account and refresh this saved conflict.",
+      );
+    const token = this.storage.getSecret(this.secretKey());
+    if (!token)
+      throw new TaskReadError(
+        "Reconnect the task account before reviewing this change.",
+      );
+    const provider = this.provider(token);
+    const fresh = await provider.read();
+    if (
+      !this.isCurrent(generation) ||
+      fresh.provider !== operation.provider ||
+      fresh.account.id !== operation.accountId
+    )
+      throw new TaskReadError(
+        "The task account changed. Open this comparison again.",
+      );
+    const idToRead =
+      operation.remoteId ??
+      (operation.mutation.kind === "create" ? null : operation.mutation.taskId);
+    const current = idToRead
+      ? provider.get
+        ? await provider.get(idToRead)
+        : (fresh.tasks.find((task) => task.id === idToRead) ?? null)
+      : null;
+    if (!this.isCurrent(generation) || !get(this.state).writable)
+      throw new TaskReadError(
+        "The task account disconnected during the comparison.",
+      );
+    if (current && current.id !== idToRead)
+      throw new TaskReadError(
+        "The provider returned a different task. Refresh before resolving this change.",
+      );
+    return reviewTaskConflict(operation, current);
+  }
+
+  async resolveConflict(
+    review: TaskConflictReview,
+    choices: TaskConflictChoices,
+  ): Promise<
+    | { kind: "changed"; review: TaskConflictReview }
+    | { kind: "saved"; operationIds: string[] }
+  > {
+    const current = await this.inspectConflict(review.operation.id);
+    if (
+      JSON.stringify(current.operation) !== JSON.stringify(review.operation) ||
+      JSON.stringify(current.current) !== JSON.stringify(review.current)
+    )
+      return { kind: "changed", review: current };
+    const planned = taskConflictMutations(current, choices);
+    if (
+      this.cache.snapshot?.account.capabilities?.duration === false &&
+      planned.some(
+        (item) =>
+          item.mutation.kind === "update" && item.mutation.changes.duration,
+      )
+    )
+      throw new TaskReadError(
+        "This provider account cannot save duration. Keep the current provider duration.",
+      );
+    const replacements: TaskOperation[] = planned.map((item) => ({
+      id: crypto.randomUUID(),
+      tempId: crypto.randomUUID(),
+      provider: current.operation.provider,
+      accountId: current.operation.accountId,
+      ...item,
+      status: "pending",
+      attempts: 0,
+      createdAt: new Date().toISOString(),
+    }));
+    const generation = this.generation;
+    await this.registry.change((state) => {
+      const index = state.operations.findIndex(
+        (item) => item.id === current.operation.id,
+      );
+      if (
+        !this.isCurrent(generation) ||
+        !get(this.state).writable ||
+        JSON.stringify(state.operations[index]) !==
+          JSON.stringify(current.operation)
+      )
+        throw new TaskReadError(
+          "This saved conflict changed. Open its latest comparison.",
+        );
+      const original = state.operations[index]!;
+      original.status = "cancelled";
+      original.resolutionIds = replacements.map((item) => item.id);
+      original.readback = current.current ?? undefined;
+      original.error = undefined;
+      state.operations.splice(index + 1, 0, ...replacements);
+      const link = original.sourceUid && state.links[original.sourceUid];
+      if (link && current.current) {
+        link.taskId = current.current.id;
+        if (!link.base && original.mutation.kind === "create")
+          link.base = { ...current.current, ...original.mutation.task };
+      }
+    });
+    this.publish();
+    this.requestRefresh();
+    return { kind: "saved", operationIds: replacements.map((item) => item.id) };
   }
 
   private requestRefresh() {

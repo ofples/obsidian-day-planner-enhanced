@@ -440,6 +440,41 @@ describe("linked task scheduling", () => {
     h.service.stop();
   });
 
+  test("resolving a provider date conflict moves its saved schedule without replaying that command", async () => {
+    const h = await harness();
+    h.tasks.set(root.id, {
+      ...root,
+      due: {
+        date: "2026-11-12",
+        recurring: false,
+        text: "",
+        timezone: null,
+      },
+    });
+    const original = await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    expect(h.service.registry.snapshot().schedules[0]?.phase).toBe("conflict");
+    const review = await h.service.inspectConflict(
+      original.providerOperationId,
+    );
+    await h.service.resolveConflict(review, { schedule: "remote" });
+    await h.settle();
+    await vi.waitUntil(
+      () => h.service.registry.snapshot().schedules[1]?.phase === "complete",
+    );
+    expect(h.service.registry.snapshot().schedules[0]?.phase).toBe("cancelled");
+    expect(h.scheduler.projection(root.id)?.interval).toEqual({
+      start: "2026-11-12T09:00:00.000Z",
+      end: "2026-11-12T09:30:00.000Z",
+    });
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.events.size).toBe(1);
+    expect(h.texts.get("Daily/2026-11-12.md")).toContain("- [ ] Child");
+    expect(h.texts.get("Daily/2026-11-11.md")).not.toContain("- [ ] Child");
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
   test("a changed destination suspends its saved drop before changing the source", async () => {
     const h = await harness();
     await h.scheduler.schedule(root.id, interval);

@@ -32,6 +32,7 @@
     completeTask,
     reopenTask,
     retry,
+    reviewConflict,
     capture,
     captureSettings,
     routeCapture,
@@ -51,6 +52,7 @@
     completeTask: (task: ProviderTask) => void;
     reopenTask: (task: ProviderTask) => void;
     retry: (id: string) => void;
+    reviewConflict: (id: string) => void;
     capture: TaskCapture;
     captureSettings: () => void;
     routeCapture: (issue: CaptureIssue) => void;
@@ -223,8 +225,10 @@
               : (operation.base?.title ?? "Task change")}</span
           >
           <small>{operation.error ?? "Pending sync"}</small>
-          {#if operation.status !== "conflict"}<button
-              onclick={() => retry(operation.id)}>Retry</button
+          {#if operation.status === "conflict"}<button
+              disabled={!$browserState.writable || $browserState.loading}
+              onclick={() => reviewConflict(operation.id)}>Review</button
+            >{:else}<button onclick={() => retry(operation.id)}>Retry</button
             >{/if}
         </div>
       {/each}
