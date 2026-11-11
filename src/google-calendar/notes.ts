@@ -10,6 +10,7 @@ import {
   renderBlock,
   stripSyncMarkers,
   syncMarker,
+  type ParsedBlock,
 } from "./markdown";
 import {
   sameSnapshot,
@@ -21,7 +22,28 @@ import {
   type LocalIdentity,
 } from "./types";
 
+function withoutBlocks(text: string, blocks: ParsedBlock[]) {
+  let end = 0;
+  const chunks = blocks.map((block) => {
+    const chunk = text.slice(end, block.from);
+    const newline = text.slice(block.to, block.to + 2).match(/^\r?\n/);
+    end = block.to + (newline?.[0].length ?? 0);
+    return chunk;
+  });
+  return chunks.join("") + text.slice(end);
+}
+
+function normalizeDocument(value: string) {
+  return value
+    .replace(/\r\n/g, "\n")
+    .replace(/\n[ \t]*\n+/g, "\n\n")
+    .trim();
+}
+
 export class ObsidianCalendarNotes implements CalendarNotes {
+  private readonly missingPaths = new Set<string>();
+  private scannedDocuments: Record<string, string> = {};
+
   constructor(
     private readonly app: App,
     private readonly daily: PeriodicNotes,
@@ -88,19 +110,22 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       blocks.push({ uid, path, raw, snapshot, from });
     }
     const assigned = new Set(blocks.map((block) => block.uid));
-    const missingPaths = new Set(
-      Object.entries(identities)
-        .filter(([uid]) => !assigned.has(uid))
-        .map(([, identity]) => identity.path),
-    );
+    this.missingPaths.clear();
+    for (const [uid, identity] of Object.entries(identities)) {
+      if (assigned.has(uid)) continue;
+      if (this.state.records[uid] || this.state.pendingCreate?.uid === uid)
+        this.missingPaths.add(identity.path);
+      else delete identities[uid];
+    }
     const documents = { ...this.state.documents };
     for (const [path, text] of Object.entries(scannedDocuments))
       if (
-        !missingPaths.has(path) &&
+        !this.missingPaths.has(path) &&
         blocks.some((block) => block.path === path)
       )
         documents[path] = text;
     await this.changeNotes(edits, identities, documents);
+    this.scannedDocuments = scannedDocuments;
     return blocks;
   }
 
@@ -109,7 +134,11 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     identities: Record<string, LocalIdentity>,
     documents = {
       ...this.state.documents,
-      ...Object.fromEntries(edits.map((edit) => [edit.path, edit.after])),
+      ...Object.fromEntries(
+        edits
+          .filter((edit) => !this.missingPaths.has(edit.path))
+          .map((edit) => [edit.path, edit.after]),
+      ),
     },
   ) {
     this.state.version = 2;
@@ -122,6 +151,9 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     this.state.pendingNoteChange = { edits, identities, documents };
     await this.save();
     await this.recoverNoteChange();
+    for (const edit of edits)
+      if (this.scannedDocuments[edit.path] === edit.before)
+        this.scannedDocuments[edit.path] = edit.after;
   }
 
   private async recoverNoteChange() {
@@ -172,18 +204,11 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     return this.locate(text, block) >= 0;
   }
 
-  async canDelete(record: SyncRecord, uid: string) {
+  async canDelete(record: SyncRecord, uid: string, owned = false) {
     if (!this.settings.googleCalendar.syncDeletions) return false;
-    // Moving a block to an unindexed note or changing its heading is not deletion.
-    for (const note of this.app.vault.getMarkdownFiles()) {
-      const text = await this.app.vault.read(note);
-      const identity = this.state.identities?.[uid];
-      if (
-        text.includes(`<!-- dp-gcal:${uid} -->`) ||
-        (identity && text.includes(identity.raw))
-      )
-        return false;
-    }
+    const identity = this.state.identities?.[uid];
+    const before = this.state.documents?.[record.path];
+    if (!identity?.raw || before === undefined) return false;
     const file = this.app.vault.getAbstractFileByPath(record.path);
     if (!(file instanceof TFile)) return false;
     const day = this.daily.getDateFromFile(file, "day");
@@ -194,25 +219,45 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       )
     )
       return false;
-    const text = await this.app.vault.read(file);
-    const parsed = parseBlocks(text, day.format("YYYY-MM-DD"), this.settings);
-    // A removed/changed marker or heading is ambiguous, so do not delete Google data.
-    if (parsed.some((block) => sameSnapshot(block.snapshot, record.base)))
-      return false;
-    if (text.includes(record.base.title)) return false;
-    const identity = this.state.identities?.[uid];
-    const before = this.state.documents?.[record.path];
-    if (!identity || before === undefined || !identity.raw) return false;
+    // Moving a block to an unindexed note or changing its heading is not deletion.
+    const stillPresent = (text: string) =>
+      text.includes(`<!-- dp-gcal:${uid} -->`) || text.includes(identity.raw);
+    for (const note of this.app.vault.getMarkdownFiles()) {
+      if (
+        note.path !== file.path &&
+        stillPresent(await this.app.vault.read(note))
+      )
+        return false;
+    }
     const index = this.locate(before, { uid, ...identity });
     if (index < 0) return false;
+    const text = await this.app.vault.read(file);
+    const date = day.format("YYYY-MM-DD");
+    const parsed = parseBlocks(text, date, this.settings);
+    if (owned) {
+      if (text !== this.scannedDocuments[record.path]) return false;
+      // Concurrent edits can replace several timed blocks. Require the old
+      // block to have been in scope and the surrounding Markdown to agree.
+      const oldBlocks = parseBlocks(before, date, this.settings);
+      const outside = withoutBlocks(text, parsed);
+      return (
+        oldBlocks.some(
+          (block) => block.from === index && block.raw === identity.raw,
+        ) &&
+        !stillPresent(outside) &&
+        normalizeDocument(outside) ===
+          normalizeDocument(withoutBlocks(before, oldBlocks))
+      );
+    }
+    if (
+      stillPresent(text) ||
+      text.includes(record.base.title) ||
+      parsed.some((block) => sameSnapshot(block.snapshot, record.base))
+    )
+      return false;
     const removed =
       before.slice(0, index) + before.slice(index + identity.raw.length);
-    const normalize = (value: string) =>
-      value
-        .replace(/\r\n/g, "\n")
-        .replace(/\n[ \t]*\n+/g, "\n\n")
-        .trim();
-    return normalize(text) === normalize(removed);
+    return normalizeDocument(text) === normalizeDocument(removed);
   }
 
   async write(

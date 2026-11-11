@@ -307,6 +307,76 @@ describe("vault calendar adapter", () => {
     h.files.delete(sourcePath);
     expect(await h.notes.canDelete(record, uid)).toBe(false);
   });
+  test("a removed owned block can be retired alongside additions and other edits", async () => {
+    const h = harness();
+    const journal = "# Journal\nUntouched.\n";
+    h.texts.set(
+      sourcePath,
+      `# Day planner\n- [ ] 09:00 - 09:30 Old\n- [ ] 10:00 - 11:00 Keep\n\n${journal}`,
+    );
+    const [old, keep] = await h.notes.scan();
+    const record = { eventId: "event1", path: sourcePath, base: old!.snapshot };
+    h.state.records[old!.uid] = record;
+    const revised = `# Day planner\n- [ ] 15:00 - 16:00 New #work\n    - [ ] Child\n- [ ] 10:00 - 11:00 Renamed\n- [ ] 17:00 - 18:00 Added\n\n${journal}`;
+    h.texts.set(sourcePath, revised);
+    const next = await h.notes.scan();
+    expect(next.map((block) => block.snapshot.title)).toEqual([
+      "New #work",
+      "Renamed",
+      "Added",
+    ]);
+    expect(next[1]?.uid).toBe(keep?.uid);
+    expect(next.some((block) => block.uid === old!.uid)).toBe(false);
+    expect(next[0]?.raw).toContain("    - [ ] Child");
+    expect(h.texts.get(sourcePath)).toBe(revised);
+    expect((await h.notes.scan()).map((block) => block.uid)).toEqual(
+      next.map((block) => block.uid),
+    );
+    expect(await h.notes.canDelete(record, old!.uid, true)).toBe(true);
+    expect(await h.notes.canDelete(record, old!.uid, false)).toBe(false);
+    h.texts.set(
+      sourcePath,
+      revised.replace(journal, `${old!.raw}\n\n${journal}`),
+    );
+    expect(await h.notes.canDelete(record, old!.uid, true)).toBe(false);
+    h.texts.set(sourcePath, revised);
+    h.settings.googleCalendar.syncDeletions = false;
+    expect(await h.notes.canDelete(record, old!.uid, true)).toBe(false);
+  });
+  test("moving a block to another section protects even a plugin-owned event", async () => {
+    const h = harness();
+    const [block] = await h.notes.scan();
+    const record = {
+      eventId: "event1",
+      path: sourcePath,
+      base: block!.snapshot,
+    };
+    h.state.records[uid] = record;
+    h.texts.set(
+      sourcePath,
+      `# Day planner\r\n- [ ] 15:00 - 16:00 New\r\n\r\n# Journal\r\n${block!.raw}\r\nUntouched.\r\n`,
+    );
+    expect((await h.notes.scan()).map((local) => local.uid)).not.toContain(uid);
+    expect(await h.notes.canDelete(record, uid, true)).toBe(false);
+  });
+  test("only the surplus mapping is retired when an identical copy is removed", async () => {
+    const h = harness();
+    const raw = "- [ ] 09:00 - 09:30 Same";
+    const header = "# Day planner\n";
+    h.texts.set(sourcePath, `${header}${raw}\n${raw}\n`);
+    const [first, second] = await h.notes.scan();
+    const record = {
+      eventId: "event2",
+      path: sourcePath,
+      base: second!.snapshot,
+    };
+    h.state.records[second!.uid] = record;
+    h.texts.set(sourcePath, `${header}${raw}\n`);
+    expect((await h.notes.scan()).map((block) => block.uid)).toEqual([
+      first?.uid,
+    ]);
+    expect(await h.notes.canDelete(record, second!.uid, true)).toBe(true);
+  });
   test("concurrent edits stop a pull rather than replacing changed text", async () => {
     const h = harness();
     const [block] = await h.notes.scan();

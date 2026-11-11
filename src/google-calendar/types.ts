@@ -48,6 +48,7 @@ export interface SyncRecord {
   path: string;
   base: CalendarSnapshot;
   deleted?: boolean;
+  pendingDelete?: boolean;
 }
 
 export interface CalendarSyncState {
@@ -63,6 +64,7 @@ export interface CalendarSyncState {
     documents: Record<string, string>;
   };
   pendingImport?: { uid: string; eventId: string; snapshot: CalendarSnapshot };
+  pendingCreate?: { uid: string; path: string; snapshot: CalendarSnapshot };
   pendingMove?: {
     source: LocalBlock;
     targetPath: string;
@@ -92,7 +94,7 @@ export interface CalendarApi {
 export interface CalendarNotes {
   scan(): Promise<LocalBlock[]>;
   isUnchanged(block: LocalBlock): Promise<boolean>;
-  canDelete(record: SyncRecord, uid: string): Promise<boolean>;
+  canDelete(record: SyncRecord, uid: string, owned?: boolean): Promise<boolean>;
   write(
     uid: string,
     snapshot: CalendarSnapshot,

@@ -15,6 +15,19 @@ export interface SyncResult {
   conflicts: string[];
 }
 
+function exportId(namespace: string, uid: string) {
+  return `dp${namespace}${uid}`;
+}
+
+function isOwned(event: GoogleEvent, namespace: string, uid: string) {
+  const properties = event.extendedProperties?.private;
+  return (
+    event.id === exportId(namespace, uid) &&
+    properties?.["dayPlannerVault"] === namespace &&
+    properties["dayPlannerBlock"] === uid
+  );
+}
+
 async function importUid(namespace: string, eventId: string) {
   const hash = await crypto.subtle.digest(
     "SHA-256",
@@ -50,6 +63,17 @@ export async function syncCalendar({
     deleted: 0,
     conflicts: [],
   };
+  // Resolve a lost DELETE response before assigning identities. A block
+  // restored in the meantime can then be exported with a fresh ID.
+  for (const record of Object.values(state.records)) {
+    if (!record.pendingDelete) continue;
+    const remote = await api.get(record.eventId);
+    if (remote && remote.status !== "cancelled") continue;
+    record.deleted = true;
+    delete record.pendingDelete;
+    await save();
+    result.deleted++;
+  }
   const locals = await notes.scan();
   const byUid = new Map<string, LocalBlock>();
   for (const block of locals) {
@@ -80,6 +104,24 @@ export async function syncCalendar({
   // Fetch every page before making changes; absence from a window is never deletion.
   const events = await api.list(timeMin, timeMax);
   const byEvent = new Map(events.map((event) => [event.id, event]));
+  if (state.pendingCreate) {
+    const { uid, path, snapshot } = state.pendingCreate;
+    const eventId = exportId(state.namespace, uid);
+    const remote = byEvent.get(eventId) ?? (await api.get(eventId));
+    if (remote) {
+      if (
+        remote.status !== "cancelled" &&
+        !isOwned(remote, state.namespace, uid)
+      )
+        throw new Error(
+          "An event with the pending export ID belongs to another source.",
+        );
+      // Compare any later changes against the snapshot that was sent.
+      state.records[uid] = { eventId, path, base: snapshot };
+    }
+    delete state.pendingCreate;
+    await save();
+  }
   const linkedEvents = new Set(
     Object.values(state.records).map((record) => record.eventId),
   );
@@ -114,24 +156,35 @@ export async function syncCalendar({
       continue;
     }
     if (remoteDeleted) {
-      if (localChanged) {
+      if (localChanged && !record.pendingDelete) {
         conflict("Google deleted this event while the note was edited");
         continue;
       }
-      if (local) await notes.cancel(local);
+      if (local && !record.pendingDelete) await notes.cancel(local);
       record.deleted = true;
+      delete record.pendingDelete;
       await save();
       result.deleted++;
       continue;
+    }
+    if (record.pendingDelete) {
+      // A fresh comparison below will reauthorize a DELETE if still needed.
+      delete record.pendingDelete;
+      await save();
     }
     if (!remoteSnapshot) {
       conflict("event is no longer a supported timed event");
       continue;
     }
     if (!local) {
-      if (!(await notes.canDelete(record, uid))) {
+      const owned = isOwned(remote, state.namespace, uid);
+      if (record.eventId === exportId(state.namespace, uid) && !owned) {
+        conflict("the event's Day Planner ownership could not be verified");
+        continue;
+      }
+      if (!(await notes.canDelete(record, uid, owned))) {
         conflict(
-          "source note is missing, out of scope, or the sync marker was changed",
+          "local deletion is disabled or the removed block could not be verified",
         );
         continue;
       }
@@ -139,8 +192,11 @@ export async function syncCalendar({
         conflict("note block was removed while Google was edited");
         continue;
       }
+      record.pendingDelete = true;
+      await save();
       await api.remove(remote);
       record.deleted = true;
+      delete record.pendingDelete;
       await save();
       result.deleted++;
       continue;
@@ -193,13 +249,28 @@ export async function syncCalendar({
       continue;
     if (!(await notes.isUnchanged(local))) continue;
     // Deterministic Google IDs survive a timeout/crash after a successful POST.
-    const eventId = `dp${state.namespace}${local.uid}`;
+    const eventId = exportId(state.namespace, local.uid);
     let event: GoogleEvent | null =
       byEvent.get(eventId) ?? (await api.get(eventId));
-    if (!event)
+    if (!event) {
+      state.pendingCreate = {
+        uid: local.uid,
+        path: local.path,
+        snapshot: local.snapshot,
+      };
+      await save();
       event = await api.create(eventId, local.uid, local.snapshot, local);
+    }
     const existing = snapshotOf(event);
-    if (!existing || !sameSnapshot(existing, local.snapshot)) {
+    if (
+      !isOwned(event, state.namespace, local.uid) ||
+      !existing ||
+      !sameSnapshot(existing, local.snapshot)
+    ) {
+      if (state.pendingCreate)
+        throw new Error(
+          "Google did not return the expected event for a pending export.",
+        );
       result.conflicts.push(
         `${local.path}: ${local.snapshot.title} — an existing event differs; no overwrite`,
       );
@@ -210,6 +281,7 @@ export async function syncCalendar({
       path: local.path,
       base: local.snapshot,
     };
+    delete state.pendingCreate;
     linkedEvents.add(event.id);
     await save();
     result.pushed++;
