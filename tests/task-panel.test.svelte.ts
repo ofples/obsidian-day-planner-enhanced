@@ -263,6 +263,12 @@ describe("custom Tasks panel", () => {
       }),
     } as unknown as TaskReconciler;
     const h = render(null, reconciler);
+    const disclosure =
+      h.target.querySelector<HTMLDetailsElement>(".task-review")!;
+    disclosure.open = true;
+    disclosure.dispatchEvent(new Event("toggle"));
+    flushSync();
+    expect(disclosure.open).toBe(true);
     const review = Array.from(
       h.target.querySelectorAll<HTMLButtonElement>(".task-review button"),
     ).find((button) => button.textContent === "Review link")!;
@@ -275,7 +281,10 @@ describe("custom Tasks panel", () => {
       title: "Shopping",
       restoreTagOnCancel: true,
     });
-    expect(h.target.textContent).toContain("Cancel restores #todoist");
+    expect(disclosure.open).toBe(false);
+    expect(h.target.textContent?.replace(/\s+/g, " ")).toContain(
+      "separately. Cancel restores #todoist",
+    );
   });
 
   test("unlink requires confirmation and keeps the decision open while it saves", async () => {
@@ -293,6 +302,9 @@ describe("custom Tasks panel", () => {
     const h = render(
       { kind: "unlink", title: "Shopping", linkUid: "link" },
       reconciler,
+    );
+    expect(h.target.textContent?.replace(/\s+/g, " ")).toContain(
+      "separately. Remove its #todoist",
     );
     expect(unlink).not.toHaveBeenCalled();
     h.target

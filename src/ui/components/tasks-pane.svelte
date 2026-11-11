@@ -149,6 +149,7 @@
   );
   const paneId = crypto.randomUUID();
   let showDetails = $state(false);
+  let reviewOpen = $state(false);
   let menuLeft = $state(0);
   let menuTop = $state(0);
   let busy = $state(false);
@@ -164,6 +165,9 @@
   });
   $effect(() => {
     if (!selected) showDetails = false;
+  });
+  $effect(() => {
+    if ($action || showDetails) reviewOpen = false;
   });
 
   function toggleGroup(id: string) {
@@ -484,7 +488,10 @@
     </div>
   </header>
 
-  {#if attentionCount || syncError}<details class="task-review">
+  {#if attentionCount || syncError}<details
+      class="task-review"
+      bind:open={reviewOpen}
+    >
       <summary
         ><AlertCircle size={16} /><span
           >{attentionCount
@@ -678,7 +685,7 @@
             <p class="task-form-context">{$action.title}</p>
             <p>
               Keep the note as a local task and manage the Todoist task
-              separately.{#if $action.restoreTagOnCancel}
+              separately.{" "}{#if $action.restoreTagOnCancel}
                 Cancel restores #todoist and continues task sync.{:else}
                 Remove its #todoist capture tag.{/if}
             </p>
