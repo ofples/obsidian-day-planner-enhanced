@@ -127,7 +127,30 @@ export function mutationFields(mutation: TaskMutation) {
   }
 }
 
-export function sameTaskField(a: unknown, b: unknown, field: string) {
+function sameTaskDate(
+  expected: NonNullable<ProviderTask["due"]>,
+  actual: NonNullable<ProviderTask["due"]>,
+  timezone: string,
+) {
+  if (!expected.date.includes("T") || !actual.date.includes("T"))
+    return expected.date === actual.date;
+  const first = DateTime.fromISO(expected.date, {
+    zone: expected.timezone ?? timezone,
+  });
+  const second = DateTime.fromISO(actual.date, {
+    zone: actual.timezone ?? timezone,
+  });
+  return (
+    first.isValid && second.isValid && first.toMillis() === second.toMillis()
+  );
+}
+
+export function sameTaskField(
+  a: unknown,
+  b: unknown,
+  field: string,
+  timezone?: string,
+) {
   if (field === "duration" && a == null && b == null) return true;
   if (field === "labels") {
     const first = z.array(z.string()).safeParse(a),
@@ -142,7 +165,10 @@ export function sameTaskField(a: unknown, b: unknown, field: string) {
     const first = taskSchema.shape.due.parse(a),
       second = taskSchema.shape.due.parse(b);
     return (
-      first?.date === second?.date &&
+      (first?.date === second?.date ||
+        Boolean(
+          first && second && timezone && sameTaskDate(first, second, timezone),
+        )) &&
       first?.recurring === second?.recurring &&
       first?.timezone === second?.timezone &&
       (!first?.recurring || first.text === second?.text)
@@ -155,6 +181,7 @@ export function sameTaskField(a: unknown, b: unknown, field: string) {
 export function preflightOperation(
   operation: TaskOperation,
   remote: ProviderTask | null,
+  timezone?: string,
 ): "ready" | "already-applied" | "conflict" {
   const mutation = operation.mutation;
   if (mutation.kind === "create") return "ready";
@@ -181,15 +208,22 @@ export function preflightOperation(
       remote.completed ||
       base.completionCount === undefined ||
       remote.completionCount !== base.completionCount ||
-      !sameTaskField(base.due, remote.due, "due")
+      !sameTaskField(base.due, remote.due, "due", timezone)
     )
       return "conflict";
   const changes = mutationFields(mutation);
   let changed = false;
   for (const [field, wanted] of Object.entries(changes)) {
     const current = remote[field as keyof ProviderTask];
-    if (sameTaskField(current, wanted, field)) continue;
-    if (!sameTaskField(current, base[field as keyof ProviderTask], field))
+    if (sameTaskField(current, wanted, field, timezone)) continue;
+    if (
+      !sameTaskField(
+        current,
+        base[field as keyof ProviderTask],
+        field,
+        timezone,
+      )
+    )
       return "conflict";
     changed = true;
   }
@@ -218,20 +252,8 @@ export function matchesOperationResult(
       if (field === "due" && wanted && remote.due) {
         const expected = taskSchema.shape.due.parse(wanted)!;
         const actual = remote.due;
-        const expectedInstant = DateTime.fromISO(expected.date, {
-          zone: expected.timezone ?? timezone,
-        });
-        const actualInstant = DateTime.fromISO(actual.date, {
-          zone: actual.timezone ?? timezone,
-        });
-        const datesMatch =
-          expected.date.includes("T") && actual.date.includes("T")
-            ? expectedInstant.isValid &&
-              actualInstant.isValid &&
-              expectedInstant.toMillis() === actualInstant.toMillis()
-            : expected.date === actual.date;
         return (
-          datesMatch &&
+          sameTaskDate(expected, actual, timezone) &&
           expected.recurring === actual.recurring &&
           (!expected.recurring ||
             (expected.text === actual.text &&
@@ -288,7 +310,7 @@ export function resolvedTaskOperation(
   operations: TaskOperation[],
   id: string,
 ):
-  | { status: "complete"; task?: ProviderTask }
+  | { status: "complete"; task?: ProviderTask; operationId?: string }
   | { status: "pending" | "conflict" } {
   const byId = new Map(
     operations.map((operation) => [operation.id, operation]),
@@ -298,6 +320,7 @@ export function resolvedTaskOperation(
   const pending = [id];
   const visited = new Set<string>();
   let task: ProviderTask | undefined;
+  let operationId: string | undefined;
   for (let index = 0; index < pending.length; index++) {
     const next = pending[index]!;
     const operation = byId.get(next);
@@ -313,11 +336,12 @@ export function resolvedTaskOperation(
     if (operation.status === "cancelled" && operation.resolutionIds) {
       task = operation.readback ?? task;
       pending.splice(index + 1, 0, ...operation.resolutionIds);
-    } else if (operation.status === "complete")
+    } else if (operation.status === "complete") {
       task = operation.readback ?? task;
-    else if (["conflict", "failed", "cancelled"].includes(operation.status))
+      operationId = operation.id;
+    } else if (["conflict", "failed", "cancelled"].includes(operation.status))
       return { status: "conflict" };
     else return { status: "pending" };
   }
-  return { status: "complete", task };
+  return { status: "complete", task, ...(operationId ? { operationId } : {}) };
 }

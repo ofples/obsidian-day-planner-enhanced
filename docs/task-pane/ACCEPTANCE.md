@@ -114,6 +114,14 @@ The matching source build was installed with a full plugin backup and equal bund
 
 Final refreshed API/state checks still found no disposable tasks/events, no native echoes, restored note bytes/file absence and original calendar/pane settings. History/recovery records remained intact with zero pending operations/schedules or source/reconciliation issues. Full source validation has 988 passes and the inherited ICS timeout, nine skips and 17 todo cases. Other source checks, the strict scorecard and production build pass. Timeline selection returned to today while the previous note stayed open after reload, leaving date/navigation restoration in M6.
 
+### Markdown-origin recurring completion
+
+Integrated cases verify source-checkbox completion with the original event/link retained in history, a fresh next task and one completion UUID. Title/time edits complete before the occurrence advances. Remote rescheduling within the same counter follows the existing link/event. A lost completion response retries its original UUID after restart. A stale completion can keep the current open task and reconcile its provider date. A reviewed replacement completion retains its own verified historical baseline, including earlier resolved title choices.
+
+Completion-only commands acknowledge Todoist during a calendar outage and retry the calendar phase after restart. Simultaneously removing the source time retains an untimed checked history item and removes its owned event. Refreshed legacy counters work with their matching due value. Runtime checks reject mismatched combined-journal identities. Exact v12 bytes are backed up before v13 migration. Source stability defers a parent while a descendant line is focused.
+
+Seven focused files have 154 passes. The full suite has 1,002 passes, one inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, the separate strict scorecard and production build pass. Installed native/API acceptance, external completion, exact undo and remaining M5/M6 acceptance continue.
+
 ## Failure-injection matrix
 
 Exercise each mutation at the boundaries before intent save, after intent save, after local write, after remote success with a lost response, after remote acknowledgment save, after Google write and before operation completion. Restart after every injected failure. Required outcomes are one task per create operation, one event per occurrence, preserved source text and a retriable or explicitly conflicted operation.

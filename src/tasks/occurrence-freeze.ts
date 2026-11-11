@@ -7,6 +7,7 @@ import {
   taskAccountSettings,
   type TaskCaptureSettings,
 } from "./capture-settings";
+import { resolvedTaskOperation } from "./operations";
 import { rewriteTaskNote } from "./reconcile-markdown";
 import type { TaskScheduler } from "./schedule";
 import type { TaskService } from "./service";
@@ -36,11 +37,17 @@ export async function freezeTaskOccurrences(
         (operation) => operation.id === record.id,
       );
       if (completion?.status !== "complete") continue;
-      const pending = state.schedules.filter(
-        (operation) =>
-          operation.occurrenceId === record.id &&
-          !["complete", "cancelled"].includes(operation.phase),
-      );
+      const pending = state.schedules.filter((operation) => {
+        if (["complete", "cancelled"].includes(operation.phase)) return false;
+        if (operation.occurrenceId === record.id) return true;
+        const final = operation.providerSteps?.at(-1);
+        const result = final
+          ? resolvedTaskOperation(state.operations, final.id)
+          : undefined;
+        return (
+          result?.status === "complete" && result.operationId === record.id
+        );
+      });
       if (pending.length) {
         await scheduler.resume();
         const error = get(scheduler.state).operations.find(

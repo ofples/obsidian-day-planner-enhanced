@@ -15,6 +15,7 @@ import { TaskDrag } from "./drag";
 import { pendingTaskOccurrence } from "./occurrence-types";
 import {
   mutationFields,
+  sameTaskField,
   isOutstanding,
   operationTaskId,
   resolvedTaskOperation,
@@ -230,6 +231,16 @@ export class TaskScheduler {
           "Verify the saved task deletion before unlinking this note.",
         );
     }
+    const providerSteps = input.mutations.map((step) => ({
+      ...step,
+      id: crypto.randomUUID(),
+    }));
+    const final = providerSteps.at(-1);
+    const occurrenceId =
+      input.occurrenceId ??
+      (final?.mutation.kind === "complete" && final.base.due?.recurring
+        ? final.id
+        : undefined);
     const operation = scheduleOperationSchema.parse({
       id: crypto.randomUUID(),
       provider: snapshot.provider,
@@ -260,11 +271,8 @@ export class TaskScheduler {
       repairCaptureTag: input.repairCaptureTag,
       missingSource: input.missingSource,
       deletionId: input.deletionId,
-      occurrenceId: input.occurrenceId,
-      providerSteps: input.mutations.map((step) => ({
-        ...step,
-        id: crypto.randomUUID(),
-      })),
+      occurrenceId,
+      providerSteps,
       phase: input.missingSource ? "prepared" : "pending",
       plan: input.missingSource
         ? {
@@ -880,14 +888,6 @@ export class TaskScheduler {
       operation = this.saved(operation.id);
     }
     if (operation.phase === "provider-pending") {
-      if (
-        operation.plan?.interval &&
-        !operation.unlink &&
-        !operation.repairCaptureTag
-      ) {
-        await this.calendar.assertTaskExportAllowed?.();
-        if (!this.current(operation)) return;
-      }
       const steps = operation.providerSteps ?? [
         {
           id: operation.providerOperationId,
@@ -899,11 +899,52 @@ export class TaskScheduler {
           },
         },
       ];
-      for (const step of steps) {
+      const changesTaskDate = steps.some(
+        (step) =>
+          step.mutation.kind === "update" &&
+          step.mutation.changes.due !== undefined &&
+          resolvedTaskOperation(
+            this.service.registry.snapshot().operations,
+            step.id,
+          ).status !== "complete",
+      );
+      if (
+        operation.plan?.interval &&
+        changesTaskDate &&
+        !operation.unlink &&
+        !operation.repairCaptureTag
+      ) {
+        await this.calendar.assertTaskExportAllowed?.();
         if (!this.current(operation)) return;
+      }
+      for (const [index, step] of steps.entries()) {
+        if (!this.current(operation)) return;
+        let base = step.base;
+        if (
+          step.mutation.kind === "complete" &&
+          base.due?.recurring &&
+          index > 0
+        ) {
+          const previous = resolvedTaskOperation(
+            this.service.registry.snapshot().operations,
+            steps[index - 1]!.id,
+          );
+          if (
+            previous.status === "complete" &&
+            previous.task &&
+            previous.task.completionCount === base.completionCount &&
+            sameTaskField(
+              base.due,
+              previous.task.due,
+              "due",
+              get(this.service.state).snapshot!.account.timezone,
+            )
+          )
+            base = previous.task;
+        }
         await this.service.mutate(step.mutation, undefined, {
           id: step.id,
-          base: step.base,
+          base,
           provider: operation.provider,
           accountId: operation.accountId,
         });
@@ -1015,8 +1056,25 @@ export class TaskScheduler {
         throw new TaskProjectionConflict(
           "Verify the saved provider commands before acknowledging this note.",
         );
-      const task =
-        result.status === "complete" && result.task
+      const occurrence = operation.occurrenceId
+        ? state.occurrences[operation.occurrenceId]
+        : undefined;
+      if (
+        operation.occurrenceId &&
+        (!occurrence ||
+          !["freezing", "complete"].includes(occurrence.phase) ||
+          occurrence.provider !== operation.provider ||
+          occurrence.accountId !== operation.accountId ||
+          occurrence.before.task.id !== operation.task.id ||
+          state.operations.find((item) => item.id === occurrence.id)?.status !==
+            "complete")
+      )
+        throw new TaskProjectionConflict(
+          "Verify this occurrence's completion before acknowledging its historical note.",
+        );
+      const task = occurrence
+        ? { ...occurrence.before.task, completed: true }
+        : result.status === "complete" && result.task
           ? result.task
           : operation.task;
       const link = state.links[operation.linkUid]!;
@@ -1137,6 +1195,13 @@ export class TaskScheduler {
       throw new TaskProjectionConflict(
         "Verify the resolved task before applying its note choices.",
       );
+    const occurrence = result.operationId
+      ? state.occurrences[result.operationId]
+      : undefined;
+    const task =
+      occurrence?.phase === "freezing"
+        ? { ...occurrence.before.task, completed: true }
+        : result.task;
     const source = operation.plan!.links[0]!.source;
     const text = await this.host.read(source.path);
     const from = text === null ? -1 : locateSource(text, source);
@@ -1154,16 +1219,18 @@ export class TaskScheduler {
     ];
     const raw = rewriteTaskNote(
       source.raw,
-      result.task,
+      task,
       taskAccountSettings(this.host.settings(), snapshot),
       fields,
     );
     const interval =
       operation.plan!.interval &&
-      (fields.includes("due") || fields.includes("duration"))
+      (operation.occurrenceId ||
+        fields.includes("due") ||
+        fields.includes("duration"))
         ? intervalForTaskDate(
             operation.plan!.interval,
-            result.task,
+            task,
             snapshot.account.timezone,
             snapshot.account.capabilities?.duration === true,
           )
@@ -1172,7 +1239,9 @@ export class TaskScheduler {
       ...operation,
       id: crypto.randomUUID(),
       providerOperationId: crypto.randomUUID(),
-      task: result.task,
+      task,
+      occurrenceId:
+        occurrence?.phase === "freezing" ? occurrence.id : undefined,
       target: { kind: "reconcile", interval },
       previous: { ...source, from },
       previousInterval: operation.plan!.interval ?? undefined,

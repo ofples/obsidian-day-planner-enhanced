@@ -147,19 +147,35 @@ export const scheduleOperationSchema = z
     error: z.string().optional(),
   })
   .refine(
-    (operation) =>
-      !operation.occurrenceId ||
-      (operation.target.kind === "reconcile" &&
-        operation.task.completed &&
+    (operation) => {
+      if (!operation.occurrenceId) return true;
+      const final = operation.providerSteps?.at(-1);
+      const completesOccurrence =
+        final?.mutation.kind === "complete" &&
+        final.id === operation.occurrenceId &&
+        final.base.due?.recurring === true &&
+        final.base.completionCount !== undefined &&
+        operation.providerSteps!.every(
+          (step) =>
+            step.mutation.kind !== "create" &&
+            step.mutation.kind !== "delete" &&
+            step.mutation.taskId === operation.task.id &&
+            step.base.id === operation.task.id,
+        );
+      return (
+        operation.target.kind === "reconcile" &&
         operation.task.due?.recurring === true &&
         !operation.unlink &&
         !operation.repairCaptureTag &&
         !operation.syncTaskDate &&
         !operation.providerChanges &&
-        !operation.providerSteps?.length),
+        (completesOccurrence ||
+          (operation.task.completed && !operation.providerSteps?.length))
+      );
+    },
     {
       message:
-        "Occurrence freezing retains its completed note and uses local/calendar phases.",
+        "Occurrence journals retain their completed baseline and matching final completion command.",
     },
   )
   .refine(

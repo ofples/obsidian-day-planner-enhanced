@@ -37,6 +37,7 @@ test("deferred Markdown tabs do not prevent source stability checks for loaded e
   vi.useFakeTimers();
   vi.stubGlobal("activeDocument", document);
   let focused = false;
+  let cursorLine = 0;
   const deferred = {
     isDeferred: true,
     view: { containerEl: document.createElement("div") },
@@ -48,7 +49,7 @@ test("deferred Markdown tabs do not prevent source stability checks for loaded e
       file: { path: "Tasks.md" },
       editor: {
         hasFocus: () => focused,
-        getCursor: () => ({ line: 0, ch: 0 }),
+        getCursor: () => ({ line: cursorLine, ch: 0 }),
       },
     },
   };
@@ -87,5 +88,13 @@ test("deferred Markdown tabs do not prevent source stability checks for loaded e
   focused = true;
   expect(captured.host!.stableMissing()).toBe(false);
   expect(captured.host!.stable(candidate)).toBe(false);
+  const parent = parseCaptureCandidates(
+    "Tasks.md",
+    "- [ ] Parent #todoist\n  - [ ] Child #todoist\n\n- [ ] Other",
+  )[0]!;
+  cursorLine = 1;
+  expect(captured.host!.stable(parent)).toBe(false);
+  cursorLine = 3;
+  expect(captured.host!.stable(parent)).toBe(true);
   for (const cleanup of dispose) cleanup();
 });

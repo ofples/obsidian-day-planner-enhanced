@@ -74,10 +74,11 @@ export function createTaskCapture(
         if (leaf.isDeferred) return false;
         const view = leaf.view as MarkdownView;
         if (view.file?.path !== candidate.path) return false;
+        const line = view.editor.hasFocus() ? view.editor.getCursor().line : -1;
         return (
           composing.has(view.containerEl.ownerDocument) ||
-          (view.editor.hasFocus() &&
-            view.editor.getCursor().line === candidate.line)
+          (line >= candidate.line &&
+            line < candidate.line + candidate.raw.split(/\r?\n/).length)
         );
       }),
   });

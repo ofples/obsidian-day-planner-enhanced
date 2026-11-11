@@ -470,7 +470,7 @@ export class TaskService {
       throw new TaskReadError(
         "The provider returned a different task. Refresh before resolving this change.",
       );
-    return reviewTaskConflict(operation, current);
+    return reviewTaskConflict(operation, current, fresh.account.timezone);
   }
 
   async readTask(id: string) {

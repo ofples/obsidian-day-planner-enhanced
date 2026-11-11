@@ -40,7 +40,7 @@ const account = {
   projectMappings: { work: "work", other: "other" },
   labelMappings: { errand: "Errand" },
 };
-function plan(before: string, after: string, remote = task) {
+function plan(before: string, after: string, remote = task, baseline = task) {
   const original = parseCaptureCandidates("Tasks.md", before)[0]!;
   const candidate = parseCaptureCandidates("Tasks.md", after)[0]!;
   const settings = taskCaptureSettingsSchema.parse({
@@ -51,7 +51,7 @@ function plan(before: string, after: string, remote = task) {
       provider: "todoist",
       accountId: "account",
       taskId: task.id,
-      base: task,
+      base: baseline,
       source: candidate,
       noteBase: original,
     },
@@ -63,6 +63,53 @@ function plan(before: string, after: string, remote = task) {
 }
 
 describe("linked note field reconciliation", () => {
+  test("a checked recurring note completes its current counter after independent provider rescheduling", () => {
+    const recurring = {
+      ...task,
+      completionCount: 2,
+      due: {
+        date: "2026-11-12",
+        text: "every day",
+        recurring: true,
+        timezone: "UTC",
+      },
+    };
+    const remote = {
+      ...recurring,
+      due: { ...recurring.due, date: "2026-11-13" },
+    };
+    const result = plan(
+      "- [ ] Task #todoist #work",
+      "- [x] Task #todoist #work",
+      remote,
+      recurring,
+    );
+    expect(result.conflicts).toEqual([]);
+    expect(result.mutations).toEqual([
+      { mutation: { kind: "complete", taskId: task.id }, base: remote },
+    ]);
+    expect(result.raw).toContain("- [x]");
+  });
+
+  test("a changed recurring counter pauses a note completion even if the due date is unchanged", () => {
+    const recurring = {
+      ...task,
+      completionCount: 2,
+      due: {
+        date: "2026-11-12",
+        text: "every day",
+        recurring: true,
+        timezone: "UTC",
+      },
+    };
+    const result = plan(
+      "- [ ] Task #todoist #work",
+      "- [x] Task #todoist #work",
+      { ...recurring, completionCount: 3 },
+      recurring,
+    );
+    expect(result.conflicts).toContain("recurrence");
+  });
   test("keeping a link restores its original capture-tag placement when other bytes match", () => {
     const original =
       "- [ ] Task #ToDoIsT #work <!-- keep --> ^native\r\n  - [ ] Child #todoist";
@@ -197,7 +244,7 @@ describe("linked note field reconciliation", () => {
     ).toContain("**Task**");
   });
 
-  test("recurring checkbox changes pause for occurrence-aware handling", () => {
+  test("recurring checkbox changes require an available occurrence counter", () => {
     const result = plan(
       "- [ ] Task #todoist #work",
       "- [x] Task #todoist #work",
@@ -247,5 +294,24 @@ describe("linked note field reconciliation", () => {
     });
     expect(guarded.conflicts).toContain("recurrence");
     expect(result.interval).toBeNull();
+  });
+
+  test("a fresh provider counter can complete a legacy linked occurrence with the same due value", () => {
+    const due = {
+      date: "2026-11-12",
+      text: "every day",
+      recurring: true,
+      timezone: "UTC",
+    };
+    const legacy = { ...task, due };
+    const remote = { ...legacy, completionCount: 2 };
+    const result = plan(
+      "- [ ] Task #todoist #work",
+      "- [x] Task #todoist #work",
+      remote,
+      legacy,
+    );
+    expect(result.conflicts).toEqual([]);
+    expect(result.mutations.at(-1)?.base.completionCount).toBe(2);
   });
 });

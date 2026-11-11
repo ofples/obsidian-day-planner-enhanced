@@ -34,6 +34,46 @@ const operation: TaskOperation = {
 };
 
 describe("task write comparisons", () => {
+  test("recurring completion accepts provider-normalized instants and keeps timezone/rule conflicts", () => {
+    const due = {
+      date: "2026-11-12T03:30:00.000Z",
+      recurring: true,
+      text: "every day",
+      timezone: "Asia/Kolkata",
+    };
+    const recurring = { ...base, completionCount: 3, due };
+    const op: TaskOperation = {
+      ...operation,
+      base: recurring,
+      mutation: { kind: "complete", taskId: base.id },
+    };
+    const normalized = {
+      ...recurring,
+      due: { ...due, date: "2026-11-12T09:00:00" },
+    };
+    expect(preflightOperation(op, normalized, "Asia/Kolkata")).toBe("ready");
+    expect(
+      preflightOperation(
+        op,
+        { ...normalized, due: { ...normalized.due, timezone: "UTC" } },
+        "Asia/Kolkata",
+      ),
+    ).toBe("conflict");
+    expect(
+      preflightOperation(
+        op,
+        { ...normalized, due: { ...normalized.due, text: "every week" } },
+        "Asia/Kolkata",
+      ),
+    ).toBe("conflict");
+    expect(
+      preflightOperation(
+        op,
+        { ...normalized, completionCount: 4 },
+        "Asia/Kolkata",
+      ),
+    ).toBe("conflict");
+  });
   test("recurring completion requires one verified counter increment and preserves the rule", () => {
     const recurring: ProviderTask = {
       ...base,

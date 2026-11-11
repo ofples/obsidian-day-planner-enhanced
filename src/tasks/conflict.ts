@@ -47,6 +47,7 @@ export type TaskConflictChoices = Record<string, "local" | "remote">;
 export function reviewTaskConflict(
   operation: TaskOperation,
   current: ProviderTask | null,
+  timezone?: string,
 ): TaskConflictReview {
   const wanted = mutationFields(operation.mutation);
   const groups = new Map<string, (keyof ProviderTask)[]>();
@@ -66,7 +67,7 @@ export function reviewTaskConflict(
       second: Partial<ProviderTask>,
     ) =>
       fields.some(
-        (field) => !sameTaskField(first[field], second[field], field),
+        (field) => !sameTaskField(first[field], second[field], field, timezone),
       );
     return {
       key,
@@ -90,7 +91,7 @@ export function reviewTaskConflict(
           (operation.mutation.kind === "reopen" ||
             operation.base.completionCount === undefined ||
             operation.base.completionCount !== current?.completionCount ||
-            !sameTaskField(operation.base.due, current.due, "due"))
+            !sameTaskField(operation.base.due, current.due, "due", timezone))
         ),
     };
   });

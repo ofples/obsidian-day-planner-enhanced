@@ -178,10 +178,19 @@ export function planTaskReconciliation(input: NotePlanInput) {
     remote.completed,
   );
   if (
-    base.due?.recurring &&
-    (candidate.completed !==
-      (link.noteBase ? noteBase.completed : base.completed) ||
-      !sameTaskField(base.due, remote.due, "due"))
+    (base.due?.recurring &&
+      ((base.completionCount === undefined
+        ? !sameTaskField(base.due, remote.due, "due")
+        : base.completionCount !== remote.completionCount) ||
+        (candidate.completed !==
+          (link.noteBase ? noteBase.completed : base.completed) &&
+          (!candidate.completed ||
+            remote.completed ||
+            (remote.due?.recurring &&
+              remote.completionCount === undefined))))) ||
+    (completed !== remote.completed &&
+      remote.due?.recurring &&
+      remote.completionCount === undefined)
   )
     conflicts.push("recurrence");
   const projectTags = (note: CaptureCandidate) =>

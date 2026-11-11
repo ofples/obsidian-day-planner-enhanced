@@ -186,7 +186,11 @@ export class TaskQueue {
                 ? await provider.get(taskId)
                 : (snapshot.tasks.find((task) => task.id === taskId) ?? null);
           if (!active()) return snapshot;
-          const decision = preflightOperation(operation, remote);
+          const decision = preflightOperation(
+            operation,
+            remote,
+            snapshot.account.timezone,
+          );
           const tree =
             remote && recovery
               ? deletionTaskTree(

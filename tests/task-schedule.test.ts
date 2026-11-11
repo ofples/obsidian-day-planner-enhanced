@@ -26,6 +26,7 @@ import { mutationFields } from "../src/tasks/operations";
 import { taskCaptureSettingsSchema } from "../src/tasks/capture-settings";
 import type { TaskOperation } from "../src/tasks/operations";
 import { TaskScheduler } from "../src/tasks/schedule";
+import { scheduleOperationSchema } from "../src/tasks/schedule-types";
 import { TaskService } from "../src/tasks/service";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
 
@@ -59,6 +60,7 @@ async function harness() {
     failCalendar = false,
     loseCalendarResponse = false;
   let stable = true;
+  let loseTaskResponse = false;
   let exportGuardFailure = "";
   const exportGuard = vi.fn(async () => { if (exportGuardFailure) throw new Error(exportGuardFailure); });
   let failWriteCountdown = 0;
@@ -259,6 +261,10 @@ async function harness() {
         ...mutationFields(operation.mutation),
       });
     commands.set(operation.id, "applied");
+    if (loseTaskResponse && operation.mutation.kind === "complete") {
+      loseTaskResponse = false;
+      throw new Error("completion response lost");
+    }
     return {
       taskId:
         operation.mutation.kind === "create"
@@ -358,6 +364,7 @@ async function harness() {
     setLoseCalendarResponse(value: boolean) {
       loseCalendarResponse = value;
     },
+    setLoseTaskResponse(value: boolean) { loseTaskResponse = value; },
     setStable(value: boolean) {
       stable = value;
     },
@@ -435,6 +442,368 @@ describe("recurring occurrence freezing", () => {
     const projection = h.scheduler.projection(root.id)!;
     return { h, projection, source: h.texts.get(projection.source.path)! };
   }
+
+  test("checking the Markdown source completes and archives the same occurrence without a second freeze journal", async () => {
+    const { h, projection } = await scheduled();
+    const initial = h.texts.get(projection.source.path)!;
+    h.texts.set(projection.source.path, initial.replace("- [ ]", "- [x]"));
+    await h.reconcile();
+    const state = h.service.registry.snapshot();
+    const completion = state.operations.find(
+      (operation) => operation.mutation.kind === "complete",
+    )!;
+    const history = state.occurrences[completion.id]!;
+    const journal = state.schedules.find(
+      (operation) => operation.occurrenceId === completion.id,
+    )!;
+    expect(history.phase).toBe("complete");
+    expect(journal.phase).toBe("complete");
+    expect(journal.providerSteps?.at(-1)?.id).toBe(completion.id);
+    expect(
+      scheduleOperationSchema.safeParse({
+        ...journal,
+        occurrenceId: crypto.randomUUID(),
+      }).success,
+    ).toBe(false);
+    expect(
+      scheduleOperationSchema.safeParse({
+        ...journal,
+        providerSteps: [
+          {
+            ...journal.providerSteps!.at(-1)!,
+            base: { ...completion.base!, id: "another-task" },
+          },
+        ],
+      }).success,
+    ).toBe(false);
+    expect(
+      state.schedules.filter(
+        (operation) => operation.occurrenceId === completion.id,
+      ),
+    ).toHaveLength(1);
+    expect(history.before.task.completionCount).toBe(0);
+    expect(history.links[projection.linkUid]?.base).toMatchObject({
+      completed: true,
+      completionCount: 0,
+    });
+    expect(h.tasks.get(root.id)).toMatchObject({
+      completed: false,
+      completionCount: 1,
+    });
+    expect(
+      Date.parse(h.events.get(projection.googleEventId!)!.start!.dateTime!),
+    ).toBe(Date.parse(interval.start));
+    expect(h.texts.get(projection.source.path)).toBe(
+      initial.replace("- [ ]", "- [x]"),
+    );
+    expect(h.scheduler.projection(root.id)).toBeUndefined();
+    await h.restart();
+    await h.reconcile();
+    expect(
+      h.apply.mock.calls.filter(
+        ([operation]) => operation.mutation.kind === "complete",
+      ),
+    ).toHaveLength(1);
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.phase,
+    ).toBe("complete");
+    h.service.stop();
+  });
+
+  test("a recurring note can change title and time while completing without moving history to the next date", async () => {
+    const { h, projection } = await scheduled();
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace("Work #todoist", "Edited work #todoist")
+        .replace(/\d{2}:\d{2} - \d{2}:\d{2}/, "16:00 - 16:30")
+        .replace("- [ ]", "- [x]"),
+    );
+    const local = (await h.scheduler.scanNotes()).find((block) =>
+      block.raw.includes("Edited work"),
+    )!;
+    await h.reconcile();
+    const history = Object.values(
+      h.service.registry.snapshot().occurrences,
+    )[0]!;
+    expect(history.phase).toBe("complete");
+    expect(history.before.task.title).toBe("Edited work");
+    expect(Date.parse(history.before.task.due!.date)).toBe(
+      Date.parse(local.snapshot.start),
+    );
+    expect(
+      Date.parse(h.events.get(projection.googleEventId!)!.start!.dateTime!),
+    ).toBe(Date.parse(local.snapshot.start));
+    expect(h.texts.get(projection.source.path)).toContain(
+      "[x] 16:00 - 16:30 Edited work",
+    );
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    expect(h.tasks.get(root.id)?.due?.text).toBe("every day");
+    h.service.stop();
+  });
+
+  test("a remote reschedule keeps the current occurrence and linked event without another task write", async () => {
+    const { h, projection } = await scheduled();
+    const current = h.tasks.get(root.id)!;
+    const date = DateTime.fromISO(current.due!.date).plus({ days: 1 }).toISO()!;
+    h.tasks.set(root.id, { ...current, due: { ...current.due!, date } });
+    const count = h.apply.mock.calls.length;
+    await h.service.refresh();
+    await h.reconcile();
+    const moved = h.scheduler.projection(root.id)!;
+    expect(moved.linkUid).toBe(projection.linkUid);
+    expect(moved.googleEventId).toBe(projection.googleEventId);
+    expect(moved.occurrenceKey).toBe(projection.occurrenceKey);
+    expect(h.service.registry.snapshot().occurrences).toEqual({});
+    expect(
+      Date.parse(h.events.get(projection.googleEventId!)!.start!.dateTime!),
+    ).toBe(Date.parse(date));
+    expect(h.apply).toHaveBeenCalledTimes(count);
+    h.service.stop();
+  });
+
+  test("a lost note-completion response resumes the original UUID after restart and advances once", async () => {
+    const { h, projection } = await scheduled();
+    h.setLoseTaskResponse(true);
+    h.texts.set(
+      projection.source.path,
+      h.texts.get(projection.source.path)!.replace("- [ ]", "- [x]"),
+    );
+    await h.reconcile();
+    const operation = h.service.registry
+      .snapshot()
+      .operations.find((item) => item.mutation.kind === "complete")!;
+    expect(operation.status).toBe("sent");
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    await h.restart();
+    await h.service.retryOperation(operation.id);
+    await h.reconcile();
+    expect(h.service.registry.snapshot().occurrences[operation.id]?.phase).toBe(
+      "complete",
+    );
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    expect(
+      new Set(
+        h.apply.mock.calls
+          .filter(([item]) => item.mutation.kind === "complete")
+          .map(([item]) => item.id),
+      ),
+    ).toEqual(new Set([operation.id]));
+    h.service.stop();
+  });
+
+  test("choosing the current rescheduled occurrence discards a stale Markdown completion and moves the open note", async () => {
+    const { h, projection } = await scheduled();
+    const current = h.tasks.get(root.id)!;
+    const nextDate = DateTime.fromISO(current.due!.date)
+      .plus({ days: 1 })
+      .toISO()!;
+    h.tasks.set(root.id, {
+      ...current,
+      due: { ...current.due!, date: nextDate },
+    });
+    h.texts.set(
+      projection.source.path,
+      h.texts.get(projection.source.path)!.replace("- [ ]", "- [x]"),
+    );
+    await h.reconcile();
+    const original = h.service.registry
+      .snapshot()
+      .operations.find((operation) => operation.mutation.kind === "complete")!;
+    expect(original.status).toBe("conflict");
+    const review = await h.service.inspectConflict(original.id);
+    expect(
+      review.fields.find((field) => field.key === "completed")?.localAllowed,
+    ).toBe(false);
+    await h.service.resolveConflict(review, { completed: "remote" });
+    await h.reconcile();
+    await h.settle();
+    const moved = h.scheduler.projection(root.id)!;
+    expect(h.service.registry.snapshot().occurrences[original.id]?.phase).toBe(
+      "cancelled",
+    );
+    expect(moved.source.path).not.toBe(projection.source.path);
+    expect(moved.source.raw).toContain("- [ ]");
+    expect(moved.googleEventId).toBe(projection.googleEventId);
+    expect(
+      Date.parse(h.events.get(projection.googleEventId!)!.start!.dateTime!),
+    ).toBe(Date.parse(nextDate));
+    expect(h.tasks.get(root.id)?.completionCount).toBe(0);
+    expect(
+      h.apply.mock.calls.filter(
+        ([operation]) => operation.mutation.kind === "complete",
+      ),
+    ).toHaveLength(0);
+    h.service.stop();
+  });
+
+  test("a reviewed replacement completion archives its own verified occurrence without copying the next date into history", async () => {
+    const { h, projection } = await scheduled();
+    h.apply.mockImplementationOnce(async (operation) => {
+      expect(operation.mutation.kind).toBe("complete");
+      return { taskId: root.id };
+    });
+    h.texts.set(
+      projection.source.path,
+      h.texts.get(projection.source.path)!.replace("- [ ]", "- [x]"),
+    );
+    await h.reconcile();
+    const original = h.service.registry
+      .snapshot()
+      .operations.find((operation) => operation.mutation.kind === "complete")!;
+    expect(original.status).toBe("conflict");
+    const review = await h.service.inspectConflict(original.id);
+    expect(
+      review.fields.find((field) => field.key === "completed")?.localAllowed,
+    ).toBe(true);
+    const resolved = await h.service.resolveConflict(review, {
+      completed: "local",
+    });
+    if (resolved.kind !== "saved") throw Error("Review changed unexpectedly");
+    await h.reconcile();
+    await h.settle();
+    const replacementId = resolved.operationIds[0]!;
+    const state = h.service.registry.snapshot();
+    expect(state.occurrences[original.id]?.phase).toBe("cancelled");
+    expect(state.occurrences[replacementId]?.phase).toBe("complete");
+    expect(
+      state.schedules
+        .filter((operation) => operation.occurrenceId === replacementId)
+        .at(-1)?.phase,
+    ).toBe("complete");
+    expect(
+      state.occurrences[replacementId]?.links[projection.linkUid]?.base
+        ?.completionCount,
+    ).toBe(0);
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    expect(h.scheduler.projection(root.id)).toBeUndefined();
+    expect(
+      Date.parse(h.events.get(projection.googleEventId!)!.start!.dateTime!),
+    ).toBe(Date.parse(interval.start));
+    expect(h.texts.get(projection.source.path)).toContain("- [x]");
+    h.service.stop();
+  });
+
+  test("completion retains an earlier reviewed title choice in its historical baseline", async () => {
+    const { h, projection } = await scheduled();
+    h.tasks.set(root.id, { ...h.tasks.get(root.id)!, title: "Remote title" });
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace("Work #todoist", "Local title #todoist")
+        .replace("- [ ]", "- [x]"),
+    );
+    await h.reconcile();
+    const original = h.service.registry
+      .snapshot()
+      .operations.find(
+        (operation) =>
+          operation.mutation.kind === "update" &&
+          operation.mutation.changes.title === "Local title",
+      )!;
+    expect(original.status).toBe("conflict");
+    expect(
+      h.apply.mock.calls.filter(
+        ([operation]) => operation.mutation.kind === "complete",
+      ),
+    ).toHaveLength(0);
+    const review = await h.service.inspectConflict(original.id);
+    await h.service.resolveConflict(review, { title: "remote" });
+    await h.reconcile();
+    await h.settle();
+    const history = Object.values(
+      h.service.registry.snapshot().occurrences,
+    ).find((record) => record.phase === "complete")!;
+    expect(history.before.task.title).toBe("Remote title");
+    expect(history.links[projection.linkUid]?.base?.title).toBe("Remote title");
+    expect(h.texts.get(projection.source.path)).toContain(
+      "Remote title #todoist",
+    );
+    expect(h.texts.get(projection.source.path)).not.toContain("Local title");
+    expect(h.tasks.get(root.id)).toMatchObject({
+      title: "Remote title",
+      completionCount: 1,
+    });
+    expect(
+      Date.parse(h.events.get(projection.googleEventId!)!.start!.dateTime!),
+    ).toBe(Date.parse(interval.start));
+    h.service.stop();
+  });
+
+  test("a completion-only note change acknowledges Todoist while its calendar is offline", async () => {
+    const { h, projection } = await scheduled();
+    const guards = h.exportGuard.mock.calls.length;
+    h.setExportGuardFailure("calendar offline");
+    h.setFailCalendar(true);
+    h.texts.set(
+      projection.source.path,
+      h.texts.get(projection.source.path)!.replace("- [ ]", "- [x]"),
+    );
+    await h.reconcile();
+    const history = Object.values(
+      h.service.registry.snapshot().occurrences,
+    )[0]!;
+    expect(history.phase).toBe("complete");
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    expect(h.exportGuard).toHaveBeenCalledTimes(guards);
+    expect(
+      h.service.registry
+        .snapshot()
+        .schedules.find((operation) => operation.occurrenceId === history.id)
+        ?.phase,
+    ).toBe("calendar-pending");
+    await h.restart();
+    h.setExportGuardFailure("");
+    h.setFailCalendar(false);
+    await h.settle();
+    expect(
+      h.service.registry
+        .snapshot()
+        .schedules.find((operation) => operation.occurrenceId === history.id)
+        ?.phase,
+    ).toBe("complete");
+    expect(
+      h.service.registry.snapshot().occurrences[history.id]?.projections[
+        projection.linkUid
+      ]?.googleEventId,
+    ).toBe(projection.googleEventId);
+    expect(
+      h.apply.mock.calls.filter(
+        ([operation]) => operation.mutation.kind === "complete",
+      ),
+    ).toHaveLength(1);
+    h.service.stop();
+  });
+
+  test("removing a local time while completing keeps the historical checklist untimed and retires its owned event", async () => {
+    const { h, projection } = await scheduled();
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace(/\d{2}:\d{2} - \d{2}:\d{2}\s*/, "")
+        .replace("- [ ]", "- [x]"),
+    );
+    await h.reconcile();
+    const history = Object.values(
+      h.service.registry.snapshot().occurrences,
+    )[0]!;
+    expect(history.phase).toBe("complete");
+    expect(history.projections[projection.linkUid]?.interval).toBeNull();
+    expect(h.texts.get(projection.source.path)).toContain(
+      "- [x] Work #todoist",
+    );
+    expect(h.events.size).toBe(0);
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    expect(
+      h.apply.mock.calls.filter(
+        ([operation]) => operation.mutation.kind === "complete",
+      ),
+    ).toHaveLength(1);
+    h.service.stop();
+  });
 
   test("completion freezes the checked note and children while the next occurrence gets fresh links/events", async () => {
     const { h, projection, source } = await scheduled();
