@@ -202,6 +202,14 @@ A regression reproduced identical child links exchanging historical/current owne
 
 Focused coverage includes reordered occurrences through restart, moved notes, preassigned historical parents, partially edited parents, duplicate siblings beneath edited parents, ambiguous changed containers and copied blocks. The three-file subset has 123 passes. Full validation has 1,010 passes, the inherited ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, the separate strict scorecard and production build pass. Installed native/provider acceptance of this source change continues in the isolated vault. External recurrence, exact undo, full copy/link repair and remaining M6 work continue.
 
+### Installed nested occurrence verification
+
+The committed nested-matching build was installed in the isolated vault with equal bundle hashes and a full matching plugin/state backup. Controlled task-service completion and scheduling created historical and active recurring occurrences in one daily note. Fixture-only vault API editing reversed their block order. Automatic capture retained both parent/child identity pairs and the original captured completion baseline.
+
+A real Markdown checkbox click completed the active occurrence's child. Direct provider readback confirmed one child completion and one root completion. The past child stayed unchecked, and the note bytes matched only the intended current-child checkbox change. Google retained both event identities, intervals and mapped colors. The past description retained its unchecked child, while the active event description showed the checked child. Full-window reload retained both source scopes, both event mappings, the original history baseline and exactly one command per completed task, with zero pending operations or source/reconciliation issues.
+
+Product deletion removed the fixture root and its known completed child. Controlled cleanup restored original note bytes or file absence and removed both managed events. Final refreshed/reloaded readback confirmed all fixture tasks/events absent or cancelled, zero native echoes, preserved history/recovery records, restored pane/calendar settings and no task-service error. Block reordering used the vault API. Child checkbox and editor focus changes used native desktop input. External recurrence, exact undo, complete copy/link repair and remaining M6 acceptance continue.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

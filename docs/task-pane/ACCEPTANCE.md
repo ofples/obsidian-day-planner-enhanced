@@ -302,6 +302,14 @@ Reordering checked historical and open current blocks in one note originally exc
 
 The three-file subset has 123 passes. Full validation has 1,010 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Required source checks, the separate strict scorecard and production build pass. Installed native/provider verification of the new nested matching remains pending. The preceding installed Markdown-completion evidence applies to its earlier source build.
 
+### Installed nested occurrence verification
+
+The isolated installed bundle matched the committed source hash and retained a full matching plugin/state backup. Controlled domain operations created historical and active recurring blocks in one note, and fixture-only vault API editing reversed their order. Automatic capture retained the historical/current child links under their respective parents and preserved the captured completion baseline.
+
+Native source-checkbox input completed the active child. Authoritative readback verified that child completed once while the recurring root retained its one completion increment. Only the intended current-child note checkbox changed. The past child and past Google description stayed unchecked. The current event description became checked. Both event IDs, intervals and mapped colors remained correct. Reload retained both child scopes, original history, both calendar mappings and exact command counts, with zero pending operations or source/reconciliation issues.
+
+Product deletion removed the root and its known completed child. Cleanup restored the original note bytes or file absence, removed both managed events and restored pane/calendar settings. Final refreshed/reloaded checks found fixture tasks/events absent or cancelled, zero native echoes, preserved recovery/history and no task-service error. The block move used the vault API. Checkbox and focus input used the native desktop. Full validation remains at 1,010 passes and the inherited ICS timeout. External recurrence, exact undo, complete copy/link repair and remaining M6 acceptance continue.
+
 ### Missing-source recovery foundation
 
 Regression checks cover deleted timed parent/child blocks, a deleted note file, exact Undo after restart, provider edits while detached and a fresh export identity after ordinary calendar deletion. Missing-source intents issue no note or provider write. Tests interrupt intent, local acknowledgment and archive acknowledgment writes, then restart and restore the same Todoist link. An uncertain calendar create carries its original event identity through deletion, restart and restoration. An already restored document cancels a stale detachment intent.
