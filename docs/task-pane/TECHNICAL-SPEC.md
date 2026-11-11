@@ -46,7 +46,7 @@ Keep provider HTTP calls out of components and keep Todoist-specific fields insi
 
 ## State storage and concurrency
 
-M1 stores a versioned `task-cache.json` with a generated vault namespace and the last complete account snapshot. It contains no credentials. Later migrations introduce a versioned `task-state.json` registry and outbox, preserving the cache schema as a read model. Implement schema validation and monotonic migrations before writing a newer version. A version too new stops writes and offers restoration of a matching backup.
+M1 stores a versioned `task-cache.json` with a generated vault namespace and the last complete account snapshot. It contains no credentials. The versioned `task-state.json` registry and outbox preserve the cache schema as a read model. Registry v2 adds persisted provider readback. Migration retains a content-addressed backup of the original v1 bytes before writing v2. A failed backup or unsupported future version stops registry writes and preserves the original file. Use matching backups for restoration.
 
 Use a single service operation queue and coalesce refresh requests. Compare the last serialized disk state before every state mutation. A mismatch reports another writer, stops mutation and preserves local changes for recovery. Persist a before/after journal before touching a note. Resolve account and lifecycle generation after every asynchronous boundary so a disconnected account cannot repopulate the pane.
 
@@ -61,6 +61,10 @@ Initial connection accepts an API token and validates it before saving to Secret
 Map 401/403 to reconnect or permission feedback, 429 to Retry-After, and transport/5xx to bounded exponential backoff with jitter. Expose a manual Retry action and retain successful cached data. Never put tokens or upstream response bodies in notices or logs. Cancel scheduled retries on plugin unload.
 
 Use Todoist command UUIDs for durable mutations where supported. Verify the exact command contract against the official API before introducing each mutation. Do not assume Google-style conditional ETags exist on Todoist. Re-read the remote task before a write, merge against the last acknowledged field baseline, apply the narrow patch, and read back. A change racing between read and write remains a provider limitation, which must be recorded in acceptance evidence. [Todoist API reference](https://developer.todoist.com/api/v1/)
+
+An API acknowledgment advances an operation to acknowledged. Verify the requested field values before advancing it to verified, and persist that task readback before processing a later edit to the same task. A complete snapshot then advances verified operations to complete and publishes their read model. Readback failure resumes verification through the saved operation. A returned value that differs from the requested patch creates a reviewable conflict. Compare normalized instants when the provider expands a timezone or human-readable date string.
+
+Provider duration support is a capability. Todoist exposes its premium entitlement through `is_premium`, and its duration feature requires Pro or Business. A free-plan contract check acknowledged a duration patch while returning a null duration. Scheduling therefore keeps the full interval in the local projection and Google Calendar, synchronizes the task start, and sends provider duration only when supported. Existing duration fields remain readable in older cache shapes. [Todoist duration availability](https://www.todoist.com/help/todoist/features/set-a-task-duration-L1kYkZv8d)
 
 ## Capture, routing and linking
 
@@ -83,7 +87,7 @@ Existing Google-linked blocks retain their canonical identity when opted into To
 | Description | Detail editor and opted-in note detail region | Keep provider descriptions distinct from unrelated local paragraphs |
 | Parent/children | Registered nested task relationships | Move through provider tree operation, preserve local-only child text |
 | Task date | Detail Date and optional existing task-date syntax | Date-only changes group tasks, linked scheduled tasks keep time and duration |
-| Planned interval | Timed Markdown parent and registry | Default scheduling writes task date/time and duration to provider, configurable per account |
+| Planned interval | Timed Markdown parent and registry | Synchronize task start and supported provider duration, retain the full local and Google interval, configurable per account |
 | Recurrence | Provider metadata and details display | Reschedule occurrence without replacing recurrence, completion opens new occurrence |
 | Google fields | Existing CalendarSnapshot and subtask exporter | One exporter owns event title/time/colors and generated description section |
 

@@ -27,6 +27,49 @@ const response = (json: unknown, status = 200) => ({
 beforeEach(() => vi.clearAllMocks());
 
 describe("Todoist UUID write commands", () => {
+  test("schedule patches send the Sync duration object and can clear it explicitly", async () => {
+    const api = new TodoistProvider("credential");
+    const op = operation({
+      kind: "update",
+      taskId: "task",
+      changes: {
+        duration: { amount: 45, unit: "minute" },
+        due: {
+          date: "2026-11-12T09:00:00Z",
+          text: "",
+          recurring: false,
+          timezone: null,
+        },
+      },
+    });
+    vi.mocked(requestUrl).mockResolvedValue(
+      response({ sync_status: { [op.id]: "ok" } }),
+    );
+    await api.apply(op);
+    const args = JSON.parse(
+      new URLSearchParams(
+        (vi.mocked(requestUrl).mock.calls[0]![0] as { body: string }).body,
+      ).get("commands")!,
+    )[0].args;
+    expect(args.duration).toEqual({ amount: 45, unit: "minute" });
+    expect(args.due.date).toBe("2026-11-12T09:00:00Z");
+    const clear = operation({
+      kind: "update",
+      taskId: "task",
+      changes: { duration: null },
+    });
+    vi.mocked(requestUrl).mockResolvedValue(
+      response({ sync_status: { [clear.id]: "ok" } }),
+    );
+    await api.apply(clear);
+    expect(
+      JSON.parse(
+        new URLSearchParams(
+          (vi.mocked(requestUrl).mock.calls[1]![0] as { body: string }).body,
+        ).get("commands")!,
+      )[0].args,
+    ).toEqual({ id: "task", duration: null });
+  });
   test("create reuses command and temporary IDs with only the supported task fields", async () => {
     const op = operation({
       kind: "create",

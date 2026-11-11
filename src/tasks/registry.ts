@@ -19,10 +19,14 @@ export const taskLinkSchema = z.object({
 });
 
 const taskRegistrySchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   namespace: z.string().regex(/^[a-f0-9]{32}$/),
   operations: z.array(taskOperationSchema),
   links: z.record(z.string(), taskLinkSchema),
+});
+
+const legacyRegistrySchema = taskRegistrySchema.extend({
+  version: z.literal(1),
 });
 
 export type TaskRegistryState = z.infer<typeof taskRegistrySchema>;
@@ -36,21 +40,31 @@ export class TaskRegistry {
   private tail: Promise<void> = Promise.resolve();
 
   constructor(
-    private readonly storage: Pick<TaskStorage, "readState" | "writeState">,
+    private readonly storage: Pick<
+      TaskStorage,
+      "readState" | "writeState" | "backupState"
+    >,
     private readonly namespace: string,
   ) {}
 
   async initialize() {
     this.lastSaved = await this.storage.readState();
+    const stored: unknown =
+      this.lastSaved === null ? null : JSON.parse(this.lastSaved);
+    const legacy = legacyRegistrySchema.safeParse(stored);
     this.state =
       this.lastSaved === null
-        ? { version: 1, namespace: this.namespace, operations: [], links: {} }
-        : taskRegistrySchema.parse(JSON.parse(this.lastSaved));
+        ? { version: 2, namespace: this.namespace, operations: [], links: {} }
+        : taskRegistrySchema.parse(
+            legacy.success ? { ...legacy.data, version: 2 } : stored,
+          );
     if (this.state.namespace !== this.namespace)
       throw new Error(
         "Task registry belongs to another vault. Restore its matching cache.",
       );
-    if (this.lastSaved === null) await this.change(() => {});
+    if (legacy.success && this.lastSaved !== null)
+      await this.storage.backupState?.(this.lastSaved, 1);
+    if (this.lastSaved === null || legacy.success) await this.change(() => {});
   }
 
   snapshot() {
@@ -76,10 +90,11 @@ export class TaskRegistry {
         );
       const state = this.snapshot();
       const result = update(state);
-      const serialized = JSON.stringify(taskRegistrySchema.parse(state));
+      const validated = taskRegistrySchema.parse(state);
+      const serialized = JSON.stringify(validated);
       await this.storage.writeState(serialized);
       this.lastSaved = serialized;
-      this.state = state;
+      this.state = validated;
       return result;
     });
     this.tail = operation.then(

@@ -25,6 +25,8 @@ Tagged capture currently creates and links tasks. Linked note updates and schedu
 
 Calendar feeds in the full Tasks settings selects the exact Google or internet-calendar sources to hide for the connected task account. Enable Hide selected task feeds after making that selection. Disconnecting the task account restores feed display. This plugin-level choice is saved per task account.
 
+Todoist duration sync depends on its Pro or Business entitlement. The scheduling implementation will retain full time ranges in Obsidian and Google Calendar for every account, with the start synchronized to Todoist. Provider duration will synchronize when supported. [Todoist duration availability](https://www.todoist.com/help/todoist/features/set-a-task-duration-L1kYkZv8d)
+
 ## Decisions
 
 - Integrate the pane into Day Planner Enhanced, reusing its schedule editor, note parser, task rendering and calendar exporter.

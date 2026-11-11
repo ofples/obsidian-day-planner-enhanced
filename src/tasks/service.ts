@@ -152,6 +152,16 @@ export class TaskService {
         true,
       );
     const mutation = taskMutationSchema.parse(input);
+    const duration =
+      mutation.kind === "create"
+        ? mutation.task.duration
+        : mutation.kind === "update"
+          ? mutation.changes.duration
+          : undefined;
+    if (duration && snapshot.account.capabilities?.duration === false)
+      throw new TaskReadError(
+        "This task account requires a paid plan for provider durations. Keep the planned duration in Day Planner.",
+      );
     if (mutation.kind !== "create" && mutation.taskId.startsWith("local-"))
       throw new TaskReadError(
         "Wait for this task to finish creating before editing it.",
@@ -313,7 +323,9 @@ export class TaskService {
           (operation) =>
             operation.provider === snapshot.provider &&
             operation.accountId === snapshot.account.id &&
-            ["pending", "sent", "acknowledged"].includes(operation.status),
+            ["pending", "sent", "acknowledged", "verified"].includes(
+              operation.status,
+            ),
         );
     } catch (error) {
       if (this.isCurrent(generation)) this.fail(error);

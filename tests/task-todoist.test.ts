@@ -49,6 +49,32 @@ function pages(taskPage: (url: URL) => unknown) {
 }
 
 describe("Todoist complete snapshots", () => {
+  test("reports provider duration capability without storing other user fields", async () => {
+    pages(() => ({ results: [task], next_cursor: null }));
+    const request = vi.mocked(requestUrl).getMockImplementation()!;
+    vi.mocked(requestUrl).mockImplementation((arg) =>
+      (typeof arg === "string" ? arg : arg.url).endsWith("/user")
+        ? (Promise.resolve(
+            response({ ...user, is_premium: false }),
+          ) as ReturnType<typeof requestUrl>)
+        : request(arg),
+    );
+    const snapshot = await new TodoistProvider("credential").read();
+    expect(snapshot.account.capabilities).toEqual({ duration: false });
+    expect(JSON.stringify(snapshot)).not.toContain("must-not-cache");
+  });
+  test("normalizes duration data while accepting older cached task shapes", async () => {
+    pages(() => ({
+      results: [
+        { ...task, duration: { amount: 45, unit: "minute" } },
+        { ...task, id: "older" },
+      ],
+      next_cursor: null,
+    }));
+    const snapshot = await new TodoistProvider("credential").read();
+    expect(snapshot.tasks[0]?.duration).toEqual({ amount: 45, unit: "minute" });
+    expect(snapshot.tasks[1]?.duration).toBeUndefined();
+  });
   test("reads all cursor pages and excludes unexpected account fields including token", async () => {
     pages((url) =>
       url.searchParams.has("cursor")

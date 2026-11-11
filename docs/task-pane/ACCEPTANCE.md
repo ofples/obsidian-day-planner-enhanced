@@ -89,7 +89,7 @@ Use deterministic provider responses for focused regression tests and a real dis
 | Evidence | State | Required record |
 | --- | --- | --- |
 | Baseline source | Confirmed | `82ae46ff` equals origin `feat/google-calendar-sync` |
-| New source checks | M3 foundations verified | 44 task-focused passes, 724 full-suite passes, one inherited ICS timeout, TypeScript/Svelte, formatting/style lint, strict scorecard and build pass |
+| New source checks | M3 foundations verified | 57 task-focused passes, 737 full-suite passes, one inherited ICS timeout, TypeScript/Svelte, formatting/style lint, strict scorecard and build pass |
 | Inherited ICS timeout | Known baseline issue | `tests/ical.test.ts`, last visible day inclusive case, independently reproduced on upstream previously |
 | Synthetic desktop acceptance | M1 partial | Dockable pane, tree folding, cached/disconnected state, search and details inspected. Exhaustive keyboard/popout checks pending |
 | Live Todoist acceptance | M2 editing and capture verified | Complete account reads, persisted credentials, native creation/edit/project move/subtask/completion/reopen, cursor-leave capture and explicit routing readbacks. All disposable task IDs returned 404 after cleanup. Recurring writes pending |
@@ -127,3 +127,13 @@ This composition check exercises the editor integration and event guard. OS inpu
 Three calendar-policy tests cover exact Google IDs and internet-calendar URLs, colliding ID/URL prefixes, fresh overlay updates, explicit disable, disconnect restoration, account replacement and persisted settings reload. Applying the policy preserves the underlying account configuration. A new note-writer test checks that preparation exposes exact before/after bytes without processing the existing note, then applies the plan through the calendar journal with the same block UID. Existing cross-note crash recovery and child-preservation cases pass.
 
 The native Task calendar feeds dialog was inspected in the isolated desktop vault. Its enabled toggle saved and reopened correctly, then was restored to disabled. Load calendars displayed connection guidance in that profile, which has no Google authorization. Live Google feed selection and integrated schedule readback remain pending.
+
+### Duration capability and acknowledged-field verification
+
+A disposable provider contract check saved an exact task start and preserved its description. The same acknowledged command requested a duration, but readback returned null. The account's duration capability was unavailable. The implementation now reads that entitlement, rejects unsupported duration intent before persistence, and retains full planned intervals in the local/Google scheduling design. A later live check confirmed that this guard adds no operation. The test task was deleted and its endpoint returned 404.
+
+The outbox now persists a verified readback before another command edits the same task. Regression cases cover ignored provider fields, equivalent UTC/floating timezone representations, successive changes to one field, restart after verification with failed snapshot publication and detachment from mutable caller objects. A renewed desktop check created, completed and reopened a disposable task through native controls. Each operation retained its matching readback, including the archived completed task. Cleanup returned 404.
+
+Registry v2 migration was checked in the isolated desktop profile. Namespace and operation count matched the original state, and the content-addressed v1 backup matched the original bytes. Automated cases also cover failed backups and unsupported future versions.
+
+A28 must exercise both capability states. Accounts with duration support synchronize it to the provider. Accounts without that capability synchronize the start while retaining the planned interval in Markdown and Google. Paid-provider duration readback remains unverified.

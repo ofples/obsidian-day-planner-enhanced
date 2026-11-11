@@ -5,6 +5,7 @@ import type { TaskDraft, TaskOperation, TaskPatch } from "./operations";
 import {
   TaskReadError,
   TaskWriteError,
+  taskDurationSchema,
   type ProviderTask,
   type TaskProvider,
   type TaskSnapshot,
@@ -18,6 +19,7 @@ const userSchema = z.object({
   id: resourceId,
   full_name: z.string(),
   tz_info: z.object({ timezone: z.string() }),
+  is_premium: z.boolean().optional(),
 });
 
 function normalizeTask(task: z.infer<typeof remoteTaskSchema>): ProviderTask {
@@ -31,6 +33,7 @@ function normalizeTask(task: z.infer<typeof remoteTaskSchema>): ProviderTask {
     priority: task.priority,
     completed: task.checked,
     order: task.child_order,
+    ...(task.duration !== undefined ? { duration: task.duration } : {}),
     due: task.due
       ? {
           date: task.due.date,
@@ -48,6 +51,7 @@ function writableFields(task: TaskPatch | TaskDraft) {
   if (task.description !== undefined) fields["description"] = task.description;
   if (task.priority !== undefined) fields["priority"] = task.priority;
   if (task.labels !== undefined) fields["labels"] = task.labels;
+  if (task.duration !== undefined) fields["duration"] = task.duration;
   if (task.due !== undefined)
     fields["due"] = task.due
       ? {
@@ -66,6 +70,7 @@ const projectSchema = z.object({
   inbox_project: z.boolean().optional(),
 });
 const remoteTaskSchema = z.object({
+  duration: taskDurationSchema.nullable().optional(),
   id: resourceId,
   project_id: resourceId,
   parent_id: resourceId.nullable(),
@@ -269,6 +274,9 @@ export class TodoistProvider implements TaskProvider {
         id: user.id,
         name: user.full_name,
         timezone: user.tz_info.timezone,
+        ...(user.is_premium !== undefined
+          ? { capabilities: { duration: user.is_premium } }
+          : {}),
       },
       projects: projects.map((project) => ({
         id: project.id,

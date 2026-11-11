@@ -329,7 +329,7 @@ export default class DayPlanner extends Plugin {
       );
     } catch {
       new Notice(
-        "Tasks could not load its cache. Restore the task cache backup and reopen this vault.",
+        "Tasks could not load its saved state. Restore the matching task cache and registry backup, then reopen this vault.",
       );
     }
     this.googleCalendarSync = new GoogleCalendarSync(

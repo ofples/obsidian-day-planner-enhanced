@@ -18,6 +18,7 @@ data.json
 gcal-state.json
 task-cache.json
 task-state.json
+task-state-*.backup.json
 .env
 .claude
 

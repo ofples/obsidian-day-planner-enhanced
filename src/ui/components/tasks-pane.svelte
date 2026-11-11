@@ -328,6 +328,11 @@
         </dd>
         <dt>Date</dt>
         <dd>{selected.due?.text || selected.due?.date || "No date"}</dd>
+        {#if selected.duration}<dt>Duration</dt>
+          <dd>
+            {selected.duration.amount}
+            {selected.duration.unit === "minute" ? "min" : "days"}
+          </dd>{/if}
         {#if selected.due?.recurring}<dt>Repeats</dt>
           <dd>{selected.due.text}</dd>{/if}
         {#if selected.labels.length}<dt>Labels</dt>

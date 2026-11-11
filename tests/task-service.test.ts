@@ -11,7 +11,7 @@ const snapshot: TaskSnapshot = {
   tasks: [],
   fetchedAt: "2026-11-11T00:00:00Z",
 };
-async function setup() {
+async function setup(writable = false) {
   let disk: string | null = null;
   let secret: string | null = null;
   let registry: string | null = null;
@@ -30,7 +30,10 @@ async function setup() {
       secret = value;
     },
   };
-  const service = new TaskService(storage, () => ({ read }));
+  const service = new TaskService(storage, () => ({
+    read,
+    ...(writable ? { apply: async () => ({ taskId: "created" }) } : {}),
+  }));
   await service.initialize();
   return {
     service,
@@ -45,6 +48,31 @@ async function setup() {
 }
 
 describe("task snapshot lifecycle", () => {
+  test("unsupported provider durations are rejected before intent persistence", async () => {
+    const h = await setup(true);
+    h.read.mockResolvedValue({
+      ...snapshot,
+      account: { ...snapshot.account, capabilities: { duration: false } },
+    });
+    await h.service.connect("token");
+    await expect(
+      h.service.mutate({
+        kind: "create",
+        task: {
+          title: "Task",
+          description: "",
+          projectId: "inbox",
+          parentId: null,
+          labels: [],
+          priority: 1,
+          due: null,
+          duration: { amount: 45, unit: "minute" },
+        },
+      }),
+    ).rejects.toThrow("paid plan");
+    expect(h.service.registry.snapshot().operations).toHaveLength(0);
+    h.service.stop();
+  });
   test("overlapping refreshes share one request and unload prevents late cache publication", async () => {
     const h = await setup();
     await h.service.connect("token");

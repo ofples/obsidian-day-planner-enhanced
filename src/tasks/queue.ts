@@ -1,5 +1,6 @@
 import {
   isOutstanding,
+  matchesOperationResult,
   operationTaskId,
   preflightOperation,
   type TaskOperation,
@@ -24,27 +25,73 @@ export class TaskQueue {
     this.changed();
   }
 
+  private async verify(
+    operation: TaskOperation,
+    provider: TaskProvider,
+    snapshot: TaskSnapshot,
+    active: () => boolean,
+  ) {
+    const taskId = operationTaskId(operation);
+    let task;
+    if (provider.get) task = await provider.get(taskId);
+    else {
+      const fresh = await provider.read();
+      if (
+        fresh.provider !== snapshot.provider ||
+        fresh.account.id !== snapshot.account.id
+      )
+        throw new TaskReadError(
+          "The connected task account changed. Reconnect before verifying saved changes.",
+          undefined,
+          true,
+        );
+      task = fresh.tasks.find((item) => item.id === taskId) ?? null;
+    }
+    if (!active()) return;
+    const verified = matchesOperationResult(
+      operation,
+      task,
+      snapshot.account.timezone,
+    );
+    await this.update(operation.id, {
+      status: verified ? "verified" : "conflict",
+      readback: verified && task ? task : undefined,
+      error: verified
+        ? undefined
+        : "The provider acknowledged this change but returned different field values. Review the saved change and current task.",
+      retryAt: undefined,
+    });
+  }
+
   async run(
     provider: TaskProvider,
     snapshot: TaskSnapshot,
     active: () => boolean,
   ): Promise<TaskSnapshot> {
     if (!provider.apply) return snapshot;
-    const operations = this.registry
+    const owned = this.registry
       .snapshot()
       .operations.filter(
         (operation) =>
           operation.provider === snapshot.provider &&
-          operation.accountId === snapshot.account.id &&
-          ["pending", "sent"].includes(operation.status),
+          operation.accountId === snapshot.account.id,
       );
-    const blocked = new Set<string>();
+    const operations = owned.filter((operation) =>
+      ["pending", "sent", "acknowledged"].includes(operation.status),
+    );
+    const blocked = new Set(
+      owned
+        .filter((operation) =>
+          ["conflict", "failed"].includes(operation.status),
+        )
+        .map(operationTaskId),
+    );
     for (const operation of operations) {
       const taskId = operationTaskId(operation);
       let sent = operation.status === "sent";
       if (!active()) return snapshot;
-      if (blocked.has(taskId) || (operation.retryAt ?? 0) > Date.now())
-        continue;
+      if ((operation.retryAt ?? 0) > Date.now()) blocked.add(taskId);
+      if (blocked.has(taskId)) continue;
       try {
         await this.update(operation.id, { attempts: operation.attempts + 1 });
         if (operation.status === "pending") {
@@ -67,8 +114,9 @@ export class TaskQueue {
           }
           if (decision === "already-applied") {
             await this.update(operation.id, {
-              status: "acknowledged",
+              status: "verified",
               remoteId: taskId,
+              readback: remote ?? undefined,
               error: undefined,
             });
             continue;
@@ -81,29 +129,53 @@ export class TaskQueue {
           sent = true;
         }
         if (!active()) return snapshot;
-        const result = await provider.apply(operation);
-        await this.registry.change((state) => {
-          const saved = state.operations.find(
-            (item) => item.id === operation.id,
-          )!;
-          saved.status = "acknowledged";
-          saved.remoteId = result.taskId;
-          saved.error = undefined;
-          saved.retryAt = undefined;
-          if (operation.sourceUid && state.links[operation.sourceUid])
-            state.links[operation.sourceUid]!.taskId = result.taskId;
-        });
-        this.changed();
+        if (operation.status !== "acknowledged") {
+          const result = await provider.apply(operation);
+          await this.registry.change((state) => {
+            const saved = state.operations.find(
+              (item) => item.id === operation.id,
+            )!;
+            saved.status = "acknowledged";
+            saved.remoteId = result.taskId;
+            saved.error = undefined;
+            saved.retryAt = undefined;
+            if (operation.sourceUid && state.links[operation.sourceUid])
+              state.links[operation.sourceUid]!.taskId = result.taskId;
+          });
+          this.changed();
+        }
+        const saved = this.registry
+          .snapshot()
+          .operations.find((item) => item.id === operation.id)!;
+        await this.verify(saved, provider, snapshot, active);
+        if (
+          this.registry
+            .snapshot()
+            .operations.find((item) => item.id === operation.id)?.status ===
+          "conflict"
+        )
+          blocked.add(taskId);
       } catch (error) {
         if (!active()) return snapshot;
         const permanent = error instanceof TaskWriteError && error.permanent;
+        const acknowledged =
+          this.registry
+            .snapshot()
+            .operations.find((item) => item.id === operation.id)?.status ===
+          "acknowledged";
         const retryAt =
           error instanceof TaskReadError && error.retryAt
             ? error.retryAt
             : Date.now() +
               Math.min(60_000, 1000 * 2 ** Math.min(operation.attempts, 6));
         await this.update(operation.id, {
-          status: permanent ? "failed" : sent ? "sent" : "pending",
+          status: acknowledged
+            ? "acknowledged"
+            : permanent
+              ? "failed"
+              : sent
+                ? "sent"
+                : "pending",
           error:
             error instanceof TaskReadError
               ? error.message
@@ -111,19 +183,20 @@ export class TaskQueue {
           retryAt: permanent ? undefined : retryAt,
         });
         blocked.add(taskId);
+        if (acknowledged) throw error;
         if (!permanent) break;
       }
     }
     if (!active()) return snapshot;
-    const acknowledged = this.registry
+    const verified = this.registry
       .snapshot()
       .operations.filter(
         (operation) =>
           operation.provider === snapshot.provider &&
           operation.accountId === snapshot.account.id &&
-          operation.status === "acknowledged",
+          operation.status === "verified",
       );
-    if (!acknowledged.length) return snapshot;
+    if (!verified.length) return snapshot;
     const fresh = await provider.read();
     if (
       fresh.account.id !== snapshot.account.id ||
@@ -135,14 +208,12 @@ export class TaskQueue {
         true,
       );
     if (!active()) return snapshot;
-    for (const operation of acknowledged) {
-      const taskId = operationTaskId(operation);
-      const task = fresh.tasks.find((item) => item.id === taskId) ?? null;
+    for (const operation of verified) {
       await this.registry.change((state) => {
         state.operations.find((item) => item.id === operation.id)!.status =
           "complete";
         if (operation.sourceUid && state.links[operation.sourceUid])
-          state.links[operation.sourceUid]!.base = task;
+          state.links[operation.sourceUid]!.base = operation.readback ?? null;
       });
     }
     return fresh;

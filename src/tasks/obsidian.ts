@@ -18,6 +18,22 @@ export function createTaskService(plugin: Plugin) {
       readState: async () =>
         (await adapter.exists(statePath)) ? adapter.read(statePath) : null,
       writeState: (content) => adapter.write(statePath, content),
+      backupState: async (content, version) => {
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(content),
+        );
+        const hash = Array.from(new Uint8Array(digest))
+          .map((byte) => byte.toString(16).padStart(2, "0"))
+          .join("")
+          .slice(0, 20);
+        const backupPath = statePath.replace(
+          /\.json$/,
+          `-v${version}-${hash}.backup.json`,
+        );
+        if (!(await adapter.exists(backupPath)))
+          await adapter.write(backupPath, content);
+      },
       getSecret: (key) => secrets?.getSecret(key) ?? null,
       setSecret: (key, value) => {
         if (!secrets)

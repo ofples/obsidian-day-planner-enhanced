@@ -2,6 +2,11 @@ import { z } from "zod";
 
 import type { TaskOperation } from "./operations";
 
+export const taskDurationSchema = z.object({
+  amount: z.number().int().positive(),
+  unit: z.enum(["minute", "day"]),
+});
+
 export const taskSchema = z.object({
   id: z.string().min(1),
   title: z.string(),
@@ -12,6 +17,7 @@ export const taskSchema = z.object({
   priority: z.number().int().min(1).max(4),
   completed: z.boolean(),
   order: z.number(),
+  duration: taskDurationSchema.nullable().optional(),
   due: z
     .object({
       date: z.string(),
@@ -28,6 +34,7 @@ export const taskSnapshotSchema = z.object({
     id: z.string().min(1),
     name: z.string(),
     timezone: z.string(),
+    capabilities: z.object({ duration: z.boolean() }).optional(),
   }),
   projects: z.array(
     z.object({
@@ -62,6 +69,7 @@ export interface TaskStorage {
   write(content: string): Promise<void>;
   readState(): Promise<string | null>;
   writeState(content: string): Promise<void>;
+  backupState?(content: string, version: number): Promise<void>;
   getSecret(key: string): string | null;
   setSecret(key: string, value: string): void;
 }
