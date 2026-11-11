@@ -67,6 +67,7 @@ describe("Todoist complete snapshots", () => {
     expect(snapshot.account.capabilities).toEqual({
       duration: false,
       delete: true,
+      recurringUndo: true,
     });
     expect(JSON.stringify(snapshot)).not.toContain("must-not-cache");
   });
@@ -137,7 +138,7 @@ describe("Todoist complete snapshots", () => {
       name: "Test",
       timezone: "UTC",
       preferences: { resetRecurringSubtasks: true },
-      capabilities: { delete: true },
+      capabilities: { delete: true, recurringUndo: true },
     });
     expect(JSON.stringify(snapshot)).not.toContain("must-not-cache");
     expect(requestUrl).toHaveBeenCalledTimes(5);

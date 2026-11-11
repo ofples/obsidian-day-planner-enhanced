@@ -96,6 +96,7 @@ const remoteTaskSchema = z.object({
 
 /** Read a complete account snapshot before publishing any of it. */
 export class TodoistProvider implements TaskProvider {
+  readonly capabilities = { recurringUndo: true };
   constructor(private readonly token: string) {}
 
   private async request(
@@ -206,8 +207,19 @@ export class TodoistProvider implements TaskProvider {
         };
         break;
       case "reopen":
-        command.type = "item_uncomplete";
-        command.args = { id: mutation.taskId };
+        command.type = operation.recurringUndo
+          ? "item_update_date_complete"
+          : "item_uncomplete";
+        command.args = {
+          id: mutation.taskId,
+          ...(operation.recurringUndo
+            ? {
+                ...writableFields({ due: operation.recurringUndo.due }),
+                is_forward: 0,
+                reset_subtasks: 0,
+              }
+            : {}),
+        };
         break;
       case "delete":
         command.type = "item_delete";
@@ -315,6 +327,7 @@ export class TodoistProvider implements TaskProvider {
         },
         capabilities: {
           delete: true,
+          recurringUndo: this.capabilities.recurringUndo,
           ...(user.is_premium !== undefined
             ? { duration: user.is_premium }
             : {}),

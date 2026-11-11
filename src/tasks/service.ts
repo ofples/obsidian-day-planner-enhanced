@@ -6,25 +6,30 @@ import {
   type TaskConflictChoices,
   type TaskConflictReview,
 } from "./conflict";
-import { pendingTaskDeletion } from "./deletion-types";
+import { deletionTaskTree, pendingTaskDeletion } from "./deletion-types";
 import {
   pendingTaskOccurrence,
   recordTaskOccurrence,
+  occurrenceSourceLinks,
   type TaskOccurrenceRecord,
 } from "./occurrence-types";
 import {
   isOutstanding,
   operationTaskId,
+  operationAffectsTasks,
   sameTaskField,
   taskMutationSchema,
+  taskOperationSchema,
   type TaskMutation,
   type TaskOperation,
 } from "./operations";
 import { pendingSnapshot, TaskQueue } from "./queue";
 import { TaskRegistry, type TaskSource } from "./registry";
+import { scheduleBlocksTask } from "./schedule-types";
 import {
   TaskReadError,
   taskCacheSchema,
+  taskSchema,
   type ProviderTask,
   type TaskCache,
   type TaskProvider,
@@ -393,6 +398,178 @@ export class TaskService {
     });
   }
 
+  /** Queue only the selected latest occurrence. Its source recovery stays reserved. */
+  async requestOccurrenceUndo(id: string, displayed?: ProviderTask) {
+    const generation = this.generation;
+    const browser = get(this.state),
+      snapshot = browser.snapshot;
+    if (this.closed || !snapshot || !browser.writable)
+      throw new TaskReadError(
+        "Reconnect a provider that supports exact recurring undo.",
+      );
+    const supportsUndo =
+      snapshot.account.capabilities?.recurringUndo ??
+      this.provider(this.storage.getSecret(this.secretKey()) ?? "").capabilities
+        ?.recurringUndo;
+    if (!supportsUndo)
+      throw new TaskReadError(
+        "This provider does not support exact recurring undo.",
+      );
+    const saved = await this.registry.change((state) => {
+      if (!this.isCurrent(generation) || !get(this.state).writable)
+        throw new TaskReadError(
+          "The task account changed before undo could be saved.",
+        );
+      const record = state.occurrences[id];
+      if (
+        !record ||
+        record.provider !== snapshot.provider ||
+        record.accountId !== snapshot.account.id ||
+        record.phase !== "complete"
+      )
+        throw new TaskReadError(
+          "Review the completed occurrence under its original account before undoing it.",
+        );
+      if (
+        record.undo &&
+        !["complete", "cancelled"].includes(record.undo.phase)
+      ) {
+        const previous = state.operations.find(
+          (operation) => operation.id === record.undo!.id,
+        );
+        if (!previous)
+          throw new TaskReadError(
+            "The saved undo command is unavailable. Review its recovery record.",
+          );
+        return previous;
+      }
+      const current = taskSchema.parse(
+        displayed ??
+          snapshot.tasks.find((task) => task.id === record.before.task.id) ??
+          record.next,
+      );
+      const before = record.before.task;
+      if (
+        !before.due?.recurring ||
+        before.completionCount === undefined ||
+        record.next?.completionCount !== before.completionCount + 1 ||
+        current.id !== before.id ||
+        current.completionCount !== before.completionCount + 1 ||
+        !current.due?.recurring ||
+        current.due.text !== before.due.text ||
+        current.due.timezone !== before.due.timezone
+      )
+        throw new TaskReadError(
+          "This series advanced or its repeat rule changed. Review the selected occurrence and current Todoist task before restoring it.",
+        );
+      const children = deletionTaskTree(snapshot, current, [
+        ...browser.completed,
+        ...Object.values(state.links).flatMap((link) =>
+          link.provider === snapshot.provider &&
+          link.accountId === snapshot.account.id &&
+          link.base?.completed
+            ? [link.base]
+            : [],
+        ),
+      ]).slice(1);
+      const ids = new Set([
+        current.id,
+        ...children.map((task) => task.id),
+        ...record.before.children.map((task) => task.id),
+      ]);
+      if (
+        [...ids].some(
+          (taskId) =>
+            pendingTaskOccurrence(state, record, taskId, id) ||
+            pendingTaskDeletion(state, record, taskId),
+        ) ||
+        state.operations.some(
+          (operation) =>
+            operation.provider === record.provider &&
+            operation.accountId === record.accountId &&
+            operationAffectsTasks(operation, ids) &&
+            isOutstanding(operation),
+        ) ||
+        state.schedules.some(
+          (operation) =>
+            operation.provider === record.provider &&
+            operation.accountId === record.accountId &&
+            ids.has(operation.task.id) &&
+            scheduleBlocksTask(operation),
+        )
+      )
+        throw new TaskReadError(
+          "Finish this task tree's saved changes before undoing its occurrence.",
+        );
+      const links = occurrenceSourceLinks(state, snapshot, current.id, ids);
+      const operation = taskOperationSchema.parse({
+        id: crypto.randomUUID(),
+        tempId: crypto.randomUUID(),
+        provider: record.provider,
+        accountId: record.accountId,
+        mutation: { kind: "reopen", taskId: current.id },
+        base: current,
+        recurringUndo: {
+          occurrenceId: id,
+          completionCount: before.completionCount,
+          due: before.due,
+        },
+        status: "pending",
+        attempts: 0,
+        createdAt: new Date().toISOString(),
+      });
+      record.undo = {
+        id: operation.id,
+        phase: "provider-pending",
+        current,
+        children,
+        historical: { links: record.links, projections: record.projections },
+        following: {
+          links,
+          projections: Object.fromEntries(
+            Object.entries(state.projections).filter(([uid]) => links[uid]),
+          ),
+        },
+        requestedAt: operation.createdAt,
+      };
+      state.operations.push(operation);
+      return operation;
+    });
+    this.publish();
+    this.requestRefresh();
+    return saved;
+  }
+
+  async cancelOccurrenceUndo(id: string) {
+    const generation = this.generation;
+    const snapshot = get(this.state).snapshot;
+    await this.registry.change((state) => {
+      const record = state.occurrences[id],
+        undo = record?.undo;
+      const operation =
+        undo && state.operations.find((item) => item.id === undo.id);
+      if (
+        !this.isCurrent(generation) ||
+        !snapshot ||
+        !get(this.state).writable ||
+        record?.provider !== snapshot.provider ||
+        record.accountId !== snapshot.account.id ||
+        undo?.phase !== "provider-pending" ||
+        !operation ||
+        operation.remoteId ||
+        !["pending", "conflict"].includes(operation.status)
+      )
+        throw new TaskReadError(
+          "This undo has started. Finish its saved verification and note recovery.",
+        );
+      undo.phase = "cancelled";
+      undo.error = undefined;
+      operation.status = "cancelled";
+      operation.error = undefined;
+    });
+    this.publish();
+  }
+
   async retryOperation(id: string) {
     const snapshot = this.cache.snapshot;
     const operation = this.registry
@@ -512,6 +689,10 @@ export class TaskService {
     | { kind: "changed"; review: TaskConflictReview }
     | { kind: "saved"; operationIds: string[] }
   > {
+    if (review.operation.recurringUndo)
+      throw new TaskReadError(
+        "Review the selected occurrence's undo recovery before changing its saved command.",
+      );
     const current = await this.inspectConflict(review.operation.id);
     if (
       JSON.stringify(current.operation) !== JSON.stringify(review.operation) ||

@@ -1,5 +1,10 @@
 import { deletionTaskTree } from "./deletion-types";
-import { recordTaskOccurrence, verifyTaskOccurrence } from "./occurrence-types";
+import {
+  recordTaskOccurrence,
+  verifyTaskOccurrence,
+  verifyTaskOccurrenceUndo,
+  matchingOccurrenceUndo,
+} from "./occurrence-types";
 import {
   isOutstanding,
   matchesOperationResult,
@@ -37,7 +42,10 @@ export class TaskQueue {
       )
         return false;
       Object.assign(saved, patch);
-      if (saved.status === "verified") verifyTaskOccurrence(state, saved);
+      if (saved.status === "verified") {
+        verifyTaskOccurrence(state, saved);
+        verifyTaskOccurrenceUndo(state, saved);
+      }
       return true;
     });
     if (updated) this.changed();
@@ -62,6 +70,17 @@ export class TaskQueue {
     return record;
   }
 
+  private validateOccurrenceUndo(operation: TaskOperation) {
+    if (
+      operation.recurringUndo &&
+      !matchingOccurrenceUndo(this.registry.snapshot(), operation)
+    )
+      throw new TaskWriteError(
+        "The selected recurring undo receipt is unavailable. Review its occurrence history.",
+        true,
+      );
+  }
+
   private async verify(
     operation: TaskOperation,
     provider: TaskProvider,
@@ -69,6 +88,7 @@ export class TaskQueue {
     active: () => boolean,
   ) {
     const taskId = operationTaskId(operation);
+    this.validateOccurrenceUndo(operation);
     if (operation.mutation.kind === "delete") {
       const record = this.deletionRecord(operation);
       if (!provider.get)
@@ -147,8 +167,10 @@ export class TaskQueue {
         ["pending", "sent", "acknowledged", "verified"].includes(item.status),
       )) {
         recordTaskOccurrence(state, snapshot, operation, [], true);
-        if (operation.status === "verified")
+        if (operation.status === "verified") {
           verifyTaskOccurrence(state, operation);
+          verifyTaskOccurrenceUndo(state, operation);
+        }
       }
     });
     const operations = owned.filter((operation) =>
@@ -170,6 +192,7 @@ export class TaskQueue {
       try {
         await this.update(operation.id, { attempts: operation.attempts + 1 });
         if (operation.status === "pending") {
+          this.validateOccurrenceUndo(operation);
           const recovery =
             operation.mutation.kind === "delete"
               ? this.deletionRecord(operation)
@@ -252,6 +275,7 @@ export class TaskQueue {
           sent = true;
         }
         if (!active()) return snapshot;
+        this.validateOccurrenceUndo(operation);
         if (operation.status !== "acknowledged") {
           const result = await provider.apply(operation);
           await this.registry.change((state) => {

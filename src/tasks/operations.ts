@@ -49,6 +49,12 @@ export const taskMutationSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("delete"), taskId: z.string().min(1) }),
 ]);
 
+export const recurringUndoSchema = z.object({
+  occurrenceId: z.uuid(),
+  completionCount: z.number().int().nonnegative(),
+  due: taskSchema.shape.due.unwrap().refine((due) => due.recurring),
+});
+
 export const taskOperationSchema = z
   .object({
     id: z.uuid(),
@@ -70,6 +76,7 @@ export const taskOperationSchema = z
     remoteId: z.string().optional(),
     readback: taskSchema.optional(),
     recurringCompletion: z.object({ resetSubtasks: z.boolean() }).optional(),
+    recurringUndo: recurringUndoSchema.optional(),
     deletionReadback: z.record(z.string(), taskSchema.nullable()).optional(),
     sourceUid: z.string().optional(),
     createdAt: z.iso.datetime(),
@@ -78,6 +85,21 @@ export const taskOperationSchema = z
     error: z.string().optional(),
     resolutionIds: z.array(z.uuid()).optional(),
   })
+  .refine(
+    (operation) =>
+      !operation.recurringUndo ||
+      (operation.mutation.kind === "reopen" &&
+        operation.base?.id === operation.mutation.taskId &&
+        operation.base.due?.recurring === true &&
+        operation.base.completionCount ===
+          operation.recurringUndo.completionCount + 1 &&
+        operation.base.due.text === operation.recurringUndo.due.text &&
+        operation.base.due.timezone === operation.recurringUndo.due.timezone),
+    {
+      message:
+        "Recurring undo retains the selected previous occurrence and current provider baseline.",
+    },
+  )
   .refine(
     (operation) =>
       !operation.recurringCompletion ||
@@ -188,6 +210,15 @@ export function preflightOperation(
   if (!remote || remote.id !== mutation.taskId) return "conflict";
   const base = operation.base;
   if (!base) return "conflict";
+  if (operation.recurringUndo) {
+    if (matchesOperationResult(operation, remote, timezone ?? "UTC"))
+      return "already-applied";
+    return remote.completionCount === base.completionCount &&
+      remote.completed === base.completed &&
+      sameTaskField(remote.due, base.due, "due", timezone)
+      ? "ready"
+      : "conflict";
+  }
   if (mutation.kind === "delete")
     return sameDeletionTask(base, remote) ? "ready" : "conflict";
   if (
@@ -238,6 +269,12 @@ export function matchesOperationResult(
 ) {
   if (operation.mutation.kind === "delete") return remote === null;
   if (!remote || remote.id !== operationTaskId(operation)) return false;
+  if (operation.recurringUndo)
+    return (
+      !remote.completed &&
+      remote.completionCount === operation.recurringUndo.completionCount &&
+      sameTaskField(remote.due, operation.recurringUndo.due, "due", timezone)
+    );
   if (operation.mutation.kind === "complete" && operation.base?.due?.recurring)
     return (
       operation.base.completionCount !== undefined &&

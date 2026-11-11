@@ -326,6 +326,16 @@ Native history details displayed the saved occurrence, description, child, exter
 
 Product deletion removed both fixture tasks and preserved history/recovery. Cleanup restored original note bytes or file absence, removed both managed events and restored pane/calendar settings. Workspace storage was checked before reload. Final API/state readback confirmed fixture tasks/events absent or cancelled, zero native echoes, preserved history and no task-service error. This is live API evidence for a completion outside the plugin outbox, with native refresh/history/navigation acceptance. Exact undo, complete copy/link repair and remaining M6 acceptance continue. Full validation remains at 1,029 passes and the inherited ICS timeout.
 
+### Exact undo command regression
+
+The command/receipt transaction retains the original occurrence counter/date, current task/children and both historical/following source mappings. Tests complete a task, queue undo offline, repeat the request and restart with one saved UUID. Lost responses replay that UUID and restore the counter once. Failed intent persistence sends no command. Unsent cancellation races the preflight read safely. A claimed command requires verification. Later completions and reschedules reject stale payloads, while a fresh review of a rescheduled current occurrence can restore the selected prior completion.
+
+Readback validation couples the task ID, previous counter, due value and unchecked state. An already applied provider undo verifies without another write. Unrelated title/description/label edits survive. Missing, foreign and altered undo receipts prevent replay. A verified readback survives a failed snapshot publication and restart. The integrated schedule fixture retains both note/event mappings and source bytes while its verified provider undo waits for local recovery. Tree edits, scheduling and deletion remain reserved.
+
+Older cached account metadata can queue offline undo using the adapter's declared capability, while explicit denial still blocks it. Exact v14 registry bytes are backed up before v15 migration. The six-file subset has 191 passes. Full validation has 1,051 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Required source checks, the separate strict scorecard and production build pass.
+
+These cases establish provider-command groundwork for A49. Custom confirmation, local note/calendar restoration and installed undo acceptance remain pending. The complete undo workflow is unfinished.
+
 ### Missing-source recovery foundation
 
 Regression checks cover deleted timed parent/child blocks, a deleted note file, exact Undo after restart, provider edits while detached and a fresh export identity after ordinary calendar deletion. Missing-source intents issue no note or provider write. Tests interrupt intent, local acknowledgment and archive acknowledgment writes, then restart and restore the same Todoist link. An uncertain calendar create carries its original event identity through deletion, restart and restoration. An already restored document cancels a stale detachment intent.

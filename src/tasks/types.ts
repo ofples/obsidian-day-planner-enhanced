@@ -40,6 +40,7 @@ export const taskSnapshotSchema = z.object({
       .object({
         duration: z.boolean().optional(),
         delete: z.boolean().optional(),
+        recurringUndo: z.boolean().optional(),
       })
       .optional(),
   }),
@@ -66,6 +67,7 @@ export type TaskSnapshot = z.infer<typeof taskSnapshotSchema>;
 export type TaskCache = z.infer<typeof taskCacheSchema>;
 
 export interface TaskProvider {
+  readonly capabilities?: { recurringUndo?: boolean };
   read(): Promise<TaskSnapshot>;
   get?(id: string): Promise<ProviderTask | null>;
   apply?(operation: TaskOperation): Promise<{ taskId: string }>;

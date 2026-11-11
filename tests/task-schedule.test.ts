@@ -229,7 +229,7 @@ async function harness() {
       id: "account",
       name: "Test",
       timezone: "UTC",
-      capabilities: { duration: false, delete: true },
+      capabilities: { duration: false, delete: true, recurringUndo: true },
     },
     projects: [{ id: "work", name: "Work", order: 1, inbox: true }],
     tasks: structuredClone(
@@ -246,6 +246,12 @@ async function harness() {
           tasks.delete(item.task.id);
         tasks.delete(remote.id);
       }
+    }
+    else if (!commands.has(operation.id) && operation.recurringUndo) {
+      tasks.set(operation.mutation.kind === "create" ? "unexpected" : operation.mutation.taskId, {
+        ...tasks.get(operation.mutation.kind === "create" ? "unexpected" : operation.mutation.taskId)!,
+        completionCount: operation.recurringUndo.completionCount, due: operation.recurringUndo.due, completed: false,
+      });
     }
     else if (!commands.has(operation.id) && operation.mutation.kind === "complete" && operation.base?.due?.recurring) {
       const remote = tasks.get(operation.mutation.taskId)!;
@@ -444,6 +450,64 @@ describe("recurring occurrence freezing", () => {
     const projection = h.scheduler.projection(root.id)!;
     return { h, projection, source: h.texts.get(projection.source.path)! };
   }
+
+  test("undo saves the historical and following source identities before provider restoration", async () => {
+    const { h, projection } = await scheduled();
+    const completion = await h.service.complete(h.tasks.get(root.id)!);
+    await h.service.refresh();
+    await h.reconcile();
+    await h.scheduler.schedule(root.id, {
+      start: "2026-11-12T10:00:00Z",
+      end: "2026-11-12T10:30:00Z",
+    });
+    await h.settle();
+    const following = h.scheduler.projection(root.id)!;
+    const notes = structuredClone([...h.texts]);
+    const undo = await h.service.requestOccurrenceUndo(completion.id);
+    await h.service.refresh();
+    const record = h.service.registry.snapshot().occurrences[completion.id]!;
+    expect(record.undo).toMatchObject({
+      id: undo.id,
+      phase: "local-pending",
+      current: { completionCount: 1 },
+      readback: { completionCount: 0 },
+      historical: {
+        projections: {
+          [projection.linkUid]: { googleEventId: projection.googleEventId },
+        },
+      },
+      following: {
+        projections: {
+          [following.linkUid]: { googleEventId: following.googleEventId },
+        },
+      },
+    });
+    expect(record.undo?.children.map((task) => task.id)).toEqual([child.id]);
+    expect([...h.texts]).toEqual(notes);
+    expect(h.events.size).toBe(2);
+    await expect(h.scheduler.schedule(root.id, interval)).rejects.toThrow(
+      "occurrence history",
+    );
+    await expect(
+      h.service.mutate({
+        kind: "update",
+        taskId: child.id,
+        changes: { title: "Concurrent" },
+      }),
+    ).rejects.toThrow("occurrence history");
+    await expect(h.deleter.review(root.id)).rejects.toThrow();
+    await h.restart();
+    await h.reconcile();
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.undo?.id,
+    ).toBe(undo.id);
+    expect([...h.texts]).toEqual(notes);
+    expect(h.tasks.get(root.id)?.completionCount).toBe(0);
+    expect(
+      h.apply.mock.calls.filter(([operation]) => operation.recurringUndo),
+    ).toHaveLength(1);
+    h.service.stop();
+  });
 
   test.each([1, 3])(
     "an external counter advance of %i freezes the linked occurrence without a provider command",

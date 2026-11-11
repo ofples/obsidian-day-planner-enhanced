@@ -27,6 +27,50 @@ const response = (json: unknown, status = 200) => ({
 beforeEach(() => vi.clearAllMocks());
 
 describe("Todoist UUID write commands", () => {
+  test("exact undo restores the selected due date with one immutable UUID and preserves child statuses", async () => {
+    const op = operation({ kind: "reopen", taskId: "task" });
+    op.recurringUndo = {
+      occurrenceId: crypto.randomUUID(),
+      completionCount: 2,
+      due: {
+        date: "2026-11-12T09:00:00",
+        text: "every day",
+        recurring: true,
+        timezone: "Asia/Kolkata",
+      },
+    };
+    vi.mocked(requestUrl).mockResolvedValue(
+      response({ sync_status: { [op.id]: "ok" } }),
+    );
+    const api = new TodoistProvider("credential");
+    await api.apply(op);
+    await api.apply(op);
+    const commands = vi
+      .mocked(requestUrl)
+      .mock.calls.map(([arg]) =>
+        JSON.parse(
+          new URLSearchParams((arg as { body: string }).body).get("commands")!,
+        ),
+      );
+    expect(commands[0]).toEqual([
+      {
+        uuid: op.id,
+        type: "item_update_date_complete",
+        args: {
+          id: "task",
+          is_forward: 0,
+          reset_subtasks: 0,
+          due: {
+            date: "2026-11-12T09:00:00",
+            string: "every day",
+            is_recurring: true,
+            timezone: "Asia/Kolkata",
+          },
+        },
+      },
+    ]);
+    expect(commands[1]).toEqual(commands[0]);
+  });
   test.each([true, false])(
     "recurring completion freezes reset-subtasks %j across replay",
     async (resetSubtasks) => {

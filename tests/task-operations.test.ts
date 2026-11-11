@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   preflightOperation,
   matchesOperationResult,
+  taskOperationSchema,
   type TaskOperation,
 } from "../src/tasks/operations";
 import { pendingSnapshot } from "../src/tasks/queue";
@@ -34,6 +35,82 @@ const operation: TaskOperation = {
 };
 
 describe("task write comparisons", () => {
+  test("exact recurring undo couples its previous date and counter while preserving unrelated fields", () => {
+    const previousDue = {
+      date: "2026-11-12T03:30:00Z",
+      recurring: true,
+      text: "every day",
+      timezone: "Asia/Kolkata",
+    };
+    const current = {
+      ...base,
+      completionCount: 4,
+      due: { ...previousDue, date: "2026-11-13T03:30:00Z" },
+    };
+    const undo = taskOperationSchema.parse({
+      ...operation,
+      mutation: { kind: "reopen", taskId: base.id },
+      base: current,
+      recurringUndo: {
+        occurrenceId: crypto.randomUUID(),
+        completionCount: 3,
+        due: previousDue,
+      },
+    });
+    expect(
+      preflightOperation(
+        undo,
+        {
+          ...current,
+          title: "Changed",
+          due: { ...current.due, date: "2026-11-13T09:00:00" },
+        },
+        "Asia/Kolkata",
+      ),
+    ).toBe("ready");
+    for (const changed of [
+      { ...current, completionCount: 5 },
+      { ...current, due: { ...current.due, date: "2026-11-14T09:00:00" } },
+    ])
+      expect(preflightOperation(undo, changed, "Asia/Kolkata")).toBe(
+        "conflict",
+      );
+    const restored = {
+      ...current,
+      completionCount: 3,
+      due: { ...previousDue, date: "2026-11-12T09:00:00" },
+    };
+    expect(matchesOperationResult(undo, restored, "Asia/Kolkata")).toBe(true);
+    expect(preflightOperation(undo, restored, "Asia/Kolkata")).toBe(
+      "already-applied",
+    );
+    expect(
+      matchesOperationResult(
+        undo,
+        { ...restored, completionCount: 2 },
+        "Asia/Kolkata",
+      ),
+    ).toBe(false);
+    expect(
+      matchesOperationResult(
+        undo,
+        { ...restored, completed: true },
+        "Asia/Kolkata",
+      ),
+    ).toBe(false);
+    expect(
+      taskOperationSchema.safeParse({
+        ...undo,
+        recurringUndo: { ...undo.recurringUndo!, completionCount: 1 },
+      }).success,
+    ).toBe(false);
+    expect(
+      taskOperationSchema.safeParse({
+        ...undo,
+        mutation: { kind: "complete", taskId: base.id },
+      }).success,
+    ).toBe(false);
+  });
   test("recurring completion accepts provider-normalized instants and keeps timezone/rule conflicts", () => {
     const due = {
       date: "2026-11-12T03:30:00.000Z",
