@@ -252,6 +252,14 @@ The historical root/child identities became active again. Following identities w
 
 Product deletion and controlled cleanup removed the disposable tree and both managed events and restored original note bytes or file absence. Reloaded readback verified zero native calendar echoes, retained occurrence/undo/deletion history, restored pane/calendar settings and no task-service error. Private proof journals stay in ignored output. The native helper captured the isolated window before installation, then lost that window after reload while its domain API stayed available. Confirmation/recovery in this pass used the product controller API. Native undo confirmation/cancellation and real pointer dragging remain pending alongside full copy/link repair and remaining M6 acceptance. The baseline checkout remains clean at its installed hotfix.
 
+### Copied-source reservation
+
+A regression reproduced a copied linked task entering automatic capture in another note. Capture now indexes exact known source text and same-note native block IDs after canonical matching. Excess opted-in copies reserve both roots and their contained identities. Their original task links remain untouched, and independent notes can still capture. The review issue retains every candidate and affected identity. Distinct previously linked identical tasks keep their individual identities. Tagless local children remain compatible with recurring undo.
+
+Nine new regression cases cover cross-note copies, nested parent copies, identical fresh captures, excess copies of two known identities, edited same-note native IDs, note-scoped IDs, line endings, tagless local children and unique moves. The four-file focused subset has 159 passes. Full validation has 1,075 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, the separate strict scorecard and production build pass.
+
+The technical specification now details the pending custom Keep one linked, Move link and Create separate task workflow, durable assignment/provisional-source recovery and canonical calendar adoption. That selection workflow, older-state repair and native acceptance remain required for US-12. This source checkpoint has not been installed. The isolated vault continues to run the verified undo build, and the working vault retains the baseline hotfix.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

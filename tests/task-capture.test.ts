@@ -265,6 +265,95 @@ describe("tagged task capture", () => {
     h.service.stop();
   });
 
+  test("identical tasks captured together retain distinct identities without a copy warning", async () => {
+    const h = await setup("- [ ] Same #todoist\n- [ ] Same #todoist");
+    await h.capture.scan();
+    await h.service.refresh();
+    await h.capture.scan();
+    await h.service.refresh();
+    expect(Object.keys(h.service.registry.snapshot().links)).toHaveLength(2);
+    expect(
+      new Set(
+        Object.values(h.service.registry.snapshot().links).map(
+          (link) => link.taskId,
+        ),
+      ).size,
+    ).toBe(2);
+    expect(get(h.capture.state).identityIssues).toEqual([]);
+    expect(h.capture.candidates()).toHaveLength(2);
+    h.service.stop();
+  });
+
+  test("copying an existing task to another note reserves both sources for a link decision", async () => {
+    const h = await setup();
+    await h.capture.scan();
+    await h.service.refresh();
+    const links = h.service.registry.snapshot().links;
+    const copied = h.host.candidates()[0]!.raw;
+    const unrelated = "- [ ] Independent #todoist";
+    const capture = new TaskCapture(h.service, {
+      ...h.host,
+      candidates: () => [
+        ...h.host.candidates(),
+        ...parseCaptureCandidates("Copy.md", copied),
+        ...parseCaptureCandidates("Other.md", unrelated),
+      ],
+      read: async (path) =>
+        path === "Copy.md"
+          ? copied
+          : path === "Other.md"
+            ? unrelated
+            : h.host.read(),
+    });
+    await capture.scan();
+    await h.service.refresh();
+    expect(h.apply).toHaveBeenCalledTimes(2);
+    expect(get(capture.state).identityIssues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          uids: Object.keys(links),
+          copies: expect.arrayContaining([
+            expect.objectContaining({ path: "Tasks.md" }),
+            expect.objectContaining({ path: "Copy.md" }),
+          ]),
+        }),
+      ]),
+    );
+    expect(capture.candidates().map((candidate) => candidate.path)).toEqual([
+      "Other.md",
+    ]);
+    for (const [uid, link] of Object.entries(links))
+      expect(h.service.registry.snapshot().links[uid]).toEqual(link);
+    expect(get(capture.state).issues[0]?.message).toContain("copy");
+    capture.stop();
+    h.service.stop();
+  });
+
+  test("copying a linked parent reserves its nested identities without capturing duplicate children", async () => {
+    const h = await setup("- [ ] Parent #todoist\n  - [ ] Child #todoist");
+    await h.capture.scan();
+    await h.service.refresh();
+    await h.capture.scan();
+    await h.service.refresh();
+    const links = h.service.registry.snapshot().links;
+    const raw = h.host.candidates()[0]!.raw;
+    h.setText(raw + "\n\n" + raw);
+    await h.capture.scan();
+    await h.service.refresh();
+    expect(h.apply).toHaveBeenCalledTimes(2);
+    expect(h.capture.candidates()).toEqual([]);
+    expect(get(h.capture.state).identityIssues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          uids: expect.arrayContaining(Object.keys(links)),
+          copies: expect.any(Array),
+        }),
+      ]),
+    );
+    expect(h.service.registry.snapshot().links).toEqual(links);
+    h.service.stop();
+  });
+
   test("ambiguous note edits preserve links and allow capture in another note", async () => {
     const h = await setup("- [ ] First #todoist\n- [ ] Second #todoist");
     await h.capture.scan();

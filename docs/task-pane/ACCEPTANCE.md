@@ -411,3 +411,9 @@ An exact source build, matching bundle hashes, full plugin backup and original v
 Both Google event IDs, intervals, mapped colors and child descriptions were retained. Reload preserved the same undo/source UUIDs, original completion baseline and restored mappings, with zero pending operations or source/reconciliation issues. Cleanup removed the task tree and managed events, restored original note bytes or file absence and confirmed zero native calendar echoes. Pane/calendar settings and occurrence/undo/deletion history were retained through another reload.
 
 This supplies installed API evidence for A49 recovery and restart. The native helper initially captured the isolated window, then lost access to it after reload while the domain API continued working. Confirmation/recovery used the product controller API. Native confirmation, queued cancellation and pointer drag acceptance remain pending. Full source validation stays at 1,066 passes and the inherited inclusive-last-day ICS timeout.
+
+### Copy reservation regression
+
+A copied linked block in another note now reserves both roots before automatic task creation. Nested parent copies reserve their original descendant identities. Their saved task links and source bytes are retained while an independent note still captures normally. Identity review retains the candidate inventory. Distinct linked identical tasks remain distinct, and native IDs supply copy evidence within their original note. Tests cover edited IDs, line endings, tagless local children after undo and unique moves.
+
+The four-file subset has 159 passes. Full validation has 1,075 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Required source checks, the separate strict scorecard and production build pass. This establishes copy reservation for A20–A21. The complete custom assignment/create workflow and installed acceptance remain pending, so US-12 stays open.

@@ -20,6 +20,7 @@ import type { TaskDraft } from "./operations";
 import { withoutTaskCaptureTag } from "./reconcile-markdown";
 import type { TaskSource } from "./registry";
 import type { TaskService } from "./service";
+import { findTaskSourceCopies } from "./source-copies";
 import { TaskReadError, type TaskSnapshot } from "./types";
 
 export interface CaptureIssue {
@@ -34,6 +35,7 @@ export interface TaskIdentityIssue {
   uids: string[];
   message: string;
   candidate?: CaptureCandidate;
+  copies?: CaptureCandidate[];
 }
 
 function restoresSource(source: TaskSource, candidate: TaskSource) {
@@ -261,6 +263,30 @@ export class TaskCapture {
           ? error.message
           : "Task links need review before capture.",
       );
+    }
+    for (const group of findTaskSourceCopies(candidates, previous)) {
+      const nested = candidates.filter((candidate) =>
+        group.copies.some(
+          (copy) =>
+            candidate.path === copy.path &&
+            candidate.from >= copy.from &&
+            candidate.to <= copy.to,
+        ),
+      );
+      for (const candidate of nested) blocked.add(candidate);
+      for (let index = identityIssues.length - 1; index >= 0; index--)
+        if (
+          identityIssues[index]!.uids.every((uid) => group.uids.includes(uid))
+        )
+          identityIssues.splice(index, 1);
+      identityIssues.push({
+        path: group.copies[0]!.path,
+        uids: group.uids,
+        candidate: group.copies[0],
+        copies: group.copies,
+        message:
+          "This block has a copy. Choose which source keeps the task link before syncing either copy.",
+      });
     }
     const retired = Object.entries(state.detached).filter(
       ([, value]) => value.reason === "retired" && !value.restoredAt,
