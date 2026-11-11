@@ -40,7 +40,10 @@ import {
 } from "./mdast/mdast";
 import type { DateRanges } from "./redux/date-ranges";
 import { selectVisibleDays } from "./redux/date-ranges-slice";
-import { icalRefreshRequested } from "./redux/ical/ical-slice";
+import {
+  icalRefreshRequested,
+  taskCalendarDisplayUpdated,
+} from "./redux/ical/ical-slice";
 import { type IcalParseTaskResult } from "./redux/ical/init-ical-listeners";
 import { selectActiveLogTimeBlocks } from "./redux/index/index-selectors";
 import { filesIndexed } from "./redux/index/index-slice";
@@ -72,6 +75,7 @@ import {
 import { VaultFacade } from "./service/vault-facade";
 import { WorkspaceFacade } from "./service/workspace-facade";
 import { type DayPlannerSettings, mergeStoredSettings } from "./settings";
+import { registerTaskCalendarDisplay } from "./tasks/calendar-display";
 import type { TaskCapture } from "./tasks/capture";
 import { createTaskCapture } from "./tasks/capture-obsidian";
 import { createTaskService } from "./tasks/obsidian";
@@ -91,6 +95,7 @@ import { DayPlannerReleaseNotesView } from "./ui/release-notes";
 import { ScheduleExportModal } from "./ui/schedule-export-modal";
 import { DayPlannerSettingsTab } from "./ui/settings-tab";
 import { mountStatusBarWidget } from "./ui/status-bar-widget";
+import { TaskCalendarDisplayModal } from "./ui/task-calendar-modal";
 import {
   TaskCaptureSettingsModal,
   TaskCaptureRouteModal,
@@ -265,6 +270,12 @@ export default class DayPlanner extends Plugin {
         store,
         this.settingsStore,
       );
+      registerTaskCalendarDisplay(
+        this,
+        this.taskService,
+        this.settingsStore,
+        store,
+      );
       listenerMiddleware.startListening({
         actionCreator: filesIndexed,
         effect: () => this.taskCapture.scan(),
@@ -332,6 +343,7 @@ export default class DayPlanner extends Plugin {
       listenerMiddleware.startListening({
         predicate: (action, current, previous) =>
           icalRefreshRequested.match(action) ||
+          taskCalendarDisplayUpdated.match(action) ||
           selectVisibleDays(current) !== selectVisibleDays(previous) ||
           current.settings.settings.googleCalendar !==
             previous.settings.settings.googleCalendar,
@@ -414,6 +426,15 @@ export default class DayPlanner extends Plugin {
       this.taskService,
       this.settingsStore,
       this.taskCapture,
+    ).open();
+  }
+
+  openTaskCalendarSettings() {
+    new TaskCalendarDisplayModal(
+      this.app,
+      this.taskService,
+      this.googleCalendarSync,
+      this.settingsStore,
     ).open();
   }
 

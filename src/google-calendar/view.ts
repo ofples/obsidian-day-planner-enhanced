@@ -61,6 +61,7 @@ export function googleEventsToBlocks(
     return [
       {
         id: `google:${calendar.id}:${event.id}`,
+        calendarSource: { kind: "google" as const, id: calendar.id },
         source: "ical" as const,
         calendar: {
           name: calendar.summary,

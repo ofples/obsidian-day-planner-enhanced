@@ -21,6 +21,11 @@ import {
   type LocalIdentity,
 } from "./types";
 
+export interface CalendarNoteWritePlan {
+  block: LocalBlock & { from: number };
+  edits: Array<{ path: string; before: string; after: string }>;
+}
+
 export class ObsidianCalendarNotes implements CalendarNotes {
   constructor(
     private readonly app: App,
@@ -220,6 +225,14 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     snapshot: CalendarSnapshot,
     previous?: LocalBlock,
   ): Promise<LocalBlock> {
+    return this.applyWrite(await this.prepareWrite(uid, snapshot, previous));
+  }
+
+  async prepareWrite(
+    uid: string,
+    snapshot: CalendarSnapshot,
+    previous?: LocalBlock,
+  ): Promise<CalendarNoteWritePlan> {
     const raw = renderBlock(uid, snapshot, this.settings, previous?.raw);
     const target = await this.daily.createDailyNoteIfNeeded(
       window.moment(snapshot.start).startOf("day"),
@@ -261,11 +274,20 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       });
     }
     const identity = { path: target.path, raw, snapshot, from };
-    await this.changeNotes(edits, {
+    return { block: { uid, ...identity }, edits };
+  }
+
+  async applyWrite(plan: CalendarNoteWritePlan): Promise<LocalBlock> {
+    if (this.state.pendingNoteChange || this.state.pendingMove)
+      throw new Error(
+        "Finish the pending calendar note operation before applying another write.",
+      );
+    const { uid, ...identity } = plan.block;
+    await this.changeNotes(plan.edits, {
       ...this.state.identities,
       [uid]: identity,
     });
-    return { uid, ...identity };
+    return plan.block;
   }
 
   async recoverMove() {

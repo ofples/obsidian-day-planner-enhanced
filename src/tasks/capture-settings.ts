@@ -3,6 +3,13 @@ import { z } from "zod";
 import type { TaskSnapshot } from "./types";
 
 export const taskAccountSettingsSchema = z.object({
+  calendarDisplay: z
+    .object({
+      enabled: z.boolean(),
+      googleCalendarIds: z.array(z.string()),
+      icalUrls: z.array(z.string()),
+    })
+    .optional(),
   defaultProjectId: z.string().default(""),
   projectMappings: z.record(z.string(), z.string()).default({}),
   labelMappings: z.record(z.string(), z.string()).default({}),

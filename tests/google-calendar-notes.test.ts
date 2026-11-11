@@ -101,6 +101,27 @@ function harness() {
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 describe("vault calendar adapter", () => {
+  test("preparing a projection exposes exact before/after bytes before applying its note write", async () => {
+    const h = harness();
+    const [block] = await h.notes.scan();
+    h.process.mockClear();
+    const before = h.texts.get(sourcePath)!;
+    const plan = await h.notes.prepareWrite(
+      uid,
+      { ...block!.snapshot, title: "Scheduled task #work" },
+      block,
+    );
+    expect(h.process).not.toHaveBeenCalled();
+    expect(h.texts.get(sourcePath)).toBe(before);
+    expect(plan.edits).toHaveLength(1);
+    expect(plan.edits[0]?.before).toBe(before);
+    expect(plan.edits[0]?.after).toContain("Scheduled task #work");
+    expect(plan.block.uid).toBe(uid);
+    const applied = await h.notes.applyWrite(plan);
+    expect(applied).toEqual(plan.block);
+    expect(h.state.identities?.[uid]?.raw).toBe(applied.raw);
+    expect(h.state.pendingNoteChange).toBeUndefined();
+  });
   test("migration preserves IDs and only removes legacy comments", async () => {
     const h = harness();
     const before = h.texts.get(sourcePath)!;

@@ -53,7 +53,7 @@
       setting
         .setName("Capture #todoist tasks")
         .setDesc(
-          "Project and label mappings are available in the full Day Planner settings.",
+          "Project, label and task-calendar feed settings are available in the full Day Planner settings.",
         )
         .addToggle((toggle) =>
           toggle.setValue($settings.taskCapture.enabled).onChange((enabled) => {

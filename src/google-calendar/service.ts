@@ -12,6 +12,7 @@ import { GoogleCalendarAuth } from "./auth";
 import { syncCalendar } from "./engine";
 import { ObsidianCalendarNotes } from "./notes";
 import type { CalendarSyncState } from "./types";
+import type { LocalBlock } from "./types";
 import { googleEventsToBlocks, visibleGoogleCalendars } from "./view";
 
 export interface GoogleCalendarSettings {
@@ -207,6 +208,30 @@ export class GoogleCalendarSync {
     return { notes, timeMin, timeMax };
   }
 
+  /** Serializes task projections with the existing calendar note journal. */
+  async editNotes<T>(
+    operation: (
+      notes: ObsidianCalendarNotes,
+      blocks: LocalBlock[],
+    ) => Promise<T>,
+  ): Promise<T> {
+    if (this.busy || this.stopped)
+      throw new Error(
+        "Wait for the current calendar operation to finish, then retry scheduling.",
+      );
+    this.busy = true;
+    try {
+      const { notes } = this.noteContext();
+      const blocks = await notes.scan();
+      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Unload can stop the service while scanning notes.
+      if (this.stopped)
+        throw new Error("Reopen Day Planner before scheduling this task.");
+      return await operation(notes, blocks);
+    } finally {
+      this.busy = false;
+    }
+  }
+
   async connect() {
     if (this.busy) {
       new Notice("A calendar operation is already running.");
@@ -353,7 +378,11 @@ export class GoogleCalendarSync {
         api.calendars(),
         api.eventColors(),
       ]);
-      const selected = visibleGoogleCalendars(calendars, config);
+      const excluded =
+        this.store.getState().ical.taskCalendarDisplay.googleCalendarIds;
+      const selected = visibleGoogleCalendars(calendars, config).filter(
+        (calendar) => !excluded.includes(calendar.id),
+      );
       const blocks = (
         await Promise.all(
           selected.map(async (calendar) =>

@@ -178,7 +178,26 @@ export class TaskCaptureSettingsModal extends Modal {
             config = taskCaptureSettingsSchema.parse(config);
             this.settings.update((settings) => ({
               ...settings,
-              taskCapture: config,
+              taskCapture: {
+                ...settings.taskCapture,
+                enabled: config.enabled,
+                roots: config.roots,
+                accounts:
+                  snapshot && account
+                    ? {
+                        ...settings.taskCapture.accounts,
+                        [taskAccountKey(snapshot)]: {
+                          ...taskAccountSettings(
+                            settings.taskCapture,
+                            snapshot,
+                          ),
+                          defaultProjectId: account.defaultProjectId,
+                          projectMappings: account.projectMappings,
+                          labelMappings: account.labelMappings,
+                        },
+                      }
+                    : settings.taskCapture.accounts,
+              },
             }));
             void this.capture.scan();
             this.close();

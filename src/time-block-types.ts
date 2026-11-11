@@ -34,6 +34,7 @@ export interface BaseTimeBlock {
 }
 
 export interface RemoteTimeBlock extends BaseTimeBlock {
+  calendarSource?: { kind: "google"; id: string };
   source: "ical";
   calendar: IcalConfig;
   summary: string;

@@ -23,6 +23,8 @@ Open Capture and routing to choose capture folders, the default project, project
 
 Tagged capture currently creates and links tasks. Linked note updates and scheduling are being implemented in subsequent milestones. The feature build is under development in its separate branch. The production baseline remains installed during verification.
 
+Calendar feeds in the full Tasks settings selects the exact Google or internet-calendar sources to hide for the connected task account. Enable Hide selected task feeds after making that selection. Disconnecting the task account restores feed display. This plugin-level choice is saved per task account.
+
 ## Decisions
 
 - Integrate the pane into Day Planner Enhanced, reusing its schedule editor, note parser, task rendering and calendar exporter.

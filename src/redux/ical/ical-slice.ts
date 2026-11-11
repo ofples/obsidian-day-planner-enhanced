@@ -7,6 +7,7 @@ import {
 import ical from "node-ical";
 
 import type { IcalConfig } from "../../settings";
+import type { TaskCalendarDisplayPolicy } from "../../tasks/calendar-display";
 import type { RemoteTimeBlock } from "../../time-block-types";
 import type { WithIcalConfig } from "../../types";
 import { createAppSlice } from "../create-app-slice";
@@ -17,6 +18,7 @@ export type SerializedRemoteTimeBlock = Omit<RemoteTimeBlock, "startTime"> & {
 };
 
 export interface IcalState {
+  taskCalendarDisplay: TaskCalendarDisplayPolicy;
   icalEvents: Array<WithIcalConfig<ical.VEvent>>;
   plainTextIcals: Array<RawIcal>;
   serializedRemoteTimeBlocks: Array<SerializedRemoteTimeBlock>;
@@ -28,6 +30,7 @@ export function isVEvent(event: ical.CalendarComponent): event is ical.VEvent {
 }
 
 export const initialIcalState: IcalState = {
+  taskCalendarDisplay: { googleCalendarIds: [], icalUrls: [] },
   icalEvents: [],
   plainTextIcals: [],
   serializedRemoteTimeBlocks: [],
@@ -38,6 +41,11 @@ export const icalSlice = createAppSlice({
   name: "ical",
   initialState: initialIcalState,
   reducers: (create) => ({
+    taskCalendarDisplayUpdated: create.reducer(
+      (state, action: PayloadAction<TaskCalendarDisplayPolicy>) => {
+        state.taskCalendarDisplay = action.payload;
+      },
+    ),
     icalsFetched: create.reducer(
       (state, action: PayloadAction<Array<RawIcal>>) => {
         state.plainTextIcals = action.payload;
@@ -55,6 +63,8 @@ export const icalSlice = createAppSlice({
     ),
   }),
   selectors: {
+    selectTaskCalendarDisplay: (state) =>
+      state.taskCalendarDisplay ?? { googleCalendarIds: [], icalUrls: [] },
     selectSerializedRemoteTimeBlocks: (state) =>
       state.serializedRemoteTimeBlocks,
     selectPlainTextIcals: (state) => state.plainTextIcals,
@@ -66,13 +76,17 @@ export const icalSlice = createAppSlice({
 export const icalRefreshRequested = createAction("ical/icalRefreshRequested");
 
 export const {
+  taskCalendarDisplayUpdated,
   remoteTimeBlocksUpdated,
   googleTimeBlocksUpdated,
   icalsFetched,
 } = icalSlice.actions;
 export const { selectPlainTextIcals } = icalSlice.selectors;
-const { selectSerializedRemoteTimeBlocks, selectSerializedGoogleTimeBlocks } =
-  icalSlice.selectors;
+const {
+  selectSerializedRemoteTimeBlocks,
+  selectSerializedGoogleTimeBlocks,
+  selectTaskCalendarDisplay,
+} = icalSlice.selectors;
 
 export const selectAllIcalEventsWithIcalConfigs = createSelector(
   selectPlainTextIcals,
@@ -94,8 +108,18 @@ export const selectAllIcalEventsWithIcalConfigs = createSelector(
 export const selectRemoteTimeBlocks = createSelector(
   selectSerializedRemoteTimeBlocks,
   selectSerializedGoogleTimeBlocks,
-  (serializedRemoteTimeBlocks, googleTimeBlocks) =>
-    [...serializedRemoteTimeBlocks, ...googleTimeBlocks].map((it) => ({
+  selectTaskCalendarDisplay,
+  (serializedRemoteTimeBlocks, googleTimeBlocks, policy) =>
+    [
+      ...serializedRemoteTimeBlocks.filter(
+        (block) => !policy.icalUrls.includes(block.calendar.url),
+      ),
+      ...googleTimeBlocks.filter(
+        (block) =>
+          !block.calendarSource ||
+          !policy.googleCalendarIds.includes(block.calendarSource.id),
+      ),
+    ].map((it) => ({
       ...it,
       startTime: window.moment(it.startTime),
     })),

@@ -51,6 +51,11 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
         render: (setting) => {
           setting.addButton((button) =>
             button
+              .setButtonText("Calendar feeds")
+              .onClick(() => this.plugin.openTaskCalendarSettings()),
+          );
+          setting.addButton((button) =>
+            button
               .setButtonText("Open tasks")
               .onClick(() => this.plugin.openTasks()),
           );
