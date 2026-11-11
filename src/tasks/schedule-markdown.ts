@@ -5,7 +5,6 @@ import { fromMarkdown } from "../mdast/mdast";
 import { getTimeRangeMatch } from "../parser/parser";
 import { exportPlainText } from "../util/schedule-export";
 
-import { taskGroups } from "./browser";
 import {
   taskAccountSettings,
   type TaskCaptureSettings,
@@ -94,27 +93,6 @@ export function scheduleNoteTitle(raw: string) {
     .replace(/<!--.*?-->/g, "")
     .replace(/\s\^[\w-]+\s*$/, "")
     .trim();
-}
-
-/** Use the same iterative task forest as the pane. */
-export function taskSubtree(snapshot: TaskSnapshot, task: ProviderTask) {
-  const rows =
-    taskGroups(snapshot, {
-      groupBy: "project",
-      query: "",
-      projectId: "",
-      selectedId: null,
-      collapsed: [],
-    }).find((group) => group.id === task.projectId)?.rows ?? [];
-  const root = rows.findIndex((row) => row.task.id === task.id);
-  const depth = rows[root]?.depth ?? 0;
-  const children: { task: ProviderTask; depth: number }[] = [];
-  for (let index = root + 1; root >= 0 && index < rows.length; index++) {
-    const row = rows[index]!;
-    if (row.depth <= depth) break;
-    children.push({ task: row.task, depth: row.depth - depth });
-  }
-  return children;
 }
 
 export function newTaskMarkdown(

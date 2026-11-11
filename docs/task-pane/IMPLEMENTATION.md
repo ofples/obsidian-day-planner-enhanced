@@ -58,6 +58,12 @@ The feature worktree exposes browsing, connection, task editing, tagged Markdown
 
 The automatic comparison and journal handle direct timed-note edits, which also receive normal timeline move/resize writes. Both conflict controllers revalidate their latest comparison. Calendar-only retries yield to later edits after durable task acknowledgment. Keep a changed or missing source recoverable, then implement explicit unlink and remote-delete choices. Verify exact live feed selection and native exporter collision handling. Recurrence and independently scheduled children retain their M5 acceptance requirements.
 
+### Custom panel implementation
+
+Boards 09–11 refine the Morgen-inspired visual design. The Tasks ItemView now hosts a fully custom Svelte panel with scoped dark/light tokens, flat controls, circle checkboxes, search, grouping, tree rows, interval chips and adaptive details. Create, edit, connect, schedule, capture settings, routing, unschedule and conflict review use custom forms. External timeline/editor commands reuse the same forms in styled hosts. A single collapsed disclosure summarizes pending changes and review issues. Custom row menus support keyboard navigation and restore focus after closing. Escape handling is scoped to the panel.
+
+The editor's extracted domain helpers preserve opened field baselines, recurrence metadata and narrow commands. Twelve focused editor/component regressions cover those contracts, Escape composition, toolbar routing, late-save callbacks and review counts. The isolated browser preview verified the new surfaces at 320px and 800px, in dark and light themes, with zero measured horizontal overflow. Full validation has 830 passing tests and the inherited ICS timeout. Strict scorecard and production build pass. Desktop takeover is deferred until after the user's 22:00 IST gate. Recurrence, recovery and release acceptance continue under M4–M6.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

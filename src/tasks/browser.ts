@@ -12,6 +12,27 @@ export const taskViewStateSchema = z.object({
 });
 export type TaskViewState = z.infer<typeof taskViewStateSchema>;
 
+/** Shared iterative task forest for pane details and schedule export. */
+export function taskSubtree(snapshot: TaskSnapshot, task: ProviderTask) {
+  const rows =
+    taskGroups(snapshot, {
+      groupBy: "project",
+      query: "",
+      projectId: "",
+      selectedId: null,
+      collapsed: [],
+    }).find((group) => group.id === task.projectId)?.rows ?? [];
+  const root = rows.findIndex((row) => row.task.id === task.id);
+  const depth = rows[root]?.depth ?? 0;
+  const children: { task: ProviderTask; depth: number }[] = [];
+  for (let index = root + 1; root >= 0 && index < rows.length; index++) {
+    const row = rows[index]!;
+    if (row.depth <= depth) break;
+    children.push({ task: row.task, depth: row.depth - depth });
+  }
+  return children;
+}
+
 export interface TaskBrowserRow {
   task: ProviderTask;
   depth: number;

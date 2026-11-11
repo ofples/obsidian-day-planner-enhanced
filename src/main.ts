@@ -394,6 +394,7 @@ export default class DayPlanner extends Plugin {
             this.taskScheduler,
             () => this.getSettings().defaultDurationMinutes,
             this.taskReconciler,
+            this.settingsStore,
           ),
       );
     this.addCommand({

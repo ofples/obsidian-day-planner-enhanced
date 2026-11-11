@@ -4,6 +4,7 @@ import type { GoogleCalendarSync } from "../google-calendar/service";
 import { getTimeRangeMatch } from "../parser/parser";
 import { locateSource } from "../service/source-identity";
 
+import { taskSubtree } from "./browser";
 import { parseCaptureCandidates } from "./capture-parser";
 import {
   taskAccountSettings,
@@ -17,11 +18,7 @@ import {
 } from "./operations";
 import { rewriteTaskNote } from "./reconcile-markdown";
 import type { TaskLink, TaskRegistryState } from "./registry";
-import {
-  newTaskMarkdown,
-  scheduleNoteTitle,
-  taskSubtree,
-} from "./schedule-markdown";
+import { newTaskMarkdown, scheduleNoteTitle } from "./schedule-markdown";
 import {
   scheduleIntervalSchema,
   intervalForTaskDate,

@@ -20,6 +20,7 @@ Use these product decisions throughout.
 - Resolve independent field edits automatically and ask for a choice for conflicting fields. Keep recurrence occurrence history and provider repeat rules.
 - Persist operations before side effects, reuse provider command identities on retries and recover incomplete note moves after restart.
 - Validate every account and provider response. Keep credentials in SecretStorage and private data out of Git.
+- Implement the reviewed Morgen-inspired custom panel using scoped HTML, CSS and JavaScript through Svelte. Use boards 09–11 for the current visual direction, adaptive details, custom forms and compact recovery feedback.
 
 Run focused regression tests for changed behavior, the repo-required full validation and a production build. Inspect the normal-entry UI in a disposable desktop vault at narrow and normal widths. Verify writes with disposable real tasks and the dedicated calendar, read back stable task/event identity, and clean up artifacts. Complete matching backup, installation, reload and live acceptance when the required cases pass. Report the inherited ICS timeout separately from feature regressions.
 

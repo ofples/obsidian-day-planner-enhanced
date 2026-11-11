@@ -52,10 +52,22 @@ The source-conflict variant reuses this dialog with Current note and Current Tod
 
 ## Streamlined implementation decisions
 
-- Use one adaptive details surface, docked on wide layouts and modal on narrow layouts.
+- Use one adaptive details surface, split on wide layouts and replacing the list on narrow layouts.
 - Keep one routing decision path for both new-task UI and Markdown capture.
 - Reuse one scheduling command for keyboard placement, drop confirmation and rescheduling.
 - Show a schedule chip rather than duplicating a scheduled task in another timeline layer.
 - Use one field-conflict form and one Apply choices action.
 - Keep one cached snapshot per account and one durable operation queue per vault writer.
 - Use the existing Google subtask-description exporter for shared nested content.
+
+## Custom panel refinement
+
+The user requested fully custom HTML, CSS and JavaScript styling and additional Morgen-inspired mockups. Three further boards were generated with the built-in ImageGen tool and reviewed against the implemented synchronization contracts.
+
+- [Tasks and calendar](mockups/09-custom-tasks-and-calendar.png) guides the charcoal palette, flat toolbar, Date/Project control, circle checkboxes and compact schedule chips.
+- [Details and composer](mockups/10-custom-details-and-composer.png) guides adaptive details, parent/child creation, custom editing and schedule controls.
+- [Recovery and narrow pane](mockups/11-custom-recovery-and-narrow-pane.png) guides the compact review summary, per-field choices and 320px pane behavior.
+
+Targeted revisions removed an invented account address, corrected the narrow source selector and project grouping, and restored child checkbox alignment. The final images were visually inspected. The creation board contains a synthetic draft/list inconsistency. Runtime creation uses one durable command and displays the created task after acknowledgment. The saved [prompt set](mockups/custom-panel-prompts.json) records the final generation prompts.
+
+The custom implementation replaces native task forms and menus with shared Svelte components and scoped panel CSS. Obsidian supplies the dockable host and standalone command hosts. An isolated browser preview verified dark and light layouts, narrow details and wide split details, wrapped long titles, custom editing, subtask creation, scheduling, explicit unschedule, duplicate-tag validation, disconnect/reconnect, field conflict resolution and keyboard menu focus. Measured horizontal overflow was zero at 320px and 800px. Native desktop acceptance follows the user's 22:00 IST testing window.

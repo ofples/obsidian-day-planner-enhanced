@@ -2,7 +2,7 @@
 
 The Tasks pane connects Todoist tasks to daily-note schedules and the existing Google Calendar bridge. Readable tags opt a note task into syncing. A private registry maintains identity as tasks are edited and moved. The provider boundary supports adding another task service later.
 
-The current production baseline is commit `82ae46ff` on `feat/google-calendar-sync`. Development starts on `feat/task-pane-todoist`. The baseline remains available for hotfixes.
+The production baseline started at `82ae46ff` on `feat/google-calendar-sync` and now includes the separately installed rename hotfix at `4431a998`. Feature development runs on `feat/task-pane-todoist`, which includes that hotfix at `7137427e`. The baseline checkout remains available for hotfixes.
 
 ## Design package
 
@@ -17,7 +17,7 @@ The mockups describe the intended product. Implementation progress and verificat
 
 ## Development build usage
 
-Open Tasks from the ribbon or the Show tasks command. Connect Todoist using its API token. The token is saved through Obsidian SecretStorage. Task creation, editing, completion and reopening use the pane's native controls.
+Open Tasks from the ribbon or the Show tasks command. Connect Todoist using its API token. The token is saved through Obsidian SecretStorage. Task creation, editing, completion and reopening use the pane's custom controls. The latest Morgen-inspired design is implemented with scoped HTML, CSS and JavaScript through Svelte. Details adapt to narrow and wide panes, forms open inline and pending changes share a compact disclosure.
 
 Open Capture and routing to choose capture folders, the default project, project tags and label tags. Initial project tags come from unique single-tag project names, and the Inbox is the initial default. Settings are account-specific. Add `#todoist` to an unchecked Markdown task and leave its line to capture it. For example, `- [ ] Buy rice #todoist #karma` routes to the project mapped to `#karma`. A task with tags mapping to several projects waits for Choose project. The editor context menu also provides Todoist routing for a specific task. Remote IDs remain in plugin state.
 
