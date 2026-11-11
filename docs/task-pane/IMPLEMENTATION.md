@@ -72,10 +72,10 @@ Identity inspection now reports ambiguous links per note while retaining safe ma
 
 The custom details surface now offers a confirmed Unlink note action. Registry v7 retains its local note intent, original acknowledged note baseline and recovery data. The coordinator removes the parent's parsed capture tag, preserves all other note bytes and nested links, and detaches the active task projection after note acknowledgment. It sends no task mutation and leaves the ordinary Day Planner calendar mapping available. Earlier uncertain exports and explicit removals remain retryable, with unlink completion blocking a new schedule until they settle. Tests cover intent failure, interrupted note writes, acknowledgment failure after a successful note write, restart, offline calendar recovery, later local edits, source stability, schema validation, parsed tag handling and confirmation/error UI. The focused subset has 68 passes. Full validation has 850 passing tests and the inherited ICS timeout. Strict scorecard and production build pass. Tag-removal prompts, missing-block unlink and identity repair remain next.
 
-## Working conventions
-
 ### Capture-tag removal decisions
 
 Removing an acknowledged #todoist tag now pauses field propagation and exposes Review link. Confirming uses the unlink journal. Cancel, Escape, form close, form switching and pane close restore the tag through a local repair journal. Registry v8 preserves the previous common note baseline throughout that repair. Other title, interval and provider changes reconcile afterward. Source/account validation, failed intent persistence, interrupted writing, failed acknowledgment after a successful write and uncertain calendar recovery are covered by regression tests. Runtime validation excludes provider commands and new calendar exports from tag repair. The five-file subset has 91 passing cases. Full validation has 873 passing tests and the inherited ICS timeout. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass.
+
+## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

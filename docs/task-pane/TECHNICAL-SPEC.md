@@ -117,6 +117,8 @@ Carry unfinished explicit event removals into every successor. When an untimed t
 
 Use the planner's pointer-to-date calculation, snapping, duration validation and note writer. The drag payload contains a short-lived local task key and an explicit versioned MIME type. Resolve the task again at drop time and reject another vault/account's payload. A text fallback inserts readable content only and cannot establish a link by itself.
 
+Accept a current task payload on both drag entry and drag over. Entry establishes a valid target and its snapped preview before an immediate drop. Foreign or expired drags retain the browser's default handling. [HTML drag-and-drop processing](https://html.spec.whatwg.org/dev/dnd.html)
+
 A scheduled task is moved on repeat drop. A child independently scheduled gets its own projection and is suppressed as a duplicate nested timeline event. Untimed child details remain in the parent's visible subtree. Multi-day moves reuse the persisted before/after note journal. Task ordering changes on their own do not generate remote mutations.
 
 Remove from schedule removes the local time range, deletes the already-owned managed Google event through an explicit coordinator operation, clears its active schedule link and keeps an untimed linked note task. It preserves the provider task date. Google deletion in this explicit workflow is independent of the default setting for arbitrary local task deletions. Restart recovery completes only the phases already authorized by the operation.

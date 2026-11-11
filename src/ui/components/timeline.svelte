@@ -403,6 +403,7 @@
       <div
         bind:this={el}
         class="tasks absolute-stretch-x"
+        ondragenter={taskDragOver}
         ondragleave={(event) => {
           if (
             !event.relatedTarget ||

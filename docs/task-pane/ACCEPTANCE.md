@@ -224,6 +224,12 @@ Calendar-outage tests unlink after a real simulated lost-create response and aft
 
 The unlink subset has 68 passing cases. Full validation has 850 passing tests, one inherited ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, strict scorecard, zero-warning Svelte diagnostics and production build pass. Original acknowledged note bytes are retained in the unlink journal alongside its current source and task baseline.
 
+### Native custom pane and drag entry
+
+The local Windows helper activated the isolated Obsidian window after the desktop change. Native controls created a disposable parent through the custom form, selected its project, saved its description and created a child through keyboard submission. Authoritative Todoist reads confirmed the saved description, child parent ID and inherited project. The custom narrow pane displayed both rows. These fixture identities and screenshots remain in ignored local verification output.
+
+The first native drag produced trusted pointer-down, drag-start, drag-enter and drag-end events with the correct task MIME payload, then ended before drag-over or drop. It created no task projection or calendar event. The timeline now accepts the payload on initial entry as well as drag-over. Three component regressions cover entry acceptance, immediate enter/drop scheduling and expired/foreign rejection. Full validation has 876 passing tests, the inherited ICS timeout, nine skips and 17 todo cases. TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass. Native drag is being retested against this entry handler.
+
 ### Capture-tag removal decisions
 
 Removing a previously acknowledged capture tag now creates an unresolved link decision before task or schedule fields propagate. Regression tests combine tag removal with a title edit, an interval edit and an independent provider description edit. Keeping the link restores the tag and then reconciles those fields using their original baseline. Tag-only removal restores the original note bytes and sends no task command. Confirming unlink detaches the original link and creates no replacement task.
