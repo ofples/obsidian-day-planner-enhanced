@@ -98,6 +98,35 @@ async function setup(initial = "- [ ] Buy rice #todoist #karma") {
 }
 
 describe("tagged task capture", () => {
+  test("a re-opted source matching two retired identities stays ambiguous without creating a task", async () => {
+    const h = await setup();
+    await h.capture.scan();
+    await h.service.refresh();
+    const [uid, link] = Object.entries(h.service.registry.snapshot().links)[0]!;
+    const occurrenceId = crypto.randomUUID();
+    await h.service.registry.change((state) => {
+      delete state.links[uid];
+      for (const key of [uid, "second-retired"])
+        state.detached[key] = {
+          reason: "retired",
+          occurrenceId,
+          link,
+          operationId: crypto.randomUUID(),
+          detachedAt: snapshot.fetchedAt,
+        };
+    });
+    const commands = h.apply.mock.calls.length;
+    await h.capture.scan();
+    expect(h.apply).toHaveBeenCalledTimes(commands);
+    expect(Object.keys(h.service.registry.snapshot().links)).toEqual([]);
+    const inspection = await h.capture.inspectCurrentIdentities();
+    expect(inspection.identityIssues[0]?.uids).toEqual(
+      expect.arrayContaining([uid, "second-retired"]),
+    );
+    expect(get(h.capture.state).issues).toHaveLength(1);
+    h.service.stop();
+  });
+
   test.each(["capture-disabled", "other-account", "already-linked"])(
     "restoration respects %s and never creates a replacement task",
     async (mode) => {

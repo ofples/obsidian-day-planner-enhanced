@@ -17,6 +17,8 @@ import type { TaskDeletionController, TaskDeletionReview } from "../src/tasks/de
 import { taskDeletionSchema } from "../src/tasks/deletion-types";
 import { taskOccurrenceSchema } from "../src/tasks/occurrence-types";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
+import type { TaskOccurrenceUndoController } from "../src/tasks/occurrence-undo";
+import type { TaskOccurrenceUndoReview } from "../src/tasks/occurrence-undo-plan";
 import type { TaskOperation } from "../src/tasks/operations";
 import type { TaskReconciler } from "../src/tasks/reconcile";
 import type { TaskScheduler } from "../src/tasks/schedule";
@@ -203,6 +205,168 @@ describe("custom Tasks panel", () => {
     expect(h.openSavedNote).toHaveBeenCalledWith("History.md");
     expect(h.mutate).not.toHaveBeenCalled();
   });
+
+  function undoHarness() {
+    const record = occurrence();
+    const review: TaskOccurrenceUndoReview = {
+      occurrenceId: record.id,
+      provider: record.provider,
+      accountId: record.accountId,
+      current: record.next!,
+      children: [],
+      historical: { links: record.links, projections: {} },
+      following: {
+        links: {
+          future: {
+            ...record.links.old!,
+            source: { ...record.links.old!.source, path: "Following.md" },
+          },
+        },
+        projections: {},
+      },
+      fingerprint: "original",
+      cached: true,
+    };
+    const controller = {
+      review: vi.fn().mockResolvedValue(review),
+      confirm: vi.fn().mockResolvedValue({ kind: "saved" }),
+      retry: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const reconciler = {
+      state: writable({ issues: [], error: "" }),
+      occurrenceUndo: controller as unknown as TaskOccurrenceUndoController,
+    } as unknown as TaskReconciler;
+    const h = render({ kind: "occurrence", id: record.id }, reconciler);
+    h.state.update((state) => ({ ...state, occurrences: [record] }));
+    flushSync();
+    const button = (label: string) =>
+      Array.from(h.target.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === label,
+      )!;
+    return { ...h, record, review, controller, button };
+  }
+
+  test("undo reviews source paths, cached state and following checklist conversion before confirmation", async () => {
+    const h = undoHarness();
+    h.button("Undo this completion").click();
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.target.textContent).toContain("Restore this occurrence?");
+    });
+    expect(h.controller.confirm).not.toHaveBeenCalled();
+    const review = h.target.querySelector(
+      '[aria-label="Review occurrence undo"]',
+    )!;
+    expect(review.textContent).toContain("Following.md");
+    expect(review.textContent).toContain("History.md");
+    expect(review.textContent).toContain(
+      "Following schedules become local checklists",
+    );
+    expect(review.textContent).toContain("Using cached task details");
+    h.button("Cancel").click();
+    flushSync();
+    expect(
+      h.target.querySelector('[aria-label="Review occurrence undo"]'),
+    ).toBeNull();
+    expect(h.controller.confirm).not.toHaveBeenCalled();
+    expect(h.controller.cancel).not.toHaveBeenCalled();
+  });
+
+  test("changed undo details require a second confirmation and lock closing during the saved operation", async () => {
+    const h = undoHarness();
+    h.controller.confirm.mockResolvedValueOnce({
+      kind: "changed",
+      review: { ...h.review, fingerprint: "new" },
+    });
+    h.button("Undo this completion").click();
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.button("Confirm undo")).toBeTruthy();
+    });
+    h.button("Confirm undo").click();
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.target.textContent).toContain("confirm again");
+    });
+    expect(h.controller.confirm).toHaveBeenCalledOnce();
+    let finish!: (value: { kind: string }) => void;
+    h.controller.confirm.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    h.button("Confirm undo").click();
+    flushSync();
+    expect(
+      h.target.querySelector<HTMLButtonElement>(
+        '[aria-label="Close task form"]',
+      )!.disabled,
+    ).toBe(true);
+    press(
+      h.target.querySelector('[aria-label="Recurring occurrence history"]')!,
+      "Escape",
+    );
+    expect(get(h.action)?.kind).toBe("occurrence");
+    finish({ kind: "saved" });
+    await vi.waitFor(() => {
+      flushSync();
+      expect(
+        h.target.querySelector('[aria-label="Review occurrence undo"]'),
+      ).toBeNull();
+    });
+    expect(h.controller.confirm.mock.calls[1]![0].fingerprint).toBe("new");
+  });
+
+  test.each(["pending", "sent", "acknowledged"] as const)(
+    "saved %s undo exposes safe recovery controls",
+    (status) => {
+      const h = undoHarness();
+      const command = {
+        id: crypto.randomUUID(),
+        tempId: crypto.randomUUID(),
+        provider: "todoist",
+        accountId: "account",
+        mutation: { kind: "reopen" as const, taskId: task.id },
+        base: h.record.next!,
+        status,
+        attempts: 0,
+        createdAt: snapshot.fetchedAt,
+        recurringUndo: {
+          occurrenceId: h.record.id,
+          completionCount: 0,
+          due: h.record.before.task.due!,
+        },
+      };
+      const record = taskOccurrenceSchema.parse({
+        ...h.record,
+        undo: {
+          id: command.id,
+          phase: "provider-pending",
+          current: h.record.next!,
+          children: [],
+          historical: h.review.historical,
+          following: h.review.following,
+          requestedAt: snapshot.fetchedAt,
+          error: "Check saved undo",
+        },
+      });
+      h.state.update((state) => ({
+        ...state,
+        occurrences: [record],
+        operations: [command],
+      }));
+      flushSync();
+      expect(h.button("Retry undo recovery")).toBeTruthy();
+      expect(Boolean(h.button("Cancel queued undo"))).toBe(
+        status === "pending",
+      );
+      expect(h.target.textContent).toContain("Check saved undo");
+      h.button("Retry undo recovery").click();
+      expect(h.controller.retry).toHaveBeenCalledWith(record.id);
+    },
+  );
 
   test("external history identifies the current task as observed after completion", () => {
     const record = taskOccurrenceSchema.parse({

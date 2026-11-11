@@ -23,6 +23,7 @@ import { pendingTaskDeletion } from "./deletion-types";
 import { freezeTaskOccurrences } from "./occurrence-freeze";
 import { observeExternalTaskOccurrences } from "./occurrence-observe";
 import { pendingTaskOccurrence } from "./occurrence-types";
+import { TaskOccurrenceUndoController } from "./occurrence-undo";
 import {
   isOutstanding,
   mutationFields,
@@ -392,6 +393,7 @@ export function planTaskReconciliation(input: NotePlanInput) {
 }
 
 export class TaskReconciler {
+  readonly occurrenceUndo: TaskOccurrenceUndoController;
   readonly state = writable<{ issues: TaskReconcileIssue[]; error: string }>({
     issues: [],
     error: "",
@@ -409,7 +411,15 @@ export class TaskReconciler {
     private readonly capture: TaskCapture,
     private readonly scheduler: TaskScheduler,
     private readonly settings: () => TaskCaptureSettings,
-  ) {}
+  ) {
+    this.occurrenceUndo = new TaskOccurrenceUndoController(
+      service,
+      capture,
+      scheduler,
+      settings,
+      () => !this.stopped,
+    );
+  }
 
   publish() {
     if (this.stopped) return;
@@ -796,8 +806,8 @@ export class TaskReconciler {
   }
 
   private async run() {
-    const browser = get(this.service.state),
-      snapshot = browser.snapshot;
+    const browser = get(this.service.state);
+    let snapshot = browser.snapshot;
     if (
       !snapshot ||
       !browser.writable ||
@@ -811,6 +821,15 @@ export class TaskReconciler {
     if (!this.current(snapshot)) return;
     if (get(this.capture.state).error)
       throw new TaskReadError(get(this.capture.state).error);
+    await this.occurrenceUndo.resume();
+    if (!this.current(snapshot)) return;
+    snapshot = get(this.service.state).snapshot;
+    if (
+      !snapshot ||
+      get(this.service.state).loading ||
+      get(this.service.state).error
+    )
+      return;
     await observeExternalTaskOccurrences(
       this.service,
       this.capture,

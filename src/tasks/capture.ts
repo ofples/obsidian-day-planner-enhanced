@@ -17,6 +17,7 @@ import {
 } from "./capture-settings";
 import { historicalTaskLinks } from "./occurrence-types";
 import type { TaskDraft } from "./operations";
+import { withoutTaskCaptureTag } from "./reconcile-markdown";
 import type { TaskSource } from "./registry";
 import type { TaskService } from "./service";
 import { TaskReadError, type TaskSnapshot } from "./types";
@@ -170,7 +171,7 @@ export class TaskCapture {
         matches[0]!.uid = item.uid;
     }
     const detached = Object.entries(state.detached).filter(
-      ([, item]) => !item.restoredAt,
+      ([, item]) => !item.restoredAt && item.reason !== "retired",
     );
     const blocked = new Set<CaptureCandidate>();
     for (const [uid, item] of detached) {
@@ -260,6 +261,42 @@ export class TaskCapture {
           ? error.message
           : "Task links need review before capture.",
       );
+    }
+    const retired = Object.entries(state.detached).filter(
+      ([, value]) => value.reason === "retired" && !value.restoredAt,
+    );
+    const retiredMatches = new Map(
+      retired.map(([uid, item]) => [
+        uid,
+        candidates.filter(
+          (candidate) =>
+            !candidate.uid &&
+            candidate.tags.some(
+              (tag) => tag.name.toLowerCase() === "todoist",
+            ) &&
+            (restoresSource(item.link.source, candidate) ||
+              withoutTaskCaptureTag(item.link.source.raw) ===
+                withoutTaskCaptureTag(candidate.raw)),
+        ),
+      ]),
+    );
+    for (const candidate of candidates.filter((item) => !item.uid)) {
+      const uids = [...retiredMatches]
+        .filter(([, matches]) => matches.includes(candidate))
+        .map(([uid]) => uid);
+      if (!uids.length) continue;
+      if (uids.length === 1 && retiredMatches.get(uids[0]!)!.length === 1)
+        candidate.uid = uids[0];
+      else {
+        blocked.add(candidate);
+        identityIssues.push({
+          path: candidate.path,
+          uids,
+          candidate,
+          message:
+            "Choose which copy keeps this retired occurrence's task link.",
+        });
+      }
     }
     const ambiguousPaths = new Set(identityIssues.map((issue) => issue.path));
     return {
@@ -455,15 +492,18 @@ export class TaskCapture {
         !(await this.sourceIsCurrent(candidate))
       )
         continue;
-      if (item.reason === "deleted") {
+      if (item.reason === "deleted" || item.reason === "retired") {
         if (!candidate.tags.some((tag) => tag.name.toLowerCase() === "todoist"))
           continue;
         issues.push({
           kind: "identity",
           candidate,
           deletionId: item.deletionId,
+          occurrenceId: item.occurrenceId,
           message:
-            "This task was deleted. Review its saved details before creating another task from this block.",
+            item.reason === "retired"
+              ? "This block became local when another recurring occurrence was restored. Review its saved occurrence before linking it again."
+              : "This task was deleted. Review its saved details before creating another task from this block.",
         });
         continue;
       }

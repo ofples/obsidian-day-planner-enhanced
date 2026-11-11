@@ -236,6 +236,14 @@ The six-file subset has 191 passes. Full validation has 1,051 passes, the inheri
 
 The command layer has source/test verification. Its custom confirmation, local note/calendar recovery coordinator and installed undo acceptance remain required. The isolated vault currently runs the preceding external-observation build. Full copy/link repair and remaining M6 acceptance continue.
 
+### Undo source recovery and custom confirmation
+
+The reconciler now resumes exact recurring undo before observing completion transitions and refreshes its captured snapshot afterward. Registry v16 saves each following and historical source-step UUID before projection writes. The coordinator verifies the restored provider occurrence, unlinks following sources into local checklists, reattaches historical identities together and restores the unchecked historical root through the existing note/calendar journal. Child status uses current provider readback. Removed or moved children retire their historical link. Original completion baselines and calendar identities remain in recovery.
+
+The custom history form reviews restored/current dates, note paths, cached details and following-schedule conversion. Changed comparisons require confirmation again. Saved undo exposes retry and safe unsent cancellation, and saving locks form closure. Recurring undo conflicts route to their occurrence recovery. Retired opt-in sources open review, and competing retired identities stay ambiguous. Calendar-only recovery can continue after local acknowledgment releases task editing.
+
+Regressions cover interrupted following and historical writes across restart, retained UUIDs, calendar outage followed by a task edit, current completed/moved/missing children, a later provider completion, changed confirmation sources and retired-identity ambiguity. Full validation has 1,066 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Source formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics and production build pass. The separate strict scorecard passes. Full lint stops at the inherited test failure. Installed native undo acceptance remains the next step. The working vault continues to use the baseline hotfix.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

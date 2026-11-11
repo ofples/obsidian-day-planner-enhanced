@@ -13,6 +13,7 @@ import {
 import { pendingTaskDeletion } from "./deletion-types";
 import { TaskDrag } from "./drag";
 import {
+  matchingOccurrenceUndo,
   occurrenceCompletionVerified,
   pendingTaskOccurrence,
 } from "./occurrence-types";
@@ -161,6 +162,8 @@ export class TaskScheduler {
     missingSource?: { document: string | null };
     deletionId?: string;
     occurrenceId?: string;
+    occurrenceUndoId?: string;
+    id?: string;
   }) {
     await this.pending;
     const browser = get(this.service.state),
@@ -189,7 +192,14 @@ export class TaskScheduler {
       provider: snapshot.provider,
       accountId: snapshot.account.id,
     };
-    if (pendingTaskOccurrence(state, owner, input.task.id, input.occurrenceId))
+    if (
+      pendingTaskOccurrence(
+        state,
+        owner,
+        input.task.id,
+        input.occurrenceId ?? input.occurrenceUndoId,
+      )
+    )
       throw new TaskReadError(
         "Finish this task's saved occurrence history before changing its projection.",
       );
@@ -242,7 +252,7 @@ export class TaskScheduler {
         ? final.id
         : undefined);
     const operation = scheduleOperationSchema.parse({
-      id: crypto.randomUUID(),
+      id: input.id ?? crypto.randomUUID(),
       provider: snapshot.provider,
       accountId: snapshot.account.id,
       task: input.task,
@@ -272,6 +282,7 @@ export class TaskScheduler {
       missingSource: input.missingSource,
       deletionId: input.deletionId,
       occurrenceId,
+      occurrenceUndoId: input.occurrenceUndoId,
       providerSteps,
       phase: input.missingSource ? "prepared" : "pending",
       plan: input.missingSource
@@ -285,14 +296,16 @@ export class TaskScheduler {
         : undefined,
       createdAt: new Date().toISOString(),
     });
+    this.assertUndoProjection(state, operation);
     await this.service.registry.change((current) => {
+      this.assertUndoProjection(current, operation);
       if (
         !this.current(operation) ||
         pendingTaskOccurrence(
           current,
           operation,
           operation.task.id,
-          input.occurrenceId,
+          input.occurrenceId ?? input.occurrenceUndoId,
         ) ||
         pendingTaskDeletion(
           current,
@@ -523,6 +536,51 @@ export class TaskScheduler {
     return saved;
   }
 
+  private assertUndoProjection(
+    state: TaskRegistryState,
+    operation: ScheduleOperation,
+  ) {
+    if (!operation.occurrenceUndoId) return;
+    const record = state.occurrences[operation.occurrenceUndoId],
+      undo = record?.undo;
+    const source =
+      undo?.historical.links[operation.linkUid] ??
+      undo?.following.links[operation.linkUid];
+    const step =
+      undo?.steps.following[operation.linkUid] ??
+      undo?.steps.historical[operation.linkUid];
+    const command = state.operations.find((item) => item.id === undo?.id);
+    const calendarRetry =
+      operation.taskAcknowledged &&
+      operation.phase === "calendar-pending" &&
+      undo?.phase === "complete";
+    if (
+      !undo ||
+      record.provider !== operation.provider ||
+      record.accountId !== operation.accountId ||
+      (undo.phase !== "local-pending" && !calendarRetry) ||
+      source?.taskId !== operation.task.id ||
+      step !== operation.id ||
+      command?.status !== "complete" ||
+      !matchingOccurrenceUndo(state, command, calendarRetry) ||
+      (undo.following.links[operation.linkUid] && !operation.unlink) ||
+      (!operation.unlink &&
+        operation.task.id === record.before.task.id &&
+        (!undo.readback ||
+          operation.task.completed ||
+          operation.task.completionCount !== undo.readback.completionCount ||
+          !sameTaskField(
+            operation.task.due,
+            undo.readback.due,
+            "due",
+            get(this.service.state).snapshot!.account.timezone,
+          )))
+    )
+      throw new TaskReadError(
+        "Verify this occurrence's saved undo before restoring its note links.",
+      );
+  }
+
   private current(operation: ScheduleOperation) {
     const browser = get(this.service.state);
     const saved = this.service.registry
@@ -630,13 +688,18 @@ export class TaskScheduler {
       throw new TaskReadError(
         "Reconnect the original task account before retrying this schedule.",
       );
-    if (operation.phase === "conflict" && !operation.occurrenceId)
+    if (
+      operation.phase === "conflict" &&
+      !operation.occurrenceId &&
+      !operation.occurrenceUndoId
+    )
       throw new TaskReadError(
         "Review the note or task conflict before retrying this schedule.",
       );
     await this.update(id, {
       error: undefined,
-      ...(operation.phase === "conflict" && operation.occurrenceId
+      ...(operation.phase === "conflict" &&
+      (operation.occurrenceId || operation.occurrenceUndoId)
         ? {
             phase: operation.taskAcknowledged
               ? "calendar-pending"
@@ -755,6 +818,7 @@ export class TaskScheduler {
   }
 
   private async process(initial: ScheduleOperation) {
+    this.assertUndoProjection(this.service.registry.snapshot(), initial);
     let operation = this.saved(initial.id);
     if (operation.phase === "pending") {
       await this.host.flush([
@@ -1080,12 +1144,22 @@ export class TaskScheduler {
       const deletion = operation.deletionId
         ? state.deletions[operation.deletionId]
         : undefined;
-      if (operation.missingSource || operation.deletionId)
+      if (
+        operation.missingSource ||
+        operation.deletionId ||
+        (operation.unlink && operation.occurrenceUndoId)
+      )
         state.detached[operation.linkUid] = {
-          reason: operation.deletionId ? "deleted" : "missing",
+          reason: operation.occurrenceUndoId
+            ? "retired"
+            : operation.deletionId
+              ? "deleted"
+              : "missing",
           deletionId: operation.deletionId,
+          occurrenceId: operation.occurrenceUndoId,
           link: {
             ...(deletion?.links[operation.linkUid] ?? link),
+            source: operation.previous ?? link.source,
             noteBase: operation.unlinkNoteBase ?? link.noteBase,
           },
           projection:

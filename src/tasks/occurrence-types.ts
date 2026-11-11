@@ -22,6 +22,12 @@ const occurrenceUndoSchema = z.object({
   children: z.array(taskSchema),
   historical: occurrenceSourcesSchema,
   following: occurrenceSourcesSchema,
+  steps: z
+    .object({
+      following: z.record(z.string(), z.uuid()),
+      historical: z.record(z.string(), z.uuid()),
+    })
+    .default({ following: {}, historical: {} }),
   requestedAt: z.iso.datetime(),
   readback: taskSchema.optional(),
   error: z.string().optional(),
@@ -122,6 +128,18 @@ export const taskOccurrenceSchema = z
             undo.readback.completionCount === task.completionCount)) &&
         (!["local-pending", "complete"].includes(undo.phase) ||
           Boolean(undo.readback)) &&
+        new Set([
+          ...Object.values(undo.steps.following),
+          ...Object.values(undo.steps.historical),
+        ]).size ===
+          Object.keys(undo.steps.following).length +
+            Object.keys(undo.steps.historical).length &&
+        Object.keys(undo.steps.following).every((uid) =>
+          Boolean(undo.following.links[uid]),
+        ) &&
+        Object.keys(undo.steps.historical).every((uid) =>
+          Boolean(undo.historical.links[uid]),
+        ) &&
         Object.entries(undo.historical.links).every(
           ([uid, link]) => record.before.links[uid]?.taskId === link.taskId,
         ) &&
@@ -158,6 +176,7 @@ export type TaskOccurrenceRecord = z.infer<typeof taskOccurrenceSchema>;
 export function matchingOccurrenceUndo(
   state: Pick<TaskRegistryState, "occurrences">,
   operation: TaskOperation,
+  allowCompleted = false,
 ) {
   const undo = operation.recurringUndo;
   if (!undo) return undefined;
@@ -165,7 +184,8 @@ export function matchingOccurrenceUndo(
   if (
     !record ||
     record.undo?.id !== operation.id ||
-    ["complete", "cancelled"].includes(record.undo.phase) ||
+    record.undo.phase === "cancelled" ||
+    (!allowCompleted && record.undo.phase === "complete") ||
     record.provider !== operation.provider ||
     record.accountId !== operation.accountId ||
     operation.mutation.kind !== "reopen" ||
@@ -425,15 +445,26 @@ export function verifyTaskOccurrence(
 }
 
 export function historicalTaskLinks(
-  state: Pick<TaskRegistryState, "occurrences">,
+  state: Pick<TaskRegistryState, "occurrences" | "links" | "schedules">,
 ) {
   return Object.values(state.occurrences)
     .filter((record) => !["cancelled", "undone"].includes(record.phase))
     .flatMap((record) =>
-      Object.entries(record.links).map(([uid, link]) => ({
-        uid,
-        link,
-        occurrenceId: record.id,
-      })),
+      Object.entries(record.links)
+        .filter(
+          ([uid]) =>
+            !record.undo ||
+            (!state.links[uid] &&
+              !state.schedules.some(
+                (operation) =>
+                  operation.id === record.undo!.steps.historical[uid] &&
+                  operation.taskAcknowledged,
+              )),
+        )
+        .map(([uid, link]) => ({
+          uid,
+          link,
+          occurrenceId: record.id,
+        })),
     );
 }

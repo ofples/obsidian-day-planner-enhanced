@@ -501,11 +501,208 @@ describe("recurring occurrence freezing", () => {
     expect(
       h.service.registry.snapshot().occurrences[completion.id]?.undo?.id,
     ).toBe(undo.id);
-    expect([...h.texts]).toEqual(notes);
+    const restored = h.service.registry.snapshot();
+    expect(restored.occurrences[completion.id]).toMatchObject({
+      phase: "undone",
+      undo: { phase: "complete" },
+    });
+    expect(h.texts.get(projection.source.path)).toBe(
+      notes
+        .find(([path]) => path === projection.source.path)![1]
+        .replace("- [x]", "- [ ]"),
+    );
+    expect(h.texts.get(following.source.path)).not.toContain("#todoist");
+    expect(restored.links[projection.linkUid]?.taskId).toBe(root.id);
+    expect(restored.links[following.linkUid]).toBeUndefined();
+    expect(restored.detached[following.linkUid]).toMatchObject({
+      reason: "retired",
+      occurrenceId: completion.id,
+    });
+    expect(restored.projections[projection.linkUid]?.googleEventId).toBe(
+      projection.googleEventId,
+    );
+    expect(h.events.size).toBe(2);
     expect(h.tasks.get(root.id)?.completionCount).toBe(0);
     expect(
       h.apply.mock.calls.filter(([operation]) => operation.recurringUndo),
     ).toHaveLength(1);
+    h.service.stop();
+  });
+
+  async function completedWithFollowing() {
+    const value = await scheduled();
+    const completion = await value.h.service.complete(
+      value.h.tasks.get(root.id)!,
+    );
+    await value.h.service.refresh();
+    await value.h.reconcile();
+    await value.h.scheduler.schedule(root.id, {
+      start: "2026-11-12T10:00:00Z",
+      end: "2026-11-12T10:30:00Z",
+    });
+    await value.h.settle();
+    return {
+      ...value,
+      completion,
+      following: value.h.scheduler.projection(root.id)!,
+    };
+  }
+
+  test("undo confirmation rechecks changed note sources before saving a command", async () => {
+    const { h, completion, following } = await completedWithFollowing();
+    const review = await h.reconciler.occurrenceUndo.review(completion.id);
+    h.texts.set(
+      following.source.path,
+      h.texts.get(following.source.path)!.replace("Work", "Renamed"),
+    );
+    const result = await h.reconciler.occurrenceUndo.confirm(review);
+    expect(result.kind).toBe("changed");
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.undo,
+    ).toBeUndefined();
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    expect(
+      h.apply.mock.calls.filter(([operation]) => operation.recurringUndo),
+    ).toHaveLength(0);
+    h.service.stop();
+  });
+
+  test.each(["following", "historical"] as const)(
+    "undo resumes its saved %s note write after restart",
+    async (failure) => {
+      const { h, projection, completion, following } =
+        await completedWithFollowing();
+      const review = await h.reconciler.occurrenceUndo.review(completion.id);
+      h.setFailPath(
+        failure === "following"
+          ? following.source.path
+          : projection.source.path,
+      );
+      await h.reconciler.occurrenceUndo.confirm(review);
+      const receipt =
+        h.service.registry.snapshot().occurrences[completion.id]!.undo!;
+      expect(receipt.phase).toBe("local-pending");
+      expect(receipt.error).toContain("interrupted note write");
+      const steps = structuredClone(receipt.steps);
+      h.setFailPath("");
+      await h.restart();
+      await h.reconciler.occurrenceUndo.retry(completion.id);
+      await h.reconcile();
+      const recovered = h.service.registry.snapshot();
+      expect(recovered.occurrences[completion.id]).toMatchObject({
+        phase: "undone",
+        undo: { id: receipt.id, phase: "complete" },
+      });
+      for (const [uid, id] of Object.entries(steps[failure]))
+        expect(
+          recovered.occurrences[completion.id]!.undo!.steps[failure][uid],
+        ).toBe(id);
+      expect(h.events.size).toBe(2);
+      expect(
+        h.apply.mock.calls.filter(([operation]) => operation.recurringUndo),
+      ).toHaveLength(1);
+      expect(get(h.capture.state).issues).toEqual([]);
+      expect(get(h.reconciler.state).issues).toEqual([]);
+      h.service.stop();
+    },
+  );
+
+  test("undo releases restored task edits while its calendar acknowledgments wait offline", async () => {
+    const { h, projection, completion, following } =
+      await completedWithFollowing();
+    const review = await h.reconciler.occurrenceUndo.review(completion.id);
+    h.setFailCalendar(true);
+    await h.reconciler.occurrenceUndo.confirm(review);
+    const state = h.service.registry.snapshot();
+    expect(state.occurrences[completion.id]?.phase).toBe("undone");
+    expect(state.links[projection.linkUid]?.taskId).toBe(root.id);
+    expect(state.links[following.linkUid]).toBeUndefined();
+    expect(
+      state.schedules.filter((step) => step.occurrenceUndoId === completion.id),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          phase: "calendar-pending",
+          taskAcknowledged: true,
+        }),
+      ]),
+    );
+    await h.service.mutate({
+      kind: "update",
+      taskId: root.id,
+      changes: { title: "Edited after undo" },
+    });
+    await h.service.refresh();
+    h.setFailCalendar(false);
+    await h.reconcile();
+    await h.settle();
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(
+      projection.googleEventId,
+    );
+    expect(h.events.get(projection.googleEventId!)?.summary).toContain(
+      "Edited after undo",
+    );
+    expect(h.events.size).toBe(2);
+    h.service.stop();
+  });
+
+  test.each(["completed", "moved", "missing"])(
+    "undo reads the provider's %s child state without sending child commands",
+    async (mode) => {
+      const { h, projection, completion } = await completedWithFollowing();
+      if (mode === "missing") h.tasks.delete(child.id);
+      else
+        h.tasks.set(child.id, {
+          ...h.tasks.get(child.id)!,
+          completed: mode === "completed",
+          parentId: mode === "moved" ? null : root.id,
+        });
+      const review = await h.reconciler.occurrenceUndo.review(completion.id);
+      await h.reconciler.occurrenceUndo.confirm(review);
+      await h.reconcile();
+      const state = h.service.registry.snapshot();
+      expect(state.occurrences[completion.id]?.phase).toBe("undone");
+      const childUid = Object.entries(
+        state.occurrences[completion.id]!.undo!.historical.links,
+      ).find(([, link]) => link.taskId === child.id)![0];
+      if (mode === "completed") {
+        expect(state.links[childUid]?.base?.completed).toBe(true);
+        expect(h.texts.get(projection.source.path)).toContain("- [x] Child");
+      } else {
+        expect(state.links[childUid]).toBeUndefined();
+        expect(state.detached[childUid]?.reason).toBe("retired");
+        expect(h.texts.get(projection.source.path)).toContain("- [ ] Child");
+      }
+      expect(
+        h.apply.mock.calls.filter(
+          ([operation]) =>
+            operation.mutation.kind !== "create" &&
+            operation.mutation.taskId === child.id,
+        ),
+      ).toHaveLength(0);
+      h.service.stop();
+    },
+  );
+
+  test("a provider advance after verified undo retains local recovery without rewriting either source", async () => {
+    const { h, completion } = await completedWithFollowing();
+    const notes = structuredClone([...h.texts]);
+    await h.service.requestOccurrenceUndo(completion.id);
+    await h.service.refresh();
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      completionCount: 2,
+      due: { ...h.tasks.get(root.id)!.due!, date: "2026-11-13" },
+    });
+    await h.reconciler.occurrenceUndo.resume();
+    expect([...h.texts]).toEqual(notes);
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.undo,
+    ).toMatchObject({
+      phase: "local-pending",
+      error: expect.stringContaining("changed after provider undo"),
+    });
+    expect(h.tasks.get(root.id)?.completionCount).toBe(2);
     h.service.stop();
   });
 

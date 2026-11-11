@@ -119,8 +119,10 @@
       .toReversed(),
   );
   const pendingOccurrences = $derived(
-    ($browserState.occurrences ?? []).filter((record) =>
-      ["pending", "freezing"].includes(record.phase),
+    ($browserState.occurrences ?? []).filter(
+      (record) =>
+        ["pending", "freezing"].includes(record.phase) ||
+        (record.undo && !["complete", "cancelled"].includes(record.undo.phase)),
     ),
   );
   const selectedOccurrence = $derived.by(() => {
@@ -180,7 +182,11 @@
       ...$browserState.operations.map(operationTaskId),
       ...pendingDeletions.flatMap((item) => item.tasks.map((task) => task.id)),
       ...pendingOccurrences.flatMap((record) =>
-        [record.before.task, ...record.before.children].map((task) => task.id),
+        [
+          record.before.task,
+          ...record.before.children,
+          ...(record.undo?.children ?? []),
+        ].map((task) => task.id),
       ),
     ]),
   );
@@ -206,7 +212,7 @@
   const needsReview = $derived(
     $reconcileState.issues.length > 0 ||
       pendingDeletions.some((item) => item.error) ||
-      pendingOccurrences.some((item) => item.error) ||
+      pendingOccurrences.some((item) => item.error || item.undo?.error) ||
       $captureState.issues.length > 0 ||
       $browserState.operations.some(
         (operation) =>
@@ -698,7 +704,14 @@
                   : (operation.base?.title ?? "Task change")}</strong
               ><small>{operation.error ?? "Pending sync"}</small>
             </div>
-            {#if operation.status === "conflict"}<button
+            {#if operation.recurringUndo}<button
+                class="task-text-button"
+                onclick={() =>
+                  startAction({
+                    kind: "occurrence",
+                    id: operation.recurringUndo!.occurrenceId,
+                  })}>Review occurrence</button
+              >{:else if operation.status === "conflict"}<button
                 class="task-text-button"
                 disabled={!$browserState.writable || $browserState.loading}
                 onclick={() =>
@@ -723,17 +736,21 @@
                     : "Saving schedule…")}</small
               >
             </div>
-            {#if operation.phase !== "conflict" || operation.occurrenceId}<button
+            {#if operation.phase !== "conflict" || operation.occurrenceId || operation.occurrenceUndoId}<button
                 class="task-text-button"
                 onclick={() => retrySchedule(operation.id)}>Retry</button
               >{/if}
           </div>{/each}
-        {#each pendingOccurrences.filter((record) => record.phase === "freezing") as record (record.id)}<div
+        {#each pendingOccurrences.filter((record) => record.phase === "freezing" || record.undo) as record (record.id)}<div
             class="task-review-row"
           >
             <div>
               <strong>{record.before.task.title}</strong><small
-                >{record.error ?? "Saving occurrence history"}</small
+                >{record.undo?.error ??
+                  record.error ??
+                  (record.undo
+                    ? "Restoring occurrence"
+                    : "Saving occurrence history")}</small
               >
             </div>
             <button
@@ -784,13 +801,23 @@
         {:else if $action.kind === "occurrence"}{#if selectedOccurrence}<TaskPanelOccurrence
               openNote={openSavedNote}
               pendingCalendar={$scheduleState.operations.some(
-                (operation) => operation.occurrenceId === selectedOccurrence.id,
+                (operation) =>
+                  operation.occurrenceId === selectedOccurrence.id ||
+                  operation.occurrenceUndoId === selectedOccurrence.id,
               )}
               record={selectedOccurrence}
               retry={reconciler
                 ? (id: string) => reconciler!.retryOccurrence(id)
                 : undefined}
+              setBusy={(value: boolean) => {
+                busy = value;
+              }}
               timezone={snapshot?.account.timezone ?? "local"}
+              undoCommand={$browserState.operations.find(
+                (operation) => operation.id === selectedOccurrence.undo?.id,
+              )}
+              undoController={reconciler?.occurrenceUndo}
+              writable={$browserState.writable && !$browserState.loading}
             />
           {:else}<div class="task-panel-form">
               <p class="task-form-error" role="status">

@@ -96,6 +96,7 @@ export const scheduleOperationSchema = z
     missingSource: z.object({ document: z.string().nullable() }).optional(),
     deletionId: z.uuid().optional(),
     occurrenceId: z.uuid().optional(),
+    occurrenceUndoId: z.uuid().optional(),
     providerChanges: taskPatchSchema.optional(),
     providerSteps: z
       .array(
@@ -146,6 +147,21 @@ export const scheduleOperationSchema = z
     createdAt: z.iso.datetime(),
     error: z.string().optional(),
   })
+  .refine(
+    (operation) =>
+      !operation.occurrenceUndoId ||
+      (operation.target.kind === "reconcile" &&
+        !operation.occurrenceId &&
+        !operation.deletionId &&
+        !operation.repairCaptureTag &&
+        !operation.syncTaskDate &&
+        !operation.providerChanges &&
+        !operation.providerSteps?.length),
+    {
+      message:
+        "Occurrence undo projections contain local recovery and calendar acknowledgment only.",
+    },
+  )
   .refine(
     (operation) => {
       if (!operation.occurrenceId) return true;
@@ -244,7 +260,7 @@ export function scheduleBlocksTask(operation: ScheduleOperation) {
     !(
       operation.phase === "calendar-pending" &&
       operation.taskAcknowledged &&
-      !operation.unlink
+      (!operation.unlink || Boolean(operation.occurrenceUndoId))
     )
   );
 }

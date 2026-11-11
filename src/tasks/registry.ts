@@ -15,8 +15,9 @@ export { taskLinkSchema } from "./source";
 
 const detachedTaskLinkSchema = z
   .object({
-    reason: z.enum(["missing", "deleted"]),
+    reason: z.enum(["missing", "deleted", "retired"]),
     deletionId: z.uuid().optional(),
+    occurrenceId: z.uuid().optional(),
     link: taskLinkSchema,
     projection: taskProjectionSchema.optional(),
     operationId: z.uuid(),
@@ -26,6 +27,7 @@ const detachedTaskLinkSchema = z
   .refine(
     (item) =>
       (item.reason !== "deleted" || Boolean(item.deletionId)) &&
+      (item.reason !== "retired" || Boolean(item.occurrenceId)) &&
       item.link.taskId !== null &&
       item.link.base?.id === item.link.taskId &&
       (!item.projection ||
@@ -52,7 +54,7 @@ const taskReconcileIssueSchema = z.object({
 export type TaskReconcileIssue = z.infer<typeof taskReconcileIssueSchema>;
 
 const taskRegistrySchema = z.object({
-  version: z.literal(15),
+  version: z.literal(16),
   namespace: z.string().regex(/^[a-f0-9]{32}$/),
   operations: z.array(taskOperationSchema),
   links: z.record(z.string(), taskLinkSchema),
@@ -80,6 +82,7 @@ const legacyRegistrySchema = taskRegistrySchema.extend({
     z.literal(12),
     z.literal(13),
     z.literal(14),
+    z.literal(15),
   ]),
   schedules: z.array(scheduleOperationSchema).default([]),
   projections: z.record(z.string(), taskProjectionSchema).default({}),
@@ -114,7 +117,7 @@ export class TaskRegistry {
     this.state =
       this.lastSaved === null
         ? {
-            version: 15,
+            version: 16,
             namespace: this.namespace,
             operations: [],
             links: {},
@@ -129,7 +132,7 @@ export class TaskRegistry {
             legacy.success
               ? {
                   ...legacy.data,
-                  version: 15,
+                  version: 16,
                   links: Object.fromEntries(
                     Object.entries(legacy.data.links).map(([uid, link]) => [
                       uid,
