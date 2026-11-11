@@ -1068,6 +1068,58 @@ describe("linked task scheduling", () => {
     h.reconciler.stop();
   });
 
+  test("ambiguous source links become individual issues while another note still reconciles", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const other: ProviderTask = { ...root, id: "other", title: "Independent" };
+    h.tasks.set(other.id, other);
+    h.file("Other.md");
+    h.texts.set("Other.md", "");
+    await h.service.refresh();
+    await h.scheduler.insert(other.id, {
+      path: "Other.md",
+      offset: 0,
+      before: "",
+    });
+    await h.settle();
+    const eventId = h.scheduler.projection(root.id)!.googleEventId;
+    const path = "Daily/2026-11-11.md";
+    h.texts.set(
+      path,
+      h.texts
+        .get(path)!
+        .replace("Work #todoist", "Different parent #todoist")
+        .replace("- [ ] Child", "- [ ] Different child"),
+    );
+    h.texts.set(
+      "Other.md",
+      h.texts
+        .get("Other.md")!
+        .replace("Independent #todoist", "Edited independent #todoist"),
+    );
+    await h.reconcile();
+    const issues = get(h.reconciler.state).issues;
+    expect(issues.map((issue) => issue.taskId).sort()).toEqual(
+      [child.id, root.id].sort(),
+    );
+    expect(
+      issues.every(
+        (issue) =>
+          issue.fields.includes("source") &&
+          issue.message.includes("Several note tasks"),
+      ),
+    ).toBe(true);
+    expect(get(h.reconciler.state).error).toBe("");
+    expect(h.tasks.get(other.id)?.title).toBe("Edited independent");
+    expect(h.tasks.get(root.id)?.title).toBe("Work");
+    expect(h.events.size).toBe(1);
+    expect([...h.events.keys()]).toEqual([eventId]);
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
   test("provider title/completion edits reach the linked note and preserve its child bytes", async () => {
     const h = await harness();
     await h.scheduler.schedule(root.id, interval);

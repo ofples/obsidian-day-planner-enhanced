@@ -98,6 +98,65 @@ async function setup(initial = "- [ ] Buy rice #todoist #karma") {
 }
 
 describe("tagged task capture", () => {
+  test("ambiguous note edits preserve links and allow capture in another note", async () => {
+    const h = await setup("- [ ] First #todoist\n- [ ] Second #todoist");
+    await h.capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    const originalLinks = h.service.registry.snapshot().links;
+    expect(Object.keys(originalLinks)).toHaveLength(2);
+    h.setText("- [ ] Renamed first #todoist\n- [ ] Renamed second #todoist");
+    const extra = "- [ ] Independent #todoist";
+    const capture = new TaskCapture(h.service, {
+      ...h.host,
+      candidates: () => [
+        ...h.host.candidates(),
+        ...parseCaptureCandidates("Other.md", extra),
+      ],
+      read: async (path) => (path === "Other.md" ? extra : h.host.read()),
+    });
+    await capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    expect(h.apply).toHaveBeenCalledTimes(3);
+    expect(get(capture.state).error).toBe("");
+    expect(get(capture.state).identityIssues).toEqual([
+      {
+        path: "Tasks.md",
+        uids: Object.keys(originalLinks),
+        message: expect.any(String),
+      },
+    ]);
+    for (const [uid, link] of Object.entries(originalLinks))
+      expect(h.service.registry.snapshot().links[uid]).toEqual(link);
+    expect(capture.candidates().map((candidate) => candidate.path)).toEqual([
+      "Other.md",
+    ]);
+    await capture.scan();
+    expect(h.apply).toHaveBeenCalledTimes(3);
+    capture.stop();
+    h.service.stop();
+  });
+
+  test("an exact known link remains usable beside ambiguous new task text", async () => {
+    const h = await setup(
+      "- [ ] First #todoist\n- [ ] Second #todoist\n- [ ] Stable #todoist",
+    );
+    await h.capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    h.setText(
+      "- [ ] Renamed first #todoist\n- [ ] Renamed second #todoist\n- [ ] Stable #todoist",
+    );
+    await h.capture.scan();
+    expect(h.apply).toHaveBeenCalledTimes(3);
+    expect(h.capture.candidates().map((candidate) => candidate.title)).toEqual([
+      "Stable",
+    ]);
+    expect(get(h.capture.state).identityIssues[0]?.uids).toHaveLength(2);
+    h.service.stop();
+  });
+
   test("a prepared schedule reserves its note before capture can create another task", async () => {
     const h = await setup();
     const source = h.host.candidates()[0]!;

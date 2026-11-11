@@ -17,6 +17,11 @@ export interface CaptureIssue {
   candidate: CaptureCandidate;
   message: string;
 }
+export interface TaskIdentityIssue {
+  path: string;
+  uids: string[];
+  message: string;
+}
 
 export function routeCapture(
   candidate: CaptureCandidate,
@@ -73,8 +78,13 @@ export function routeCapture(
 }
 
 export class TaskCapture {
-  readonly state = writable<{ issues: CaptureIssue[]; error: string }>({
+  readonly state = writable<{
+    issues: CaptureIssue[];
+    identityIssues: TaskIdentityIssue[];
+    error: string;
+  }>({
     issues: [],
+    identityIssues: [],
     error: "",
   });
   private pending?: Promise<void>;
@@ -117,8 +127,9 @@ export class TaskCapture {
     });
   }
 
-  candidates() {
+  inspectIdentities() {
     const candidates = structuredClone(this.host.candidates());
+    const identityIssues: TaskIdentityIssue[] = [];
     const previous = Object.fromEntries(
       Object.entries(this.service.registry.snapshot().links).map(
         ([uid, link]) => [uid, link.source],
@@ -148,6 +159,14 @@ export class TaskCapture {
         matchers: [
           (old, next) => old.path === next.path && old.title === next.title,
         ],
+        onAmbiguous: (path, uids) => {
+          identityIssues.push({
+            path,
+            uids,
+            message:
+              "Several note tasks could match this task. Review its note link.",
+          });
+        },
       });
     } catch (error) {
       throw new TaskReadError(
@@ -156,7 +175,17 @@ export class TaskCapture {
           : "Task links need review before capture.",
       );
     }
-    return candidates;
+    const ambiguousPaths = new Set(identityIssues.map((issue) => issue.path));
+    return {
+      candidates: candidates.filter(
+        (candidate) => candidate.uid || !ambiguousPaths.has(candidate.path),
+      ),
+      identityIssues,
+    };
+  }
+
+  candidates() {
+    return this.inspectIdentities().candidates;
   }
 
   ready() {
@@ -188,7 +217,7 @@ export class TaskCapture {
       this.host.ready?.() === false
     )
       return;
-    const candidates = this.candidates();
+    const { candidates, identityIssues } = this.inspectIdentities();
     const links = this.service.registry.snapshot().links;
     const changed = candidates.filter(
       (candidate) =>
@@ -232,7 +261,7 @@ export class TaskCapture {
         issues.push({ candidate, message: error.message });
       }
     }
-    if (!this.closed) this.state.set({ issues, error: "" });
+    if (!this.closed) this.state.set({ issues, identityIssues, error: "" });
   }
 
   async create(

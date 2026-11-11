@@ -64,6 +64,10 @@ Boards 09–11 refine the Morgen-inspired visual design. The Tasks ItemView now 
 
 The editor's extracted domain helpers preserve opened field baselines, recurrence metadata and narrow commands. Twelve focused editor/component regressions cover those contracts, Escape composition, toolbar routing, late-save callbacks and review counts. The isolated browser preview verified the new surfaces at 320px and 800px, in dark and light themes, with zero measured horizontal overflow. Full validation has 830 passing tests and the inherited ICS timeout. Strict scorecard and production build pass. Desktop takeover is deferred until after the user's 22:00 IST gate. Recurrence, recovery and release acceptance continue under M4–M6.
 
+### Scoped source recovery foundation
+
+Identity inspection now reports ambiguous links per note while retaining safe matches. Capture excludes unresolved candidates in that note and continues in unaffected notes. Reconciliation exposes individual source issues for the affected links and continues applying independent note edits. Original links remain intact for the upcoming unlink/repair workflow. Six new regressions cover shared matcher compatibility, multiple affected notes, capture isolation and integrated reconciliation. The focused subset has 57 passes. Full validation has 836 passing tests and the inherited ICS timeout. Strict scorecard and production build pass.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

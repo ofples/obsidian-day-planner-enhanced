@@ -76,6 +76,8 @@ Project routing precedence is an explicit task selection, then one unique mapped
 
 Existing Google-linked blocks retain their canonical identity when opted into Todoist. Similar titles are suggestions for explicit adoption. Reuse the current identity matcher for exact text, native block IDs and conservative move detection. Extend it to represent task projections through a shared API before consolidating storage. Keep the existing migration and crash-recovery behavior covered by regression tests.
 
+Task identity inspection reports unresolved link IDs per note after all safe matches finish. Exclude unmatched candidates in those notes from capture. Exact matched links remain available, and unrelated notes continue processing. Reconciliation persists an individual source issue for each affected link. Preserve those original links and commands until a recovery decision. Shared matcher callers retain strict ambiguity rejection unless they request these diagnostics explicitly.
+
 ## Field reconciliation
 
 | Field | Obsidian representation | Propagation and resolution |

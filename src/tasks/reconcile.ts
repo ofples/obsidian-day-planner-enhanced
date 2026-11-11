@@ -702,12 +702,16 @@ export class TaskReconciler {
         .candidates()
         .find((candidate) => candidate.uid === uid);
       if (!candidate) {
+        const identityIssue = get(this.capture.state).identityIssues.find(
+          (issue) => issue.uids.includes(uid),
+        );
         await this.issue(
           uid,
           link,
           snapshot.tasks.find((task) => task.id === link.taskId) ?? null,
           ["source"],
-          "The linked note task is missing. Restore it or unlink this task.",
+          identityIssue?.message ??
+            "The linked note task is missing. Restore it or unlink this task.",
         );
         continue;
       }

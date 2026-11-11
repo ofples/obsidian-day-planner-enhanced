@@ -27,6 +27,7 @@ export function resolveSourceIdentities<T extends SourceIdentity>(
     ambiguous: (path: string) => string;
     matchers: ((old: T, next: T) => boolean)[];
     allowReplacement?: boolean;
+    onAmbiguous?: (path: string, uids: string[]) => void;
   },
 ): void {
   const assigned = new Set<string>();
@@ -88,7 +89,13 @@ export function resolveSourceIdentities<T extends SourceIdentity>(
       old[0]![1].from === next[0]!.from
     )
       assign(old[0]![0], next[0]!);
-    else if (old.length && next.length)
-      throw new Error(options.ambiguous(path));
+    else if (old.length && next.length) {
+      if (options.onAmbiguous)
+        options.onAmbiguous(
+          path,
+          old.map(([uid]) => uid),
+        );
+      else throw new Error(options.ambiguous(path));
+    }
   }
 }
