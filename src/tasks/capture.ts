@@ -117,7 +117,7 @@ export class TaskCapture {
     });
   }
 
-  private candidates() {
+  candidates() {
     const candidates = structuredClone(this.host.candidates());
     const previous = Object.fromEntries(
       Object.entries(this.service.registry.snapshot().links).map(
@@ -159,8 +159,17 @@ export class TaskCapture {
     return candidates;
   }
 
-  private async sourceIsCurrent(candidate: CaptureCandidate) {
-    if (this.closed || !this.host.stable(candidate)) return false;
+  ready() {
+    return !this.closed && this.host.ready?.() !== false;
+  }
+
+  async sourceIsCurrent(candidate: CaptureCandidate) {
+    if (
+      this.closed ||
+      this.host.ready?.() === false ||
+      !this.host.stable(candidate)
+    )
+      return false;
     const text = await this.host.read(candidate.path);
     return (
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Plugin unload can change this field while the document read is awaited.

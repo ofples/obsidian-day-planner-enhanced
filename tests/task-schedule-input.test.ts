@@ -157,11 +157,22 @@ describe("task scheduling input", () => {
   });
 
   test("remote literal tags, native-ID-like text and clock titles retain their text", () => {
-    const title = "09:00 Review #work ^literal";
-    const raw = `- [ ] ${taskInlineMarkdown(title)} #todoist #karma`;
-    const candidate = parseCaptureCandidates("Tasks.md", raw)[0]!;
-    expect(candidate.tags.map((tag) => tag.name)).toEqual(["todoist", "karma"]);
-    expect(captureTitle(candidate, new Set(["todoist", "karma"]))).toBe(title);
+    for (const title of [
+      "09:00 Review #work ^literal",
+      "Preserve %% literal %% and <!-- comment -->",
+      "Use <b> tags and 50%",
+      "Backslash \\% and \\ <html>",
+    ]) {
+      const raw = `- [ ] ${taskInlineMarkdown(title)} #todoist #karma`;
+      const candidate = parseCaptureCandidates("Tasks.md", raw)[0]!;
+      expect(candidate.tags.map((tag) => tag.name)).toEqual([
+        "todoist",
+        "karma",
+      ]);
+      expect(captureTitle(candidate, new Set(["todoist", "karma"]))).toBe(
+        title,
+      );
+    }
   });
 
   test("Markdown drops exclude protected regions and preserve nested planner headings", () => {

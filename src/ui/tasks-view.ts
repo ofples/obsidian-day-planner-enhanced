@@ -12,6 +12,7 @@ import { get, writable } from "svelte/store";
 
 import { taskViewStateSchema } from "../tasks/browser";
 import type { TaskCapture, CaptureIssue } from "../tasks/capture";
+import type { TaskReconciler } from "../tasks/reconcile";
 import type { TaskScheduler } from "../tasks/schedule";
 import type { TaskService } from "../tasks/service";
 import { TaskReadError, type ProviderTask } from "../tasks/types";
@@ -104,6 +105,7 @@ export class TasksView extends ItemView {
     private readonly captureSettings: () => void,
     private readonly scheduler?: TaskScheduler,
     private readonly defaultDuration: () => number = () => 30,
+    private readonly reconciler?: TaskReconciler,
   ) {
     super(leaf);
   }
@@ -146,6 +148,7 @@ export class TasksView extends ItemView {
       target: this.contentEl,
       props: {
         service: this.service,
+        reconciler: this.reconciler,
         scheduler: this.scheduler,
         scheduleTask: (task: ProviderTask) => this.scheduleTask(task),
         revealTask: (task: ProviderTask) => {

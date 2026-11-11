@@ -1,9 +1,9 @@
 import { DateTime } from "luxon";
 import { z } from "zod";
 
-import { taskPatchSchema } from "./operations";
+import { taskMutationSchema, taskPatchSchema } from "./operations";
 import { taskSourceSchema } from "./source";
-import { taskSchema } from "./types";
+import { taskSchema, type ProviderTask } from "./types";
 
 export const scheduleIntervalSchema = z
   .object({ start: z.iso.datetime(), end: z.iso.datetime() })
@@ -75,6 +75,10 @@ export const scheduleOperationSchema = z.object({
       before: z.string(),
     }),
     z.object({ kind: z.literal("unschedule") }),
+    z.object({
+      kind: z.literal("reconcile"),
+      interval: scheduleIntervalSchema.nullable(),
+    }),
   ]),
   previous: taskSourceSchema.optional(),
   children: z.array(taskSchema),
@@ -83,6 +87,15 @@ export const scheduleOperationSchema = z.object({
   generatedTaskIds: z.array(z.string()),
   syncTaskDate: z.boolean(),
   providerChanges: taskPatchSchema.optional(),
+  providerSteps: z
+    .array(
+      z.object({
+        id: z.uuid(),
+        mutation: taskMutationSchema,
+        base: taskSchema,
+      }),
+    )
+    .optional(),
   phase: z.enum([
     "pending",
     "prepared",
@@ -108,6 +121,12 @@ export const scheduleOperationSchema = z.object({
 export type ScheduleInterval = z.infer<typeof scheduleIntervalSchema>;
 export type TaskProjection = z.infer<typeof taskProjectionSchema>;
 export type ScheduleOperation = z.infer<typeof scheduleOperationSchema>;
+
+export function taskOccurrenceKey(task: ProviderTask) {
+  return task.due?.recurring
+    ? JSON.stringify([task.due.date, task.due.text, task.due.timezone])
+    : "single";
+}
 
 /** A date-only provider edit retains the linked interval's local clock time and length. */
 export function intervalForTaskDate(

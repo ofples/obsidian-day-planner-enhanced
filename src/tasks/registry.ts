@@ -15,22 +15,38 @@ export const taskLinkSchema = z.object({
   accountId: z.string(),
   taskId: z.string().nullable(),
   source: taskSourceSchema,
+  noteBase: taskSourceSchema.optional(),
   base: taskSchema.nullable(),
 });
 
+const taskReconcileIssueSchema = z.object({
+  id: z.uuid(),
+  provider: z.string(),
+  accountId: z.string(),
+  linkUid: z.string(),
+  taskId: z.string(),
+  source: taskSourceSchema.optional(),
+  remote: taskSchema.nullable(),
+  fields: z.array(z.string()),
+  message: z.string(),
+});
+export type TaskReconcileIssue = z.infer<typeof taskReconcileIssueSchema>;
+
 const taskRegistrySchema = z.object({
-  version: z.literal(4),
+  version: z.literal(5),
   namespace: z.string().regex(/^[a-f0-9]{32}$/),
   operations: z.array(taskOperationSchema),
   links: z.record(z.string(), taskLinkSchema),
   schedules: z.array(scheduleOperationSchema),
   projections: z.record(z.string(), taskProjectionSchema),
+  issues: z.record(z.string(), taskReconcileIssueSchema),
 });
 
 const legacyRegistrySchema = taskRegistrySchema.extend({
-  version: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  version: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]),
   schedules: z.array(scheduleOperationSchema).default([]),
   projections: z.record(z.string(), taskProjectionSchema).default({}),
+  issues: z.record(z.string(), taskReconcileIssueSchema).default({}),
 });
 
 export type TaskRegistryState = z.infer<typeof taskRegistrySchema>;
@@ -58,15 +74,31 @@ export class TaskRegistry {
     this.state =
       this.lastSaved === null
         ? {
-            version: 4,
+            version: 5,
             namespace: this.namespace,
             operations: [],
             links: {},
             schedules: [],
             projections: {},
+            issues: {},
           }
         : taskRegistrySchema.parse(
-            legacy.success ? { ...legacy.data, version: 4 } : stored,
+            legacy.success
+              ? {
+                  ...legacy.data,
+                  version: 5,
+                  links: Object.fromEntries(
+                    Object.entries(legacy.data.links).map(([uid, link]) => [
+                      uid,
+                      {
+                        ...link,
+                        noteBase:
+                          link.noteBase ?? legacy.data.projections[uid]?.source,
+                      },
+                    ]),
+                  ),
+                }
+              : stored,
           );
     if (this.state.namespace !== this.namespace)
       throw new Error(
@@ -102,8 +134,10 @@ export class TaskRegistry {
       const result = update(state);
       const validated = taskRegistrySchema.parse(state);
       const serialized = JSON.stringify(validated);
-      await this.storage.writeState(serialized);
-      this.lastSaved = serialized;
+      if (serialized !== this.lastSaved) {
+        await this.storage.writeState(serialized);
+        this.lastSaved = serialized;
+      }
       this.state = validated;
       return result;
     });

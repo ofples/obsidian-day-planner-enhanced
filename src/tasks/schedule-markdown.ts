@@ -15,7 +15,15 @@ import type { ProviderTask, TaskSnapshot } from "./types";
 export function taskInlineMarkdown(title: string) {
   let text = toMarkdown({
     type: "paragraph",
-    children: [{ type: "text", value: title.replace(/[\r\n]+/g, " ") }],
+    children: title
+      .replace(/[\r\n]+/g, " ")
+      .split(/([<%])/)
+      .filter(Boolean)
+      .map((part) =>
+        part === "<" || part === "%"
+          ? { type: "html" as const, value: part === "<" ? "&#60;" : "&#37;" }
+          : { type: "text" as const, value: part },
+      ),
   }).trim();
   text = text.replace(
     /(^|[\s(])#([\p{L}\p{M}\p{N}_/-]+)/gu,

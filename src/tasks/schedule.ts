@@ -10,7 +10,12 @@ import {
   type TaskCaptureSettings,
 } from "./capture-settings";
 import { TaskDrag } from "./drag";
-import { resolvedTaskOperation } from "./operations";
+import {
+  mutationFields,
+  resolvedTaskOperation,
+  type TaskMutation,
+} from "./operations";
+import { rewriteTaskNote } from "./reconcile-markdown";
 import {
   newTaskMarkdown,
   scheduleNoteTitle,
@@ -19,6 +24,7 @@ import {
 import {
   scheduleIntervalSchema,
   intervalForTaskDate,
+  taskOccurrenceKey,
   scheduleOperationSchema,
   type ScheduleInterval,
   type ScheduleOperation,
@@ -129,6 +135,83 @@ export class TaskScheduler {
     return this.enqueue(taskId, { kind: "unschedule" }, crypto.randomUUID());
   }
 
+  scanNotes() {
+    return this.calendar.editNotes(async (_notes, blocks) => blocks);
+  }
+
+  async reconcile(input: {
+    linkUid: string;
+    task: ProviderTask;
+    source: TaskSource;
+    raw: string;
+    interval: ScheduleInterval | null;
+    googleUid?: string;
+    mutations: { mutation: TaskMutation; base: ProviderTask }[];
+  }) {
+    const browser = get(this.service.state),
+      snapshot = browser.snapshot;
+    if (this.stopped || !snapshot || !browser.writable)
+      throw new TaskReadError("Reconnect before reconciling this task.");
+    const state = this.service.registry.snapshot(),
+      link = state.links[input.linkUid];
+    if (
+      !link ||
+      link.provider !== snapshot.provider ||
+      link.accountId !== snapshot.account.id ||
+      link.taskId !== input.task.id
+    )
+      throw new TaskReadError(
+        "The note link changed. Refresh before reconciling it.",
+      );
+    const projection = state.projections[input.linkUid];
+    const operation = scheduleOperationSchema.parse({
+      id: crypto.randomUUID(),
+      provider: snapshot.provider,
+      accountId: snapshot.account.id,
+      task: input.task,
+      linkUid: input.linkUid,
+      googleUid:
+        projection?.googleUid ??
+        input.googleUid ??
+        crypto.randomUUID().replace(/-/g, ""),
+      providerOperationId: crypto.randomUUID(),
+      occurrenceKey: projection?.occurrenceKey ?? taskOccurrenceKey(input.task),
+      target: { kind: "reconcile", interval: input.interval },
+      previous: input.source,
+      previousInterval: projection?.interval ?? undefined,
+      children: [],
+      raw: input.raw,
+      generatedTaskIds: [input.task.id],
+      syncTaskDate: false,
+      providerSteps: input.mutations.map((step) => ({
+        ...step,
+        id: crypto.randomUUID(),
+      })),
+      phase: "pending",
+      createdAt: new Date().toISOString(),
+    });
+    await this.service.registry.change((current) => {
+      if (
+        !this.current(operation) ||
+        JSON.stringify(current.links[input.linkUid]) !== JSON.stringify(link) ||
+        current.schedules.some(
+          (item) =>
+            item.provider === operation.provider &&
+            item.accountId === operation.accountId &&
+            item.task.id === input.task.id &&
+            !["complete", "cancelled"].includes(item.phase),
+        )
+      )
+        throw new TaskReadError(
+          "Finish this task's saved projection change before reconciling another edit.",
+        );
+      current.schedules.push(operation);
+    });
+    this.publish();
+    await this.resume();
+    return operation;
+  }
+
   private async enqueue(
     taskId: string,
     target: ScheduleOperation["target"],
@@ -219,11 +302,7 @@ export class TaskScheduler {
           ? projection.googleUid
           : crypto.randomUUID().replace(/-/g, ""),
       providerOperationId: crypto.randomUUID(),
-      occurrenceKey:
-        projection?.occurrenceKey ??
-        (task.due?.recurring
-          ? JSON.stringify([task.due.date, task.due.text, task.due.timezone])
-          : "single"),
+      occurrenceKey: projection?.occurrenceKey ?? taskOccurrenceKey(task),
       target,
       previous,
       previousInterval: projection?.interval ?? undefined,
@@ -386,6 +465,28 @@ export class TaskScheduler {
 
   private async resumeResolution(operation: ScheduleOperation) {
     const state = this.service.registry.snapshot();
+    if (operation.target.kind === "reconcile") {
+      if (operation.phase !== "conflict") return false;
+      const steps = (operation.providerSteps ?? []).map((step) =>
+        state.operations.find((item) => item.id === step.id),
+      );
+      if (!steps.some((step) => step?.resolutionIds)) return false;
+      if (
+        steps.some(
+          (step) =>
+            step &&
+            resolvedTaskOperation(state.operations, step.id).status ===
+              "conflict",
+        )
+      )
+        return true;
+      await this.update(operation.id, {
+        phase: "provider-pending",
+        error: undefined,
+      });
+      this.again = true;
+      return true;
+    }
     const original = state.operations.find(
       (item) => item.id === operation.providerOperationId,
     );
@@ -451,7 +552,9 @@ export class TaskScheduler {
         if (!this.current(operation)) return;
         let plan: NonNullable<ScheduleOperation["plan"]>;
         let googleUid = operation.googleUid;
-        if (operation.target.kind === "schedule") {
+        const interval =
+          "interval" in operation.target ? operation.target.interval : null;
+        if (interval) {
           const matching = operation.previous
             ? blocks.filter(
                 (block) =>
@@ -465,7 +568,7 @@ export class TaskScheduler {
             (matching.length === 1 ? matching[0] : undefined);
           googleUid = adopted?.uid ?? googleUid;
           const snapshot = {
-            ...operation.target.interval,
+            ...interval,
             title: scheduleNoteTitle(operation.raw),
           };
           let previous = operation.previous
@@ -490,7 +593,7 @@ export class TaskScheduler {
           plan = {
             edits: prepared.edits,
             block: prepared.block,
-            interval: operation.target.interval,
+            interval,
             links: this.planLinks(
               operation,
               prepared.block.path,
@@ -538,7 +641,11 @@ export class TaskScheduler {
               accountId: operation.accountId,
               taskId: link.task.id,
               source: link.source,
-              base: link.task,
+              noteBase:
+                state.links[link.uid]?.noteBase ??
+                state.links[link.uid]?.source ??
+                link.source,
+              base: state.links[link.uid]?.base ?? link.task,
             };
           state.projections[operation.linkUid] = {
             provider: operation.provider,
@@ -561,38 +668,61 @@ export class TaskScheduler {
     if (!this.current(operation)) return;
     if (operation.phase === "local-applied") {
       await this.update(operation.id, {
-        phase: operation.syncTaskDate ? "provider-pending" : "calendar-pending",
+        phase:
+          operation.syncTaskDate || operation.providerSteps?.length
+            ? "provider-pending"
+            : "calendar-pending",
       });
       operation = this.saved(operation.id);
     }
     if (operation.phase === "provider-pending") {
-      if (operation.target.kind !== "schedule" || !this.current(operation))
-        return;
-      await this.service.mutate(
-        {
-          kind: "update",
-          taskId: operation.task.id,
-          changes: operation.providerChanges!,
-        },
-        undefined,
+      const steps = operation.providerSteps ?? [
         {
           id: operation.providerOperationId,
           base: operation.task,
+          mutation: {
+            kind: "update" as const,
+            taskId: operation.task.id,
+            changes: operation.providerChanges!,
+          },
+        },
+      ];
+      for (const step of steps) {
+        if (!this.current(operation)) return;
+        await this.service.mutate(step.mutation, undefined, {
+          id: step.id,
+          base: step.base,
           provider: operation.provider,
           accountId: operation.accountId,
-        },
-      );
-      await this.service.refresh();
-      if (!this.current(operation)) return;
-      const saved = this.service.registry
-        .snapshot()
-        .operations.find((item) => item.id === operation.providerOperationId)!;
-      if (["conflict", "failed"].includes(saved.status))
-        throw new TaskProjectionConflict(
-          saved.error ?? "Review the task date change before continuing.",
+        });
+        await this.service.refresh();
+        if (!this.current(operation)) return;
+        const saved = this.service.registry
+          .snapshot()
+          .operations.find((item) => item.id === step.id)!;
+        const result = resolvedTaskOperation(
+          this.service.registry.snapshot().operations,
+          saved.id,
         );
-      if (saved.status !== "complete") {
-        await this.update(operation.id, { error: saved.error });
+        if (result.status === "conflict")
+          throw new TaskProjectionConflict(
+            saved.error ?? "Review the task change before continuing.",
+          );
+        if (result.status !== "complete") {
+          await this.update(operation.id, { error: saved.error });
+          return;
+        }
+      }
+      if (
+        operation.target.kind === "reconcile" &&
+        steps.some(
+          (step) =>
+            this.service.registry
+              .snapshot()
+              .operations.find((item) => item.id === step.id)?.resolutionIds,
+        )
+      ) {
+        await this.replaceResolvedProjection(operation);
         return;
       }
       await this.update(operation.id, {
@@ -603,7 +733,7 @@ export class TaskScheduler {
     }
     if (operation.phase === "calendar-pending" && this.current(operation)) {
       let eventId: string | undefined;
-      if (operation.target.kind === "schedule")
+      if (operation.plan!.interval)
         eventId = await this.calendar.syncProjection(
           operation.googleUid,
           operation.plan!.block!.snapshot,
@@ -621,23 +751,92 @@ export class TaskScheduler {
       await this.service.registry.change((state) => {
         const projection = state.projections[operation.linkUid]!;
         projection.googleEventId = eventId;
-        const taskWrite = state.operations.find(
-          (item) => item.id === operation.providerOperationId,
-        );
-        if (taskWrite?.readback) {
-          projection.base = {
-            ...projection.base,
-            due: taskWrite.readback.due,
-            duration: taskWrite.readback.duration,
-          };
-          state.links[operation.linkUid]!.base = projection.base;
-        }
+        const finalId =
+          operation.providerSteps?.at(-1)?.id ?? operation.providerOperationId;
+        const result = resolvedTaskOperation(state.operations, finalId);
+        projection.base =
+          result.status === "complete" && result.task
+            ? result.task
+            : operation.task;
+        state.links[operation.linkUid]!.base = projection.base;
+        state.links[operation.linkUid]!.noteBase =
+          operation.plan!.links[0]!.source;
+        delete state.issues[operation.linkUid];
         const saved = state.schedules.find((item) => item.id === operation.id)!;
         saved.phase = "complete";
         saved.error = undefined;
       });
       this.publish();
     }
+  }
+
+  private async replaceResolvedProjection(operation: ScheduleOperation) {
+    const state = this.service.registry.snapshot();
+    const final = operation.providerSteps!.at(-1)!;
+    const result = resolvedTaskOperation(state.operations, final.id);
+    if (result.status !== "complete" || !result.task)
+      throw new TaskProjectionConflict(
+        "Verify the resolved task before applying its note choices.",
+      );
+    const source = operation.plan!.links[0]!.source;
+    const text = await this.host.read(source.path);
+    const from = text === null ? -1 : locateSource(text, source);
+    if (from < 0)
+      throw new TaskProjectionConflict(
+        "The note changed after conflict review. Review its latest content before applying the chosen values.",
+      );
+    const snapshot = get(this.service.state).snapshot!;
+    const fields = [
+      ...new Set(
+        operation.providerSteps!.flatMap((step) =>
+          Object.keys(mutationFields(step.mutation)),
+        ),
+      ),
+    ];
+    const raw = rewriteTaskNote(
+      source.raw,
+      result.task,
+      taskAccountSettings(this.host.settings(), snapshot),
+      fields,
+    );
+    const interval =
+      operation.plan!.interval &&
+      (fields.includes("due") || fields.includes("duration"))
+        ? intervalForTaskDate(
+            operation.plan!.interval,
+            result.task,
+            snapshot.account.timezone,
+            snapshot.account.capabilities?.duration === true,
+          )
+        : operation.plan!.interval;
+    const replacement = scheduleOperationSchema.parse({
+      ...operation,
+      id: crypto.randomUUID(),
+      providerOperationId: crypto.randomUUID(),
+      task: result.task,
+      target: { kind: "reconcile", interval },
+      previous: { ...source, from },
+      previousInterval: operation.plan!.interval ?? undefined,
+      raw,
+      providerSteps: [],
+      syncTaskDate: false,
+      providerChanges: undefined,
+      phase: "pending",
+      plan: undefined,
+      error: undefined,
+      createdAt: new Date().toISOString(),
+    });
+    await this.service.registry.change((current) => {
+      const saved = current.schedules.find((item) => item.id === operation.id)!;
+      if (saved.phase !== "provider-pending")
+        throw new TaskReadError(
+          "The saved projection changed during conflict recovery.",
+        );
+      saved.phase = "cancelled";
+      current.schedules.push(replacement);
+    });
+    this.again = true;
+    this.publish();
   }
 
   private planLinks(

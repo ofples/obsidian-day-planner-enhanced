@@ -80,6 +80,8 @@ import type { TaskCapture } from "./tasks/capture";
 import { createTaskCapture } from "./tasks/capture-obsidian";
 import { taskDragMime } from "./tasks/drag";
 import { createTaskService } from "./tasks/obsidian";
+import type { TaskReconciler } from "./tasks/reconcile";
+import { createTaskReconciler } from "./tasks/reconcile-obsidian";
 import type { TaskScheduler } from "./tasks/schedule";
 import {
   taskDropAllowed,
@@ -133,6 +135,7 @@ export default class DayPlanner extends Plugin {
   taskService!: TaskService;
   taskCapture!: TaskCapture;
   taskScheduler?: TaskScheduler;
+  taskReconciler?: TaskReconciler;
   getSettings!: () => DayPlannerSettings;
   private settingsStore!: Writable<DayPlannerSettings>;
   private workspaceFacade!: WorkspaceFacade;
@@ -288,7 +291,10 @@ export default class DayPlanner extends Plugin {
       );
       listenerMiddleware.startListening({
         actionCreator: filesIndexed,
-        effect: () => this.taskCapture.scan(),
+        effect: async () => {
+          await this.taskCapture.scan();
+          await this.taskReconciler?.scan();
+        },
       });
       this.register(() => this.taskService.stop());
       this.addCommand({
@@ -360,7 +366,7 @@ export default class DayPlanner extends Plugin {
         `Google Calendar sync could not initialize: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
-    if (calendarReady && tasksReady)
+    if (calendarReady && tasksReady) {
       this.taskScheduler = createTaskScheduler(
         this,
         this.taskService,
@@ -368,6 +374,14 @@ export default class DayPlanner extends Plugin {
         this.settingsStore,
         this.workspaceFacade,
       );
+      this.taskReconciler = createTaskReconciler(
+        this,
+        this.taskService,
+        this.taskCapture,
+        this.taskScheduler,
+        this.settingsStore,
+      );
+    }
     if (tasksReady)
       this.registerView(
         viewTypeTasks,
@@ -379,6 +393,7 @@ export default class DayPlanner extends Plugin {
             () => this.openTaskCaptureSettings(),
             this.taskScheduler,
             () => this.getSettings().defaultDurationMinutes,
+            this.taskReconciler,
           ),
       );
     this.addCommand({
@@ -1040,9 +1055,11 @@ export default class DayPlanner extends Plugin {
           await this.taskCapture.scan();
           await this.taskService.refresh();
           await this.taskScheduler?.resume();
+          await this.taskReconciler?.scan();
         }
         if (this.getSettings().googleCalendar.clientId)
           await this.googleCalendarSync.run();
+        await this.taskReconciler?.scan();
       })().catch(
         (error: unknown) =>
           new Notice(

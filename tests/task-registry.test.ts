@@ -11,6 +11,95 @@ const legacy = JSON.stringify({
 });
 
 describe("task registry migration", () => {
+  test("v4 migration retains the acknowledged projection instead of accepting an unmerged note edit", async () => {
+    const base = {
+      id: "task",
+      title: "Original",
+      description: "",
+      projectId: "work",
+      parentId: null,
+      labels: [],
+      priority: 1,
+      completed: false,
+      order: 1,
+      due: null,
+    };
+    const source = {
+      path: "Tasks.md",
+      from: 0,
+      raw: "- [ ] Edited #todoist",
+      title: "Edited",
+    };
+    const before = {
+      ...source,
+      raw: "- [ ] Original #todoist",
+      title: "Original",
+    };
+    let disk = JSON.stringify({
+      version: 4,
+      namespace,
+      operations: [],
+      schedules: [],
+      links: {
+        linked: {
+          provider: "todoist",
+          accountId: "account",
+          taskId: base.id,
+          base,
+          source,
+        },
+        capture: {
+          provider: "todoist",
+          accountId: "account",
+          taskId: "other",
+          base: { ...base, id: "other" },
+          source: { ...source, path: "Other.md" },
+        },
+      },
+      projections: {
+        linked: {
+          provider: "todoist",
+          accountId: "account",
+          taskId: base.id,
+          linkUid: "linked",
+          occurrenceKey: "single",
+          base,
+          source: before,
+          interval: null,
+        },
+      },
+    });
+    const registry = new TaskRegistry(
+      {
+        readState: async () => disk,
+        writeState: async (value: string) => {
+          disk = value;
+        },
+      },
+      namespace,
+    );
+    await registry.initialize();
+    expect(registry.snapshot().links.linked?.noteBase).toEqual(before);
+    expect(registry.snapshot().links.capture?.noteBase).toBeUndefined();
+  });
+
+  test("unchanged transactions verify disk ownership and avoid another state write", async () => {
+    let disk: string | null = null;
+    const writeState = vi.fn(async (value: string) => {
+      disk = value;
+    });
+    const registry = new TaskRegistry(
+      { readState: async () => disk, writeState },
+      namespace,
+    );
+    await registry.initialize();
+    writeState.mockClear();
+    await registry.change(() => {});
+    expect(writeState).not.toHaveBeenCalled();
+    disk = "Another writer";
+    await expect(registry.change(() => {})).rejects.toThrow("another session");
+  });
+
   test("backs up v1 bytes before persisting the current projection format", async () => {
     let disk = legacy;
     const events: string[] = [];
@@ -29,8 +118,8 @@ describe("task registry migration", () => {
     const registry = new TaskRegistry(storage, namespace);
     await registry.initialize();
     expect(events).toEqual(["backup", "write"]);
-    expect(registry.snapshot().version).toBe(4);
-    expect(JSON.parse(disk).version).toBe(4);
+    expect(registry.snapshot().version).toBe(5);
+    expect(JSON.parse(disk).version).toBe(5);
   });
 
   test("failed backup preserves the original registry", async () => {

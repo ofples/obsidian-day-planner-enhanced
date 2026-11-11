@@ -13,6 +13,9 @@ import type { GoogleCalendarSync } from "../src/google-calendar/service";
 import type { PeriodicNotes } from "../src/service/periodic-notes";
 import { defaultSettings } from "../src/settings";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
+import { TaskCapture } from "../src/tasks/capture";
+import { TaskReconciler } from "../src/tasks/reconcile";
+import { mutationFields } from "../src/tasks/operations";
 import { taskCaptureSettingsSchema } from "../src/tasks/capture-settings";
 import type { TaskOperation } from "../src/tasks/operations";
 import { TaskScheduler } from "../src/tasks/schedule";
@@ -47,6 +50,7 @@ async function harness() {
   let failTaskWrite = false,
     failPath = "",
     failCalendar = false;
+  let stable = true;
   let calendarState: CalendarSyncState = {
     version: 2,
     namespace: "c".repeat(32),
@@ -179,15 +183,17 @@ async function harness() {
       capabilities: { duration: false },
     },
     projects: [{ id: "work", name: "Work", order: 1, inbox: true }],
-    tasks: structuredClone([...tasks.values()]),
+    tasks: structuredClone(
+      [...tasks.values()].filter((task) => !task.completed),
+    ),
     fetchedAt: new Date().toISOString(),
   });
   const commands = new Map<string, string>();
   const apply = vi.fn(async (operation: TaskOperation) => {
-    if (!commands.has(operation.id) && operation.mutation.kind === "update")
+    if (!commands.has(operation.id) && operation.mutation.kind !== "create")
       tasks.set(operation.mutation.taskId, {
         ...tasks.get(operation.mutation.taskId)!,
-        ...operation.mutation.changes,
+        ...mutationFields(operation.mutation),
       });
     commands.set(operation.id, "applied");
     return {
@@ -226,6 +232,24 @@ async function harness() {
     settings: () => taskCaptureSettingsSchema.parse({}),
   };
   let scheduler = new TaskScheduler(service, calendar, host);
+  const makeCapture = () =>
+    new TaskCapture(service, {
+      candidates: () =>
+        [...texts].flatMap(([path, text]) =>
+          parseCaptureCandidates(path, text),
+        ),
+      read: host.read,
+      stable: () => stable,
+      ready: () => true,
+      settings: host.settings,
+    });
+  let capture = makeCapture();
+  let reconciler = new TaskReconciler(
+    service,
+    capture,
+    scheduler,
+    host.settings,
+  );
   return {
     get service() {
       return service;
@@ -235,6 +259,9 @@ async function harness() {
     },
     get notes() {
       return notes;
+    },
+    get reconciler() {
+      return reconciler;
     },
     get calendarState() {
       return calendarState;
@@ -254,24 +281,306 @@ async function harness() {
     setFailCalendar(value: boolean) {
       failCalendar = value;
     },
+    setStable(value: boolean) {
+      stable = value;
+    },
     async settle() {
       await scheduler.resume();
       await vi.waitUntil(() => !get(service.state).loading);
       await scheduler.resume();
     },
+    async reconcile() {
+      await reconciler.scan();
+      await scheduler.resume();
+      await vi.waitUntil(() => !get(service.state).loading);
+      await reconciler.scan();
+      await scheduler.resume();
+    },
     async restart() {
       scheduler.stop();
+      capture.stop();
+      reconciler.stop();
       service.stop();
       calendarState = JSON.parse(calendarDisk);
       notes = makeNotes();
       service = new TaskService(storage, provider);
       await service.initialize();
       scheduler = new TaskScheduler(service, calendar, host);
+      capture = makeCapture();
+      reconciler = new TaskReconciler(
+        service,
+        capture,
+        scheduler,
+        host.settings,
+      );
     },
   };
 }
 
 describe("linked task scheduling", () => {
+  test("a captured untimed note gains navigation while a provider date stays unscheduled", async () => {
+    const h = await harness();
+    const path = "Projects/Work.md",
+      text = "- [ ] Work #todoist #work\n";
+    h.file(path);
+    h.texts.set(path, text);
+    const source = parseCaptureCandidates(path, text)[0]!;
+    await h.service.registry.change((state) => {
+      state.links.captured = {
+        provider: "todoist",
+        accountId: "account",
+        taskId: root.id,
+        source,
+        noteBase: source,
+        base: root,
+      };
+    });
+    await h.reconcile();
+    expect(h.scheduler.projection(root.id)).toMatchObject({
+      source: { path },
+      interval: null,
+    });
+    h.tasks.set(root.id, {
+      ...root,
+      due: { date: "2026-11-13", text: "", timezone: null, recurring: false },
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    expect(h.scheduler.projection(root.id)?.interval).toBeNull();
+    expect(h.events.size).toBe(0);
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("an actively edited note defers reconciliation until its source becomes stable", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md",
+      writes = h.apply.mock.calls.length;
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Work #todoist", "Editing #todoist"),
+    );
+    h.setStable(false);
+    await h.reconcile();
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect(h.tasks.get(root.id)?.title).toBe(root.title);
+    h.setStable(true);
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.title).toBe("Editing");
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("a provider race after note intent recovers chosen remote values through the same projection", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md",
+      eventId = h.scheduler.projection(root.id)!.googleEventId;
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Work #todoist", "Local #todoist"),
+    );
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      title: "Concurrent remote",
+    });
+    await h.reconcile();
+    const pending = h.service.registry
+      .snapshot()
+      .schedules.find(
+        (operation) =>
+          operation.target.kind === "reconcile" &&
+          operation.phase === "conflict",
+      )!;
+    expect(pending).toBeDefined();
+    const review = await h.service.inspectConflict(
+      pending.providerSteps![0]!.id,
+    );
+    await h.service.resolveConflict(review, { title: "remote" });
+    await h.settle();
+    await vi.waitUntil(
+      () =>
+        h.service.registry.snapshot().schedules.at(-1)?.phase === "complete",
+    );
+    expect(h.texts.get(path)).toContain("Concurrent remote #todoist");
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(eventId);
+    await h.reconcile();
+    expect(h.service.registry.snapshot().issues).toEqual({});
+    expect(h.apply).toHaveBeenCalledTimes(1);
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("reconciling one block refreshes positions before processing the next block", async () => {
+    const h = await harness();
+    const second = { ...root, id: "second", title: "Second", order: 3 };
+    h.tasks.set(second.id, second);
+    await h.service.refresh();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    await h.scheduler.schedule(second.id, {
+      start: "2026-11-11T11:00:00Z",
+      end: "2026-11-11T11:30:00Z",
+    });
+    await h.settle();
+    const secondId = h.scheduler.projection(second.id)!.googleEventId;
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      title: "A much longer remote title",
+    });
+    h.tasks.set(second.id, {
+      ...h.tasks.get(second.id)!,
+      title: "Another remote title",
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    expect(h.events.size).toBe(2);
+    expect(h.scheduler.projection(second.id)?.googleEventId).toBe(secondId);
+    expect(h.scheduler.projection(second.id)?.interval).not.toBeNull();
+    expect(h.texts.get("Daily/2026-11-11.md")).toContain(
+      "Another remote title",
+    );
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("note titles and independent provider descriptions merge through the existing journal", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const eventId = h.scheduler.projection(root.id)!.googleEventId;
+    const path = "Daily/2026-11-11.md";
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Work #todoist", "**Focused work** #todoist"),
+    );
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      description: "Remote description",
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    expect(h.tasks.get(root.id)).toMatchObject({
+      title: "Focused work",
+      description: "Remote description",
+    });
+    expect(h.texts.get(path)).toContain("**Focused work** #todoist");
+    expect(h.texts.get(path)).toContain("- [ ] Child");
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(eventId);
+    expect(h.service.registry.snapshot().issues).toEqual({});
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("provider title/completion edits reach the linked note and preserve its child bytes", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const writes = h.apply.mock.calls.length;
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      title: "Edited remotely",
+      completed: true,
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    expect(h.texts.get("Daily/2026-11-11.md")).toContain(
+      `- [x] ${window.moment(interval.start).format("HH:mm")} - ${window.moment(interval.end).format("HH:mm")} Edited remotely #todoist #work`,
+    );
+    expect(h.texts.get("Daily/2026-11-11.md")).toContain("- [ ] Child");
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("local checkbox completion and reopening target the same provider task", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md";
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace(/- \[ \] (?=\d{2}:\d{2})/, "- [x] "),
+    );
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.completed).toBe(true);
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace(/- \[x\] (?=\d{2}:\d{2})/, "- [ ] "),
+    );
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.completed).toBe(false);
+    expect(h.events.size).toBe(1);
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("manual time edits and a remote date-only move preserve event identity and clock time", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const eventId = h.scheduler.projection(root.id)!.googleEventId;
+    const path = "Daily/2026-11-11.md";
+    const oldRange = `${window.moment(interval.start).format("HH:mm")} - ${window.moment(interval.end).format("HH:mm")}`;
+    const newRange = `${window.moment(interval.start).add(1, "hour").format("HH:mm")} - ${window.moment(interval.start).add(105, "minutes").format("HH:mm")}`;
+    h.texts.set(path, h.texts.get(path)!.replace(oldRange, newRange));
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.due?.date).toBe("2026-11-11T10:00:00.000Z");
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      due: { date: "2026-11-12", recurring: false, text: "", timezone: null },
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    expect(h.texts.get("Daily/2026-11-12.md")).toContain(`${newRange} Work`);
+    expect(h.texts.get(path)).not.toContain("- [ ] Child");
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(eventId);
+    expect(h.tasks.get(root.id)?.due?.date).toBe("2026-11-12");
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("same-field note/provider conflicts preserve both sides until they agree", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const path = "Daily/2026-11-11.md",
+      writes = h.apply.mock.calls.length;
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Work #todoist", "Local #todoist"),
+    );
+    h.tasks.set(root.id, { ...h.tasks.get(root.id)!, title: "Remote" });
+    await h.service.refresh();
+    await h.reconcile();
+    expect(
+      Object.values(h.service.registry.snapshot().issues)[0]?.fields,
+    ).toContain("title");
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect(h.texts.get(path)).toContain("Local #todoist");
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Local #todoist", "Remote #todoist"),
+    );
+    await h.reconcile();
+    expect(h.service.registry.snapshot().issues).toEqual({});
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
   test("new scheduling creates one linked subtree, then repeated drops move its existing event", async () => {
     const h = await harness();
     const dropId = crypto.randomUUID();

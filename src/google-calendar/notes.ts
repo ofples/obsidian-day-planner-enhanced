@@ -234,7 +234,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       uid,
       snapshot,
       this.settings,
-      previous?.raw ?? templateRaw,
+      templateRaw ?? previous?.raw,
     );
     const target = await this.daily.createDailyNoteIfNeeded(
       window.moment(snapshot.start).startOf("day"),

@@ -13,6 +13,7 @@
   import { taskDay, taskGroups, type TaskViewState } from "../../tasks/browser";
   import type { TaskCapture, CaptureIssue } from "../../tasks/capture";
   import { operationTaskId } from "../../tasks/operations";
+  import type { TaskReconciler } from "../../tasks/reconcile";
   import type { TaskScheduler } from "../../tasks/schedule";
   import type {
     ScheduleOperation,
@@ -24,6 +25,7 @@
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Svelte validates these annotated props. ESLint's rune declaration returns any.
   let {
     service,
+    reconciler,
     preferences,
     connect,
     createTask,
@@ -44,6 +46,7 @@
     taskMenu,
   }: {
     service: TaskService;
+    reconciler?: TaskReconciler;
     preferences: Writable<TaskViewState>;
     connect: () => void;
     createTask: () => void;
@@ -65,6 +68,9 @@
   } = $props();
   const browserState: Readable<TaskBrowserState> = $derived(service.state);
   const captureState = $derived(capture.state);
+  const reconcileState = $derived(
+    reconciler?.state ?? readable({ issues: [], error: "" }),
+  );
   const emptySchedule = readable({
     operations: [] as ScheduleOperation[],
     projections: [] as TaskProjection[],
@@ -171,6 +177,27 @@
     {/if}
   </header>
   {#if $captureState.error}<p role="status">{$captureState.error}</p>{/if}
+  {#if $reconcileState.error}<p role="status">{$reconcileState.error}</p>{/if}
+  {#if $reconcileState.issues.length}<details class="task-changes" open>
+      <summary
+        >{$reconcileState.issues.length} linked {$reconcileState.issues
+          .length === 1
+          ? "task needs"
+          : "tasks need"} review</summary
+      >
+      {#each $reconcileState.issues as issue (issue.id)}<div
+          class="task-change"
+        >
+          <span
+            >{issue.source?.title ?? issue.remote?.title ?? "Linked task"}</span
+          ><small>{issue.message}</small>
+          <button
+            onclick={() => {
+              void reconciler?.scan();
+            }}>Recheck</button
+          >
+        </div>{/each}
+    </details>{/if}
   {#if $captureState.issues.length}
     <details class="task-changes" open>
       <summary

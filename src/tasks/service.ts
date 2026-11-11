@@ -197,7 +197,7 @@ export class TaskService {
           ) ??
           current.completed.find((task) => task.id === mutation.taskId) ??
           null);
-    if (mutation.kind !== "create" && !base)
+    if (mutation.kind !== "create" && !base && !intent?.base)
       throw new TaskReadError("Refresh this task before editing it.");
     const operation = await this.registry.change((state) => {
       if (intent) {
@@ -236,6 +236,7 @@ export class TaskService {
           accountId: snapshot.account.id,
           taskId: null,
           source: source.value,
+          noteBase: source.value,
           base: null,
         };
       }
@@ -333,6 +334,38 @@ export class TaskService {
         "The provider returned a different task. Refresh before resolving this change.",
       );
     return reviewTaskConflict(operation, current);
+  }
+
+  async readTask(id: string) {
+    const generation = this.generation;
+    const owner = this.cache.snapshot;
+    const token = this.storage.getSecret(this.secretKey());
+    if (!owner || !token || !get(this.state).writable)
+      throw new TaskReadError(
+        "Reconnect the task account before reading its linked task.",
+      );
+    const provider = this.provider(token);
+    const fresh = await provider.read();
+    if (
+      !this.isCurrent(generation) ||
+      fresh.provider !== owner.provider ||
+      fresh.account.id !== owner.account.id
+    )
+      throw new TaskReadError(
+        "The task account changed during reconciliation.",
+      );
+    const task = provider.get
+      ? await provider.get(id)
+      : (fresh.tasks.find((item) => item.id === id) ?? null);
+    if (
+      !this.isCurrent(generation) ||
+      !get(this.state).writable ||
+      (task && task.id !== id)
+    )
+      throw new TaskReadError(
+        "Refresh the original task account before reconciling its note.",
+      );
+    return task;
   }
 
   async resolveConflict(
@@ -566,5 +599,10 @@ export class TaskService {
   stop() {
     this.closed = true;
     this.generation++;
+    this.state.update((state) => ({
+      ...state,
+      writable: false,
+      loading: false,
+    }));
   }
 }
