@@ -34,6 +34,7 @@ export async function syncCalendar({
   save,
   timeMin,
   timeMax,
+  importEvents = true,
 }: {
   state: CalendarSyncState;
   api: CalendarApi;
@@ -41,6 +42,7 @@ export async function syncCalendar({
   save: () => Promise<void>;
   timeMin: string;
   timeMax: string;
+  importEvents?: boolean;
 }): Promise<SyncResult> {
   const result: SyncResult = {
     pushed: 0,
@@ -97,6 +99,7 @@ export async function syncCalendar({
     const local = byUid.get(uid);
     const remote =
       byEvent.get(record.eventId) ?? (await api.get(record.eventId));
+    let colorEvent = remote;
     const remoteDeleted = !remote || remote.status === "cancelled";
     const remoteSnapshot = remote && snapshotOf(remote);
     const localChanged = local && !sameSnapshot(local.snapshot, record.base);
@@ -153,6 +156,7 @@ export async function syncCalendar({
     }
     if (localChanged && !remoteChanged) {
       const updated = await api.update(remote, local.snapshot);
+      colorEvent = updated;
       record.base = snapshotOf(updated) ?? local.snapshot;
       result.pushed++;
     } else if (remoteChanged && !localChanged) {
@@ -165,6 +169,12 @@ export async function syncCalendar({
     }
     if (!(remoteChanged && !localChanged)) record.path = local.path;
     await save();
+    if (
+      api.syncColor &&
+      colorEvent &&
+      (await api.syncColor(colorEvent, record.base)) !== colorEvent
+    )
+      result.pushed++;
   }
 
   for (const local of locals) {
@@ -193,8 +203,10 @@ export async function syncCalendar({
     linkedEvents.add(event.id);
     await save();
     result.pushed++;
+    await api.syncColor?.(event, local.snapshot);
   }
 
+  if (!importEvents) return result;
   for (const event of events) {
     if (
       linkedEvents.has(event.id) ||
@@ -239,6 +251,7 @@ export async function syncCalendar({
     delete state.pendingImport;
     await save();
     result.pulled++;
+    await api.syncColor?.(event, snapshot);
   }
   return result;
 }

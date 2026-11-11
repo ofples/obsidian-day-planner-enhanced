@@ -9,11 +9,23 @@ export interface GoogleEvent {
   etag: string;
   status?: string;
   summary?: string;
+  colorId?: string;
   start?: { dateTime?: string; date?: string };
   end?: { dateTime?: string; date?: string };
   recurringEventId?: string;
   eventType?: string;
+  description?: string;
+  location?: string;
+  attendees?: Array<{ self?: boolean; responseStatus?: string }>;
   extendedProperties?: { private?: Record<string, string> };
+}
+
+export interface GoogleCalendarInfo {
+  id: string;
+  summary: string;
+  backgroundColor?: string;
+  selected?: boolean;
+  hidden?: boolean;
 }
 
 export interface LocalBlock {
@@ -54,6 +66,10 @@ export interface CalendarApi {
   ): Promise<GoogleEvent>;
   update(event: GoogleEvent, snapshot: CalendarSnapshot): Promise<GoogleEvent>;
   remove(event: GoogleEvent): Promise<void>;
+  syncColor?(
+    event: GoogleEvent,
+    snapshot: CalendarSnapshot,
+  ): Promise<GoogleEvent>;
 }
 
 export interface CalendarNotes {

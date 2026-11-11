@@ -81,7 +81,7 @@ function harness(linked = true) {
     setEvents: (value: GoogleEvent[]) => {
       events = value;
     },
-    run: () =>
+    run: (importEvents = true) =>
       syncCalendar({
         state,
         api,
@@ -89,6 +89,7 @@ function harness(linked = true) {
         save,
         timeMin: "2026-11-01T00:00:00.000Z",
         timeMax: "2026-12-01T00:00:00.000Z",
+        importEvents,
       }),
   };
 }
@@ -99,6 +100,22 @@ beforeEach(() => {
 });
 
 describe("calendar reconciliation", () => {
+  test("display-only events are not written as note tasks", async () => {
+    const h = harness(false);
+    h.setBlocks([]);
+    h.setEvents([event()]);
+    expect((await h.run(false)).pulled).toBe(0);
+    expect(h.notes.write).not.toHaveBeenCalled();
+    expect(h.state.records).toEqual({});
+  });
+  test("color-only changes backfill existing linked events without note writes", async () => {
+    const h = harness();
+    h.api.syncColor = vi.fn(async (remote) => ({ ...remote, colorId: "3" }));
+    expect((await h.run()).pushed).toBe(1);
+    expect(h.api.update).not.toHaveBeenCalled();
+    expect(h.notes.write).not.toHaveBeenCalled();
+    expect(h.state.records[uid]?.base).toEqual(base);
+  });
   test("unchanged entries produce no writes", async () => {
     const h = harness();
     expect(await h.run()).toMatchObject({

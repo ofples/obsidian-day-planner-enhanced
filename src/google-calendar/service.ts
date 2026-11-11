@@ -1,6 +1,9 @@
 import { Modal, Notice, Platform, type App, type Plugin } from "obsidian";
 import { z } from "zod";
 
+import { selectSortedDedupedVisibleDays } from "../redux/date-ranges-slice";
+import { googleTimeBlocksUpdated } from "../redux/ical/ical-slice";
+import type { AppStore } from "../redux/store";
 import type { PeriodicNotes } from "../service/periodic-notes";
 import type { DayPlannerSettings } from "../settings";
 
@@ -9,6 +12,7 @@ import { GoogleCalendarAuth } from "./auth";
 import { syncCalendar } from "./engine";
 import { ObsidianCalendarNotes } from "./notes";
 import type { CalendarSyncState } from "./types";
+import { googleEventsToBlocks, visibleGoogleCalendars } from "./view";
 
 export interface GoogleCalendarSettings {
   clientId: string;
@@ -17,6 +21,11 @@ export interface GoogleCalendarSettings {
   daysPast: number;
   daysAhead: number;
   syncDeletions: boolean;
+  colorMappings: Record<string, string>;
+  fallbackColorId: string;
+  showCalendarEvents: boolean;
+  visibleCalendarIds: string[] | null;
+  importEventsToNotes: boolean;
 }
 
 const snapshotSchema = z.object({
@@ -63,11 +72,13 @@ export class GoogleCalendarSync {
   private stopped = false;
   private lastSaved = "";
   private lastError = "";
+  private viewGeneration = 0;
 
   constructor(
     private readonly plugin: Plugin,
     private readonly daily: PeriodicNotes,
     private readonly getSettings: () => DayPlannerSettings,
+    private readonly store: AppStore,
   ) {}
 
   private get app(): App {
@@ -121,10 +132,13 @@ export class GoogleCalendarSync {
           !this.stopped
         )
           void this.run(true);
+        else void this.refreshView();
       }, 60_000),
     );
     this.plugin.register(() => {
       this.stopped = true;
+      this.viewGeneration++;
+      this.store.dispatch(googleTimeBlocksUpdated([]));
       this.auth.stop();
     });
   }
@@ -154,6 +168,7 @@ export class GoogleCalendarSync {
       await this.auth.connect(
         this.getSettings().googleCalendar.clientId.trim(),
       );
+      void this.refreshView();
       new Notice(
         "Google Calendar connected. Choose a target calendar and run Sync Google Calendar now.",
       );
@@ -170,6 +185,8 @@ export class GoogleCalendarSync {
       return;
     }
     this.auth.disconnect();
+    this.viewGeneration++;
+    this.store.dispatch(googleTimeBlocksUpdated([]));
     new Notice(
       "Google Calendar disconnected on this device. Existing notes and events were kept.",
     );
@@ -208,6 +225,7 @@ export class GoogleCalendarSync {
         this.state.namespace,
       );
       const canonicalId = await api.validateCalendar();
+      await api.usePlannerColors(settings);
       if (this.state.calendarId && this.state.calendarId !== canonicalId)
         throw new Error(
           "This sync state belongs to another calendar/account. Use the original target calendar.",
@@ -241,6 +259,7 @@ export class GoogleCalendarSync {
         save: () => this.save(),
         timeMin,
         timeMax,
+        importEvents: config.importEventsToNotes,
       });
       this.lastError = "";
       if (!automatic || result.conflicts.length) {
@@ -263,6 +282,66 @@ export class GoogleCalendarSync {
       this.lastError = message;
     } finally {
       this.busy = false;
+      await this.refreshView();
+    }
+  }
+
+  private api(calendarId = this.getSettings().googleCalendar.calendarId) {
+    return new GoogleCalendarApi(
+      this.auth,
+      this.getSettings().googleCalendar.clientId.trim(),
+      calendarId,
+      this.state.namespace,
+    );
+  }
+
+  async calendars() {
+    return this.api().calendars();
+  }
+
+  async refreshView() {
+    const generation = ++this.viewGeneration;
+    const config = this.getSettings().googleCalendar;
+    if (this.stopped) return;
+    if (
+      !Platform.isDesktopApp ||
+      !config.showCalendarEvents ||
+      !config.clientId ||
+      !this.auth.isConnected()
+    ) {
+      this.store.dispatch(googleTimeBlocksUpdated([]));
+      return;
+    }
+    const days = selectSortedDedupedVisibleDays(this.store.getState());
+    const first = days.at(0)?.clone().startOf("day");
+    const last = days.at(-1)?.clone().startOf("day").add(1, "day");
+    if (!first || !last) return;
+    try {
+      const api = this.api();
+      const [calendars, palette] = await Promise.all([
+        api.calendars(),
+        api.eventColors(),
+      ]);
+      const selected = visibleGoogleCalendars(calendars, config);
+      const blocks = (
+        await Promise.all(
+          selected.map(async (calendar) =>
+            googleEventsToBlocks(
+              await this.api(calendar.id).list(
+                first.toISOString(),
+                last.toISOString(),
+              ),
+              calendar,
+              palette,
+              this.state,
+            ),
+          ),
+        )
+      ).flat();
+      if (generation === this.viewGeneration)
+        this.store.dispatch(googleTimeBlocksUpdated(blocks));
+    } catch (error) {
+      if (generation === this.viewGeneration) this.report(error);
     }
   }
 

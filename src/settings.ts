@@ -106,6 +106,11 @@ export const defaultSettings: DayPlannerSettings = {
     daysPast: 7,
     daysAhead: 30,
     syncDeletions: false,
+    colorMappings: {},
+    fallbackColorId: "",
+    showCalendarEvents: true,
+    visibleCalendarIds: null,
+    importEventsToNotes: false,
   },
   snapStepMinutes: 10,
   progressIndicator: "mini-timeline",
@@ -150,7 +155,11 @@ export const defaultSettings: DayPlannerSettings = {
   timelineColumns: { planner: true, timeTracker: false },
 };
 
-type StoredDayPlannerSettings = Partial<DayPlannerSettings> & {
+type StoredDayPlannerSettings = Omit<
+  Partial<DayPlannerSettings>,
+  "googleCalendar"
+> & {
+  googleCalendar?: Partial<DayPlannerSettings["googleCalendar"]>;
   showUncheduledTasks?: boolean;
   showUnscheduledNestedTasks?: boolean;
   showTimelineInSidebar?: boolean;

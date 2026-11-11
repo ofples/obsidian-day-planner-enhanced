@@ -1497,6 +1497,7 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
           },
         }),
       () => this.plugin.googleCalendarSync,
+      this.plugin.app,
     );
   }
 

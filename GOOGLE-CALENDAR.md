@@ -1,6 +1,6 @@
 # Google Calendar two-way sync (development fork)
 
-This fork adds direct Google Calendar API sync to Day Planner Enhanced. It mirrors **titles and start/end times** between top-level timed blocks in daily notes and one writable Google calendar. Daily notes remain ordinary Markdown; the existing planner parser and daily-note configuration are used.
+This fork adds direct Google Calendar API sync to Day Planner Enhanced. It mirrors **titles and start/end times** between top-level timed blocks in daily notes and one writable Google calendar, and applies configurable event colors from the planner. Existing Google events can also appear directly as calendar entries. Daily notes remain ordinary Markdown.
 
 This is a development implementation. Automated tests exercise the sync engine, note adapter, REST requests and OAuth callback. Desktop Google consent and live title/time round trips have also been verified with a dedicated calendar. Test your own setup before enabling automatic sync for an important calendar.
 
@@ -27,7 +27,15 @@ No existing drop-in bridge for Day Planner Enhanced's daily-note time ranges was
 7. Open Settings → Day Planner Enhanced → **Google Calendar two-way sync**. Expand **How to set up Google Calendar sync** for inline instructions, official setup links and troubleshooting. Enter the client ID, save the client secret, and enter the target calendar ID. Click **Connect** and finish consent in your browser. Under Google Auth Platform → Data Access, the requested scopes are `https://www.googleapis.com/auth/calendar.events` and `https://www.googleapis.com/auth/calendar.calendarlist.readonly`.
 8. Keep automatic sync off initially. Run **Sync Google Calendar now**. Test both directions with a disposable event, including renaming, resizing, changing days, cancellation, and an offline/restart recovery. Enable automatic sync only after verifying your setup.
 
-For recurring Google events, each occurrence in the import window is represented as a separate daily-note block. Editing it changes that occurrence, not the entire recurring series. Configure recurring series in Google Calendar.
+### Calendar display and colors
+
+- **Show Google calendar events** displays events directly in the planner. **Choose calendars** lets you select calendars, including an empty selection, or follow the selection in Google Calendar. It initially follows Google Calendar's selected calendars. Events refresh when changing planner dates, every minute while connected, and through the timeline menu.
+- New Google events appear as calendar entries by default. **Import new Google events into daily notes** optionally creates tasks for timed events in the dedicated sync calendar. Existing linked note blocks continue syncing in both directions. Events from other displayed calendars are display-only. Linked schedule events are excluded from the calendar overlay to avoid duplicate blocks.
+- **Google color for [rule]** assigns a Google event color to each existing planner color rule. The first matching rule wins. Automatic matching uses the nearest Google palette color to the rule's light-mode color, making the mapping stable across Obsidian themes. **Google color for other schedule blocks** controls the remaining blocks and can automatically match the time-of-day gradient.
+- Google supports a fixed event palette, so arbitrary planner hex colors are approximated. Color changes apply on the next sync, including already linked events. Color-only updates use conditional PATCH requests and do not rewrite note content.
+- **Sync Google Calendar and refresh calendars** in the timeline menu runs two-way schedule sync and refreshes displayed Google and ICS events.
+
+With note import enabled, each recurring Google event occurrence in the import window becomes a separate daily-note block. Editing it changes that occurrence. Configure recurring series in Google Calendar.
 
 ## Behavior
 
@@ -40,7 +48,7 @@ For recurring Google events, each occurrence in the import window is represented
 
 - New eligible daily-note blocks get a hidden ID comment when sync runs. **Keep the ID when editing, sorting, renaming, or moving a block.** Remove the ID from a deliberate copy that should become a new event. Duplicate IDs stop the sync before Google writes.
 - Only top-level timed list items under the configured planner heading are exported. Timed and untimed children remain in the parent Markdown subtree, and are not separately exported. Children, task completion status, links and block IDs stay in Obsidian.
-- Google events in the selected calendar are imported as ordinary timed daily-note blocks. The plugin creates daily notes through the existing Daily Notes / Periodic Notes integration, including its templates and date format.
+- When optional note import is enabled, Google events in the dedicated calendar are imported as ordinary timed daily-note blocks. The plugin creates daily notes through the existing Daily Notes / Periodic Notes integration, including its templates and date format.
 - Single-start blocks use the planner's configured duration or stretch-to-next setting. Explicit overnight ranges are supported. Timestamps use the device's local timezone and are sent to Google as absolute instants.
 - The initial discovery window defaults to 7 days back and 30 days ahead. Existing linked blocks continue to be reconciled by ID even if moved outside that window. This avoids interpreting a date move as deletion.
 - Local title/time changes patch those fields in Google. Remote title/time changes edit only the matching source block. Date moves carry the entire subtree to the destination daily note using a persisted recovery journal.
@@ -53,7 +61,7 @@ For recurring Google events, each occurrence in the import window is represented
 
 ## Supported scope and limitations
 
-- Timed events of at most 24 hours, aligned to whole minutes; all-day events, events longer than 24 hours and Google's special event types are not imported. Sub-minute timestamps are reported instead of silently rounded. Titles use a single line with normalized whitespace; HTML comments remain private to the note.
+- Note sync supports timed events of at most 24 hours, aligned to whole minutes. All-day events, events longer than 24 hours and Google's special event types are not imported as tasks. The calendar overlay displays timed and all-day events. Sub-minute timestamps are reported instead of silently rounded for note sync. Titles use a single line with normalized whitespace; HTML comments remain private to the note.
 - Google sign-in is desktop-only. No hosted authentication relay is used. Mobile sign-in and acceptance are not implemented; leave calendar sync disabled there. Ordinary planner features still work.
 - No Google Tasks sync, attendee/invitation UI, series-level recurrence editor, or live push/webhook listener.
 - Avoid adding an ICS subscription for the same calendar: it would display the same events again alongside their synced daily-note blocks. ICS sources for other calendars remain available.
@@ -62,7 +70,7 @@ For recurring Google events, each occurrence in the import window is represented
 ## Credentials, identity and recovery
 
 - OAuth uses a random state parameter, PKCE S256 and a loopback listener bound only to `127.0.0.1`. Client secret and refresh token use Obsidian SecretStorage; the access token stays in memory. They are never written to the plugin's `data.json` or sync-state file by this code.
-- Requested scopes: `calendar.events` and `calendar.calendarlist.readonly`. Only the configured writable calendar is used; the resolved calendar ID is pinned to avoid reusing mappings against a different account/calendar.
+- Requested scopes: `calendar.events` and `calendar.calendarlist.readonly`. Writes use the configured writable calendar, whose resolved ID is pinned to its mappings. Calendar display reads events from the calendars selected in the display settings.
 - Network destinations are Google's OAuth endpoints and Calendar API, plus the local callback listener. There is no third-party proxy, hosted token service or telemetry.
 - `gcal-state.json` alongside the plugin files contains the namespace, calendar ID, mappings, last-synced title/times, cancellation tombstones and any pending move/import journal. Treat it as private calendar data and preserve it when updating the plugin. The source repository ignores it.
 - Create operations use deterministic Google event IDs; a retry after a timeout adopts the existing event rather than inserting another. Imported events use deterministic local IDs so an interrupted import can be recovered too.
@@ -74,8 +82,8 @@ Google references: [Desktop OAuth](https://developers.google.com/identity/protoc
 
 ## Validation of this implementation
 
-- 52 new automated tests pass across reconciliation, Markdown, vault writes and recovery, HTTP transport, and a real local OAuth callback with a mocked Google token endpoint.
-- Full suite: 649 passed, 1 failed, 9 skipped and 17 todo. The failure is the existing ICS test `Last visible day is inclusive` in `tests/ical.test.ts`; it also fails on a separate, untouched checkout of upstream commit `db64375d` with the same environment and dependencies.
+- 60 new automated tests pass across reconciliation, Markdown, vault writes and recovery, display-only calendars, color mapping, HTTP transport, and a real local OAuth callback with a mocked Google token endpoint.
+- Full suite: 657 passed, 1 failed, 9 skipped and 17 todo. The failure is the existing ICS test `Last visible day is inclusive` in `tests/ical.test.ts`; it also fails on a separate, untouched checkout of upstream commit `db64375d` with the same environment and dependencies.
 - Prettier, ESLint, stylelint, TypeScript, Svelte diagnostics, the stricter scorecard lint and the production build pass. The aggregate `npm run lint` stops at the inherited test failure, so it is not an all-green result.
 - Windows checkout CRLF bytes in the test fixtures had to be normalized back to the repository's LF content so the recorded metadata offsets matched. No fixture or unrelated source changes are included in this branch.
 - Installed desktop acceptance verified Google consent, SecretStorage credentials, initial schedule export, Google event import, title/time edits in both directions, and Google cancellation. The expandable setup row is present in installed settings. Desktop sign-in uses a guarded CommonJS Node HTTP import because Chromium cannot resolve `import("node:http")` in Obsidian's plugin loader.

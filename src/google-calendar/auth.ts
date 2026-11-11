@@ -48,6 +48,10 @@ export class GoogleCalendarAuth {
     this.storage().setSecret(`${this.key}-client`, secret);
   }
 
+  isConnected() {
+    return Boolean(this.storage().getSecret(`${this.key}-refresh`));
+  }
+
   async token(clientId: string, force = false): Promise<string> {
     if (!force && this.access && this.access.expires > Date.now() + 60_000)
       return this.access.token;

@@ -32,7 +32,7 @@
       setting
         .setName("Automatic sync")
         .setDesc(
-          "Configure your Google account and target calendar in the full Day Planner settings first.",
+          "Choose calendars, event display and color mappings in the full Day Planner settings.",
         )
         .addToggle((control) =>
           control

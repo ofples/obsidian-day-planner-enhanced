@@ -1,11 +1,16 @@
 import {
+  Modal,
+  Setting,
+  type App,
   type SettingDefinitionGroup,
   type SettingDefinitionRender,
 } from "obsidian";
 
 import type { DayPlannerSettings } from "../settings";
 
+import { eventColorOptions } from "./colors";
 import type { GoogleCalendarSettings, GoogleCalendarSync } from "./service";
+import { visibleGoogleCalendars } from "./view";
 
 /** Native disclosure works in both searchable settings and the legacy settings tab. */
 export function addGoogleCalendarSetupDetails(container: HTMLElement) {
@@ -82,7 +87,7 @@ export function addGoogleCalendarSetupDetails(container: HTMLElement) {
   details.appendChild(note);
   const privacy = document.createElement("p");
   privacy.textContent =
-    "Your refresh token and client secret are saved in Obsidian SecretStorage. Sync talks directly to Google. It mirrors titles and times for the selected calendar; other event fields and nested note content stay as they are. Google consent allows event access across calendars, while this plugin uses only the calendar ID you select.";
+    "Your refresh token and client secret are saved in Obsidian SecretStorage. Sync talks directly to Google. Linked daily-note blocks sync titles, times and mapped colors with the dedicated calendar. Choose additional calendars for display-only events in the planner. Google consent allows event access across your calendars.";
   details.appendChild(privacy);
   container.appendChild(details);
 }
@@ -91,6 +96,7 @@ export function googleCalendarSettingDefinitions(
   getSettings: () => DayPlannerSettings,
   update: (patch: Partial<GoogleCalendarSettings>) => void,
   service: () => GoogleCalendarSync,
+  app: App,
 ): SettingDefinitionGroup {
   const text = (
     name: string,
@@ -113,7 +119,7 @@ export function googleCalendarSettingDefinitions(
     items: [
       {
         name: "Sync daily-note time blocks",
-        desc: "Sync titles and times with a dedicated Google calendar. Nested items stay in notes. Requires Obsidian 1.11.4+; all-day events and events over 24 hours are excluded.",
+        desc: "Sync daily-note titles, times and mapped colors with a dedicated Google calendar. Display existing Google events directly in the planner. Requires Obsidian 1.11.4+.",
         searchable: true,
         render: (setting) => addGoogleCalendarSetupDetails(setting.descEl),
       },
@@ -143,8 +149,124 @@ export function googleCalendarSettingDefinitions(
       text(
         "Target Google calendar ID",
         "calendarId",
-        "Google Calendar → Settings → your calendar → Integrate calendar → Calendar ID. All timed events in this calendar may be imported and edited.",
+        "Google Calendar → Settings → your calendar → Integrate calendar → Calendar ID. Linked blocks sync here. Optional note import applies to this calendar.",
       ),
+      {
+        name: "Show Google calendar events",
+        desc: "Display events as calendar entries without adding tasks to daily notes. Refreshes every minute and when changing planner dates.",
+        render: (setting) => {
+          setting.addToggle((control) =>
+            control
+              .setValue(getSettings().googleCalendar.showCalendarEvents)
+              .onChange((showCalendarEvents) => update({ showCalendarEvents })),
+          );
+        },
+      },
+      {
+        name: "Calendars shown in the planner",
+        desc: "Choose which Google calendars to display. Initially follows the calendars selected in Google Calendar. Linked schedule blocks appear once.",
+        render: (setting) => {
+          setting.addButton((button) =>
+            button.setButtonText("Choose calendars").onClick(async () => {
+              const modal = new Modal(app);
+              modal.titleEl.setText("Google calendars shown in planner");
+              modal.contentEl.setText("Loading calendars…");
+              modal.open();
+              try {
+                const calendars = await service().calendars();
+                const render = () => {
+                  modal.contentEl.empty();
+                  new Setting(modal.contentEl)
+                    .setName("Google Calendar selection")
+                    .setDesc("Use the calendar selection from Google Calendar.")
+                    .addButton((control) =>
+                      control
+                        .setButtonText("Use Google selection")
+                        .onClick(() => {
+                          update({ visibleCalendarIds: null });
+                          render();
+                        }),
+                    );
+                  const selected = new Set(
+                    visibleGoogleCalendars(
+                      calendars,
+                      getSettings().googleCalendar,
+                    ).map((calendar) => calendar.id),
+                  );
+                  for (const calendar of calendars)
+                    new Setting(modal.contentEl)
+                      .setName(calendar.summary)
+                      .addToggle((control) =>
+                        control
+                          .setValue(selected.has(calendar.id))
+                          .onChange((show) => {
+                            if (show) selected.add(calendar.id);
+                            else selected.delete(calendar.id);
+                            update({ visibleCalendarIds: [...selected] });
+                          }),
+                      );
+                };
+                render();
+              } catch (error) {
+                modal.contentEl.setText(
+                  error instanceof Error
+                    ? error.message
+                    : "Connect Google Calendar first.",
+                );
+              }
+            }),
+          );
+        },
+      },
+      {
+        name: "Import new Google events into daily notes",
+        desc: "Optional. Create Markdown tasks for new timed events in the dedicated sync calendar. By default, new Google events appear only as calendar entries. Existing linked note blocks continue syncing both ways.",
+        render: (setting) => {
+          setting.addToggle((control) =>
+            control
+              .setValue(getSettings().googleCalendar.importEventsToNotes)
+              .onChange((importEventsToNotes) =>
+                update({ importEventsToNotes }),
+              ),
+          );
+        },
+      },
+      ...getSettings().colorOverrides.map(
+        (override): SettingDefinitionRender => ({
+          name: `Google color for ${override.text || "empty text rule"}`,
+          desc: `Planner color ${override.color}. The first matching planner color rule wins.`,
+          render: (setting) => {
+            setting.addDropdown((control) =>
+              control
+                .addOptions(eventColorOptions)
+                .setValue(
+                  getSettings().googleCalendar.colorMappings[override.text] ??
+                    "",
+                )
+                .onChange((value) =>
+                  update({
+                    colorMappings: {
+                      ...getSettings().googleCalendar.colorMappings,
+                      [override.text]: value,
+                    },
+                  }),
+                ),
+            );
+          },
+        }),
+      ),
+      {
+        name: "Google color for other schedule blocks",
+        desc: "Automatic match uses the planner's time-of-day gradient when enabled. Colors are applied on the next sync.",
+        render: (setting) => {
+          setting.addDropdown((control) =>
+            control
+              .addOptions(eventColorOptions)
+              .setValue(getSettings().googleCalendar.fallbackColorId)
+              .onChange((fallbackColorId) => update({ fallbackColorId })),
+          );
+        },
+      },
       {
         name: "Connect Google Calendar",
         render: (setting) => {

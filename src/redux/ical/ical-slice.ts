@@ -20,6 +20,7 @@ export interface IcalState {
   icalEvents: Array<WithIcalConfig<ical.VEvent>>;
   plainTextIcals: Array<RawIcal>;
   serializedRemoteTimeBlocks: Array<SerializedRemoteTimeBlock>;
+  serializedGoogleTimeBlocks: Array<SerializedRemoteTimeBlock>;
 }
 
 export function isVEvent(event: ical.CalendarComponent): event is ical.VEvent {
@@ -30,6 +31,7 @@ export const initialIcalState: IcalState = {
   icalEvents: [],
   plainTextIcals: [],
   serializedRemoteTimeBlocks: [],
+  serializedGoogleTimeBlocks: [],
 };
 
 export const icalSlice = createAppSlice({
@@ -46,19 +48,31 @@ export const icalSlice = createAppSlice({
         state.serializedRemoteTimeBlocks = action.payload;
       },
     ),
+    googleTimeBlocksUpdated: create.reducer(
+      (state, action: PayloadAction<Array<SerializedRemoteTimeBlock>>) => {
+        state.serializedGoogleTimeBlocks = action.payload;
+      },
+    ),
   }),
   selectors: {
     selectSerializedRemoteTimeBlocks: (state) =>
       state.serializedRemoteTimeBlocks,
     selectPlainTextIcals: (state) => state.plainTextIcals,
+    selectSerializedGoogleTimeBlocks: (state) =>
+      state.serializedGoogleTimeBlocks ?? [],
   },
 });
 
 export const icalRefreshRequested = createAction("ical/icalRefreshRequested");
 
-export const { remoteTimeBlocksUpdated, icalsFetched } = icalSlice.actions;
+export const {
+  remoteTimeBlocksUpdated,
+  googleTimeBlocksUpdated,
+  icalsFetched,
+} = icalSlice.actions;
 export const { selectPlainTextIcals } = icalSlice.selectors;
-const { selectSerializedRemoteTimeBlocks } = icalSlice.selectors;
+const { selectSerializedRemoteTimeBlocks, selectSerializedGoogleTimeBlocks } =
+  icalSlice.selectors;
 
 export const selectAllIcalEventsWithIcalConfigs = createSelector(
   selectPlainTextIcals,
@@ -79,8 +93,9 @@ export const selectAllIcalEventsWithIcalConfigs = createSelector(
 
 export const selectRemoteTimeBlocks = createSelector(
   selectSerializedRemoteTimeBlocks,
-  (serializedRemoteTimeBlocks) =>
-    serializedRemoteTimeBlocks.map((it) => ({
+  selectSerializedGoogleTimeBlocks,
+  (serializedRemoteTimeBlocks, googleTimeBlocks) =>
+    [...serializedRemoteTimeBlocks, ...googleTimeBlocks].map((it) => ({
       ...it,
       startTime: window.moment(it.startTime),
     })),

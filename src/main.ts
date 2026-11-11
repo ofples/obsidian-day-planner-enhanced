@@ -39,6 +39,7 @@ import {
   toMdastPoint,
 } from "./mdast/mdast";
 import type { DateRanges } from "./redux/date-ranges";
+import { selectVisibleDays } from "./redux/date-ranges-slice";
 import { icalRefreshRequested } from "./redux/ical/ical-slice";
 import { type IcalParseTaskResult } from "./redux/ical/init-ical-listeners";
 import { selectActiveLogTimeBlocks } from "./redux/index/index-selectors";
@@ -247,9 +248,18 @@ export default class DayPlanner extends Plugin {
       this,
       this.periodicNotes,
       this.getSettings,
+      store,
     );
     try {
       await this.googleCalendarSync.initialize();
+      listenerMiddleware.startListening({
+        predicate: (action, current, previous) =>
+          icalRefreshRequested.match(action) ||
+          selectVisibleDays(current) !== selectVisibleDays(previous) ||
+          current.settings.settings.googleCalendar !==
+            previous.settings.settings.googleCalendar,
+        effect: () => this.googleCalendarSync.refreshView(),
+      });
     } catch (error) {
       new Notice(
         `Google Calendar sync could not initialize: ${error instanceof Error ? error.message : "Unknown error"}`,
@@ -790,7 +800,11 @@ export default class DayPlanner extends Plugin {
         sourcePath,
       });
 
-    const reSync = () => dispatch(icalRefreshRequested());
+    const reSync = () => {
+      dispatch(icalRefreshRequested());
+      if (this.getSettings().googleCalendar.clientId)
+        void this.googleCalendarSync.run();
+    };
     const openNestedItemsEditModal = createNestedItemsEditModalCreator(
       this.app,
       this.taskEntryEditor,

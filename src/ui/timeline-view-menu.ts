@@ -57,7 +57,7 @@ export function addTimelineViewMenuItems(
   menu.addItem((item) =>
     item
       .setSection("action")
-      .setTitle("Re-sync internet calendars")
+      .setTitle("Sync Google Calendar and refresh calendars")
       .setIcon("sync")
       .onClick(reSync),
   );

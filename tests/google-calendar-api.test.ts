@@ -10,6 +10,7 @@ vi.mock("obsidian", () => ({
 import { GoogleCalendarApi } from "../src/google-calendar/api";
 import { GoogleCalendarAuth } from "../src/google-calendar/auth";
 import type { GoogleEvent } from "../src/google-calendar/types";
+import { defaultSettings } from "../src/settings";
 
 const snapshot = {
   title: "Work",
@@ -37,6 +38,34 @@ beforeEach(() => {
 });
 
 describe("Google REST transport", () => {
+  test("color refresh PATCH uses the latest version and only changes color", async () => {
+    const { api } = setup();
+    vi.mocked(requestUrl).mockResolvedValueOnce(
+      response(200, {
+        event: { "3": { background: "#dbadff" } },
+      }),
+    );
+    await api.usePlannerColors({
+      ...defaultSettings,
+      colorOverrides: [
+        { text: "Work", color: "#dbadff", darkModeColor: "#66376d" },
+      ],
+    });
+    vi.mocked(requestUrl).mockResolvedValueOnce(
+      response(200, { ...event, colorId: "3" }),
+    );
+    await api.syncColor(event, snapshot);
+    expect(requestUrl).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ colorId: "3" }),
+        headers: expect.objectContaining({ "If-Match": event.etag }),
+      }),
+    );
+    vi.mocked(requestUrl).mockClear();
+    await api.syncColor({ ...event, colorId: "3" }, snapshot);
+    expect(requestUrl).not.toHaveBeenCalled();
+  });
   const setup = () => {
     const token = vi.fn(async () => "test-access-token");
     return {

@@ -1,7 +1,15 @@
 import { requestUrl } from "obsidian";
 
+import type { DayPlannerSettings } from "../settings";
+
 import type { GoogleCalendarAuth } from "./auth";
-import type { CalendarApi, CalendarSnapshot, GoogleEvent } from "./types";
+import { plannerEventColor, type EventColors } from "./colors";
+import type {
+  CalendarApi,
+  CalendarSnapshot,
+  GoogleEvent,
+  GoogleCalendarInfo,
+} from "./types";
 
 export class CalendarHttpError extends Error {
   constructor(readonly status: number) {
@@ -14,6 +22,8 @@ export class CalendarHttpError extends Error {
 }
 
 export class GoogleCalendarApi implements CalendarApi {
+  private colorForSnapshot?: (snapshot: CalendarSnapshot) => string | null;
+
   constructor(
     private readonly auth: GoogleCalendarAuth,
     private readonly clientId: string,
@@ -74,6 +84,35 @@ export class GoogleCalendarApi implements CalendarApi {
     return calendar.id;
   }
 
+  async usePlannerColors(settings: DayPlannerSettings) {
+    const palette = await this.request<{ event?: EventColors }>("colors");
+    if (!palette.event || !Object.keys(palette.event).length)
+      throw new Error("Google returned an empty event color palette.");
+    const colors = palette.event;
+    this.colorForSnapshot = (snapshot) =>
+      plannerEventColor(snapshot, settings, colors);
+  }
+
+  async calendars() {
+    const calendars: GoogleCalendarInfo[] = [];
+    let page: string | undefined;
+    do {
+      const query = new URLSearchParams({ maxResults: "250" });
+      if (page) query.set("pageToken", page);
+      const response = await this.request<{
+        items?: GoogleCalendarInfo[];
+        nextPageToken?: string;
+      }>(`users/me/calendarList?${query.toString()}`);
+      calendars.push(...(response.items ?? []));
+      page = response.nextPageToken;
+    } while (page);
+    return calendars;
+  }
+
+  async eventColors() {
+    return (await this.request<{ event: EventColors }>("colors")).event;
+  }
+
   private eventsPath() {
     return `calendars/${encodeURIComponent(this.calendarId)}/events`;
   }
@@ -120,6 +159,9 @@ export class GoogleCalendarApi implements CalendarApi {
       summary: snapshot.title,
       start: { dateTime: snapshot.start },
       end: { dateTime: snapshot.end },
+      ...(this.colorForSnapshot
+        ? { colorId: this.colorForSnapshot(snapshot) }
+        : {}),
     };
   }
 
@@ -149,6 +191,20 @@ export class GoogleCalendarApi implements CalendarApi {
       `${this.eventsPath()}/${encodeURIComponent(event.id)}?sendUpdates=none`,
       "PATCH",
       this.body(snapshot),
+      event.etag,
+    );
+  }
+
+  async syncColor(event: GoogleEvent, snapshot: CalendarSnapshot) {
+    if (!this.colorForSnapshot) return event;
+    const colorId = this.colorForSnapshot(snapshot);
+    if ((event.colorId ?? null) === colorId) return event;
+    if (!event.etag)
+      throw new Error("Google event has no version; refusing to recolor it.");
+    return this.request<GoogleEvent>(
+      `${this.eventsPath()}/${encodeURIComponent(event.id)}?sendUpdates=none`,
+      "PATCH",
+      { colorId },
       event.etag,
     );
   }
