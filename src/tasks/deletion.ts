@@ -7,6 +7,7 @@ import {
   taskDeletionSchema,
   type TaskDeletionRecord,
 } from "./deletion-types";
+import { pendingTaskOccurrence } from "./occurrence-types";
 import { isOutstanding, operationAffectsTasks } from "./operations";
 import type { TaskReconciler } from "./reconcile";
 import type { TaskScheduler } from "./schedule";
@@ -109,6 +110,13 @@ export class TaskDeletionController {
       );
     if (
       tasks.some((task) =>
+        pendingTaskOccurrence(
+          state,
+          { provider: snapshot.provider, accountId: snapshot.account.id },
+          task.id,
+        ),
+      ) ||
+      tasks.some((task) =>
         pendingTaskDeletion(
           state,
           { provider: snapshot.provider, accountId: snapshot.account.id },
@@ -193,6 +201,9 @@ export class TaskDeletionController {
     await this.service.registry.change((state) => {
       if (
         !this.current(fresh.record) ||
+        fresh.record.tasks.some((task) =>
+          pendingTaskOccurrence(state, fresh.record, task.id),
+        ) ||
         fresh.record.tasks.some((task) =>
           pendingTaskDeletion(state, fresh.record, task.id, review.replaces),
         ) ||

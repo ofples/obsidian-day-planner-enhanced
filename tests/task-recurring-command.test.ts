@@ -115,6 +115,32 @@ async function setup() {
 }
 
 describe("recurring completion intent", () => {
+  test("an older sent command recovers an occurrence journal and reuses its original payload", async () => {
+    const h = await setup();
+    h.online();
+    h.loseResponse();
+    const saved = await h.service.complete(task);
+    await h.service.refresh();
+    await h.service.registry.change((state) => {
+      delete state.occurrences[saved.id];
+    });
+    h.service.stop();
+    const restored = await h.create();
+    await restored.registry.updateOperation(saved.id, { retryAt: undefined });
+    await restored.refresh();
+    expect(restored.registry.snapshot().occurrences[saved.id]).toMatchObject({
+      recovered: true,
+      phase: "complete",
+      before: { task: { completionCount: 0 } },
+      next: { completionCount: 1 },
+    });
+    expect(h.apply.mock.calls.map(([operation]) => operation.id)).toEqual([
+      saved.id,
+      saved.id,
+    ]);
+    expect(h.remote().completionCount).toBe(1);
+    restored.stop();
+  });
   test("concurrent offline clicks retain one occurrence and one frozen preference across restart", async () => {
     const h = await setup();
     const [first, second] = await Promise.all([

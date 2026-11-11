@@ -20,6 +20,8 @@ import type {
   TaskConflictValues,
 } from "./conflict";
 import { pendingTaskDeletion } from "./deletion-types";
+import { freezeTaskOccurrences } from "./occurrence-freeze";
+import { pendingTaskOccurrence } from "./occurrence-types";
 import {
   isOutstanding,
   mutationFields,
@@ -411,6 +413,31 @@ export class TaskReconciler {
     }));
   }
 
+  async retryOccurrence(id: string) {
+    await this.pending;
+    const snapshot = get(this.service.state).snapshot;
+    const record = this.service.registry.snapshot().occurrences[id];
+    if (
+      !snapshot ||
+      !this.current(snapshot) ||
+      record?.provider !== snapshot.provider ||
+      record.accountId !== snapshot.account.id
+    )
+      throw new TaskReadError(
+        "Reconnect the original task account before retrying this occurrence's history.",
+      );
+    for (const operation of this.service.registry
+      .snapshot()
+      .schedules.filter(
+        (item) =>
+          item.occurrenceId === id &&
+          !["complete", "cancelled"].includes(item.phase),
+      ))
+      await this.scheduler.retry(operation.id);
+    await this.scan();
+    this.service.publish();
+  }
+
   scan(): Promise<void> {
     if (this.stopped) return Promise.resolve();
     if (this.pending) {
@@ -773,6 +800,15 @@ export class TaskReconciler {
     if (!this.current(snapshot)) return;
     if (get(this.capture.state).error)
       throw new TaskReadError(get(this.capture.state).error);
+    await freezeTaskOccurrences(
+      this.service,
+      this.capture,
+      this.scheduler,
+      snapshot,
+      this.settings(),
+      () => this.current(snapshot),
+    );
+    if (!this.current(snapshot)) return;
     const inspection = await this.capture.inspectCurrentIdentities();
     let blocks: LocalBlock[] | undefined;
     for (const uid of Object.keys(this.service.registry.snapshot().links)) {
@@ -787,6 +823,7 @@ export class TaskReconciler {
       )
         continue;
       if (
+        pendingTaskOccurrence(state, link, link.taskId) ||
         pendingTaskDeletion(
           state,
           { provider: link.provider, accountId: link.accountId },

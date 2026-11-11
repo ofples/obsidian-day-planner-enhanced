@@ -15,6 +15,7 @@ import {
   taskAccountSettings,
   type TaskCaptureSettings,
 } from "./capture-settings";
+import { historicalTaskLinks } from "./occurrence-types";
 import type { TaskDraft } from "./operations";
 import type { TaskSource } from "./registry";
 import type { TaskService } from "./service";
@@ -25,6 +26,7 @@ export interface CaptureIssue {
   candidate: CaptureCandidate;
   message: string;
   deletionId?: string;
+  occurrenceId?: string;
 }
 export interface TaskIdentityIssue {
   path: string;
@@ -151,17 +153,40 @@ export class TaskCapture {
     const candidates = structuredClone(input);
     const identityIssues: TaskIdentityIssue[] = [];
     const state = this.service.registry.snapshot();
+    const historical = historicalTaskLinks(state);
+    for (const item of historical) {
+      const matches = candidates.filter(
+        (candidate) =>
+          !candidate.uid &&
+          candidate.path === item.link.source.path &&
+          candidate.raw === item.link.source.raw,
+      );
+      const previousMatches = historical.filter(
+        (value) =>
+          value.link.source.path === item.link.source.path &&
+          value.link.source.raw === item.link.source.raw,
+      );
+      if (matches.length === 1 && previousMatches.length === 1)
+        matches[0]!.uid = item.uid;
+    }
     const detached = Object.entries(state.detached).filter(
       ([, item]) => !item.restoredAt,
     );
     const blocked = new Set<CaptureCandidate>();
     for (const [uid, item] of detached) {
-      const matches = candidates.filter((candidate) =>
-        restoresSource(item.link.source, candidate),
+      const matches = candidates.filter(
+        (candidate) =>
+          !candidate.uid && restoresSource(item.link.source, candidate),
       );
       if (!matches.length) continue;
       const competing = [
         ...Object.entries(state.links),
+        ...historical
+          .filter(
+            (value) =>
+              !candidates.some((candidate) => candidate.uid === value.uid),
+          )
+          .map((value) => [value.uid, value.link] as const),
         ...detached.map(([id, value]) => [id, value.link] as const),
       ].filter(([, link]) => restoresSource(link.source, matches[0]!));
       if (matches.length === 1 && competing.length === 1) matches[0]!.uid = uid;
@@ -183,9 +208,14 @@ export class TaskCapture {
           });
       }
     }
-    const previous = Object.fromEntries(
-      Object.entries(state.links).map(([uid, link]) => [uid, link.source]),
-    );
+    const previous = Object.fromEntries([
+      ...historicalTaskLinks(state).map(
+        ({ uid, link }) => [uid, link.source] as const,
+      ),
+      ...Object.entries(state.links).map(
+        ([uid, link]) => [uid, link.source] as const,
+      ),
+    ]);
     for (const operation of state.schedules) {
       if (!["pending", "prepared"].includes(operation.phase)) continue;
       for (const link of operation.plan?.links ?? []) {
@@ -372,6 +402,44 @@ export class TaskCapture {
           ]
         : [],
     );
+    const historical = historicalTaskLinks(this.service.registry.snapshot());
+    let historyChanged = false;
+    for (const candidate of candidates) {
+      const item = historical.find((value) => value.uid === candidate.uid);
+      if (!item || !(await this.sourceIsCurrent(candidate))) continue;
+      const record =
+        this.service.registry.snapshot().occurrences[item.occurrenceId]!;
+      if (item.link.taskId === record.before.task.id && !candidate.completed)
+        issues.push({
+          kind: "identity",
+          candidate,
+          occurrenceId: record.id,
+          message:
+            "This checklist belongs to a completed recurring occurrence. Review its history before reopening it.",
+        });
+      if (
+        ["path", "from", "raw", "title"].some(
+          (field) =>
+            item.link.source[field as keyof TaskSource] !==
+            candidate[field as keyof TaskSource],
+        )
+      ) {
+        const changed = await this.service.registry.change((state) => {
+          const saved = state.occurrences[item.occurrenceId]?.links[item.uid];
+          if (saved) {
+            saved.source = {
+              path: candidate.path,
+              from: candidate.from,
+              raw: candidate.raw,
+              title: candidate.title,
+            };
+            return true;
+          }
+          return false;
+        });
+        historyChanged ||= changed;
+      }
+    }
     const detached = this.service.registry.snapshot().detached;
     for (const candidate of candidates) {
       const uid = candidate.uid;
@@ -511,7 +579,10 @@ export class TaskCapture {
         issues.push({ candidate, message: error.message });
       }
     }
-    if (!this.closed) this.state.set({ issues, identityIssues, error: "" });
+    if (!this.closed) {
+      this.state.set({ issues, identityIssues, error: "" });
+      if (historyChanged) this.service.publish();
+    }
   }
 
   async create(

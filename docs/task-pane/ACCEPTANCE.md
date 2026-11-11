@@ -92,6 +92,14 @@ Matching bundle hashes and a full plugin backup preceded installation in the iso
 
 A stale displayed baseline produced an unsent conflict. Native review disabled the saved completion and applied the selected current Todoist state. The stale intent became cancelled while the counter stayed unchanged. Product deletion removed the fixture tree and retained recovery history. Final refresh/reload verified all contract/pane fixture tasks absent, zero active fixture native calendar echoes, preserved completion readback, zero pending operations/schedules, zero source/reconciliation issues, restored pane preferences and no task-service error. This is installed command-level evidence. A47–A50 retain their full occurrence/history and child-workflow requirements.
 
+## Occurrence freezing and history
+
+Integrated fixtures reuse the production note writer, calendar engine, task service, capture index, scheduler and reconciler. A pane-origin recurring completion checks the historical block and retains its children, original calendar UID/event and immutable captured baselines. The next occurrence receives fresh links/events. Restart retains both occurrences. An independently scheduled child keeps its own projection and parent relationship.
+
+Calendar-only history retries remain durable while the next occurrence is scheduled and through restart. Interrupted note writes retain their saved plan and finish without another provider completion. Focused edits defer freezing and preserve their local text. Historical unchecks reserve the old identity for review. Moving a completed note updates current history navigation while preserving the original captured source and active next link. Older sent commands recover an occurrence journal with explicit provenance and their original UUID. Exact v11 bytes are backed up before v12 migration.
+
+Custom-pane checks cover historical metadata and note navigation, distinct occurrence rows sharing one task ID and retry/error behavior. Full validation has 986 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics and production build pass. Native installed/API acceptance, local-checkbox and external completion, exact occurrence undo and full child/copy repair remain pending.
+
 ## Failure-injection matrix
 
 Exercise each mutation at the boundaries before intent save, after intent save, after local write, after remote success with a lost response, after remote acknowledgment save, after Google write and before operation completion. Restart after every injected failure. Required outcomes are one task per create operation, one event per occurrence, preserved source text and a retriable or explicitly conflicted operation.

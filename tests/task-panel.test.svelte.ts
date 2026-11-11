@@ -15,6 +15,7 @@ import { taskViewStateSchema } from "../src/tasks/browser";
 import type { TaskCapture } from "../src/tasks/capture";
 import type { TaskDeletionController, TaskDeletionReview } from "../src/tasks/deletion";
 import { taskDeletionSchema } from "../src/tasks/deletion-types";
+import { taskOccurrenceSchema } from "../src/tasks/occurrence-types";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 import type { TaskOperation } from "../src/tasks/operations";
 import type { TaskReconciler } from "../src/tasks/reconcile";
@@ -83,6 +84,7 @@ function render(
   const action = writable(actionValue);
   const fallbackSettings = vi.fn();
   const retrySchedule = vi.fn();
+  const openSavedNote = vi.fn();
   const target = document.createElement("div");
   document.body.append(target);
   mounted.push(
@@ -103,12 +105,13 @@ function render(
         reopenTask: vi.fn(),
         retry: vi.fn(),
         retrySchedule,
+        openSavedNote,
         revealTask: vi.fn(),
       },
     }),
   );
   flushSync();
-  return { target, state, action, mutate, fallbackSettings, capture, retrySchedule };
+  return { target, state, action, mutate, fallbackSettings, capture, retrySchedule, openSavedNote };
 }
 
 function press(element: EventTarget, key: string, isComposing = false) {
@@ -124,6 +127,140 @@ function press(element: EventTarget, key: string, isComposing = false) {
 }
 
 describe("custom Tasks panel", () => {
+  function occurrence() {
+    const before = {
+      ...task,
+      completionCount: 0,
+      due: {
+        date: "2026-11-11",
+        text: "every day",
+        recurring: true,
+        timezone: null,
+      },
+    };
+    const source = {
+      path: "History.md",
+      from: 0,
+      raw: "- [x] Shopping #todoist",
+      title: task.title,
+    };
+    const link = {
+      provider: "todoist",
+      accountId: snapshot.account.id,
+      taskId: task.id,
+      source,
+      base: before,
+    };
+    return taskOccurrenceSchema.parse({
+      id: crypto.randomUUID(),
+      provider: "todoist",
+      accountId: snapshot.account.id,
+      before: {
+        task: before,
+        children: [],
+        links: {
+          old: {
+            ...link,
+            source: { ...source, raw: "- [ ] Shopping #todoist" },
+          },
+        },
+        projections: {},
+      },
+      next: {
+        ...before,
+        completionCount: 1,
+        due: { ...before.due, date: "2026-11-12" },
+      },
+      links: { old: link },
+      projections: {},
+      phase: "complete",
+      recovered: false,
+      requestedAt: snapshot.fetchedAt,
+      verifiedAt: snapshot.fetchedAt,
+    });
+  }
+
+  test("occurrence details preserve history separately from the current task and open its saved note", () => {
+    const record = occurrence();
+    const h = render({ kind: "occurrence", id: record.id });
+    h.state.update((state) => ({ ...state, occurrences: [record] }));
+    flushSync();
+    const history = h.target.querySelector(
+      '[aria-label="Recurring occurrence history"]',
+    )!;
+    expect(history.textContent).toContain("11 Nov 2026");
+    expect(history.textContent).toContain("12 Nov 2026");
+    expect(history.textContent).toContain("every day");
+    expect(history.textContent).toContain(task.description);
+    expect(
+      Array.from(history.querySelectorAll("button")).some((button) =>
+        button.textContent?.includes("Retry"),
+      ),
+    ).toBe(false);
+    Array.from(history.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes("Open History.md"))!
+      .click();
+    expect(h.openSavedNote).toHaveBeenCalledWith("History.md");
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
+  test("multiple completed occurrences retain distinct rows for the same remote task", () => {
+    const first = occurrence();
+    const second = {
+      ...occurrence(),
+      before: { ...first.before, task: first.next! },
+      next: {
+        ...first.next!,
+        completionCount: 2,
+        due: { ...first.next!.due!, date: "2026-11-13" },
+      },
+    };
+    const h = render();
+    h.state.update((state) => ({ ...state, occurrences: [first, second] }));
+    flushSync();
+    const history = Array.from(h.target.querySelectorAll("details")).find(
+      (element) =>
+        element
+          .querySelector("summary")
+          ?.textContent?.includes("Completed occurrences"),
+    )!;
+    expect(history.querySelectorAll(".task-completed-row")).toHaveLength(2);
+    history.querySelector<HTMLButtonElement>("button")!.click();
+    flushSync();
+    expect(get(h.action)).toEqual({ kind: "occurrence", id: second.id });
+  });
+
+  test("failed history writes expose their retry and retain errors in the custom form", async () => {
+    const record = {
+      ...occurrence(),
+      phase: "freezing" as const,
+      error: "Historical note unavailable",
+    };
+    const retryOccurrence = vi
+      .fn()
+      .mockRejectedValue(new Error("Restore the original block"));
+    const reconciler = {
+      state: writable({ issues: [], error: "" }),
+      retryOccurrence,
+    } as unknown as TaskReconciler;
+    const h = render({ kind: "occurrence", id: record.id }, reconciler);
+    h.state.update((state) => ({ ...state, occurrences: [record] }));
+    flushSync();
+    expect(
+      h.target.querySelector("details.task-review summary")?.textContent,
+    ).toContain("1 needs review");
+    const form = h.target.querySelector(
+      '[aria-label="Recurring occurrence history"]',
+    )!;
+    Array.from(form.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent?.includes("Retry history"))!
+      .click();
+    await vi.waitFor(() =>
+      expect(form.textContent).toContain("Restore the original block"),
+    );
+    expect(retryOccurrence).toHaveBeenCalledWith(record.id);
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
   test("exporter preflight failures expose a retry in the review disclosure", () => {
     const operation = scheduleOperationSchema.parse({
       id: crypto.randomUUID(), provider: "todoist", accountId: "account", task,

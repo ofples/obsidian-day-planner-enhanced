@@ -95,6 +95,7 @@ export const scheduleOperationSchema = z
     repairCaptureTag: z.boolean().optional(),
     missingSource: z.object({ document: z.string().nullable() }).optional(),
     deletionId: z.uuid().optional(),
+    occurrenceId: z.uuid().optional(),
     providerChanges: taskPatchSchema.optional(),
     providerSteps: z
       .array(
@@ -145,6 +146,22 @@ export const scheduleOperationSchema = z
     createdAt: z.iso.datetime(),
     error: z.string().optional(),
   })
+  .refine(
+    (operation) =>
+      !operation.occurrenceId ||
+      (operation.target.kind === "reconcile" &&
+        operation.task.completed &&
+        operation.task.due?.recurring === true &&
+        !operation.unlink &&
+        !operation.repairCaptureTag &&
+        !operation.syncTaskDate &&
+        !operation.providerChanges &&
+        !operation.providerSteps?.length),
+    {
+      message:
+        "Occurrence freezing retains its completed note and uses local/calendar phases.",
+    },
+  )
   .refine(
     (operation) =>
       !operation.providerSteps?.some(

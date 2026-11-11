@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { taskDeletionSchema } from "./deletion-types";
+import { taskOccurrenceSchema } from "./occurrence-types";
 import { taskOperationSchema, type TaskOperation } from "./operations";
 import {
   scheduleOperationSchema,
@@ -51,7 +52,7 @@ const taskReconcileIssueSchema = z.object({
 export type TaskReconcileIssue = z.infer<typeof taskReconcileIssueSchema>;
 
 const taskRegistrySchema = z.object({
-  version: z.literal(11),
+  version: z.literal(12),
   namespace: z.string().regex(/^[a-f0-9]{32}$/),
   operations: z.array(taskOperationSchema),
   links: z.record(z.string(), taskLinkSchema),
@@ -60,6 +61,7 @@ const taskRegistrySchema = z.object({
   issues: z.record(z.string(), taskReconcileIssueSchema),
   detached: z.record(z.string(), detachedTaskLinkSchema),
   deletions: z.record(z.string(), taskDeletionSchema),
+  occurrences: z.record(z.string(), taskOccurrenceSchema),
 });
 
 const legacyRegistrySchema = taskRegistrySchema.extend({
@@ -74,12 +76,14 @@ const legacyRegistrySchema = taskRegistrySchema.extend({
     z.literal(8),
     z.literal(9),
     z.literal(10),
+    z.literal(11),
   ]),
   schedules: z.array(scheduleOperationSchema).default([]),
   projections: z.record(z.string(), taskProjectionSchema).default({}),
   issues: z.record(z.string(), taskReconcileIssueSchema).default({}),
   detached: z.record(z.string(), detachedTaskLinkSchema).default({}),
   deletions: z.record(z.string(), taskDeletionSchema).default({}),
+  occurrences: z.record(z.string(), taskOccurrenceSchema).default({}),
 });
 
 export type TaskRegistryState = z.infer<typeof taskRegistrySchema>;
@@ -107,7 +111,7 @@ export class TaskRegistry {
     this.state =
       this.lastSaved === null
         ? {
-            version: 11,
+            version: 12,
             namespace: this.namespace,
             operations: [],
             links: {},
@@ -116,12 +120,13 @@ export class TaskRegistry {
             issues: {},
             detached: {},
             deletions: {},
+            occurrences: {},
           }
         : taskRegistrySchema.parse(
             legacy.success
               ? {
                   ...legacy.data,
-                  version: 11,
+                  version: 12,
                   links: Object.fromEntries(
                     Object.entries(legacy.data.links).map(([uid, link]) => [
                       uid,

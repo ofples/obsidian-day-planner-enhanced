@@ -8,6 +8,11 @@ import {
 } from "./conflict";
 import { pendingTaskDeletion } from "./deletion-types";
 import {
+  pendingTaskOccurrence,
+  recordTaskOccurrence,
+  type TaskOccurrenceRecord,
+} from "./occurrence-types";
+import {
   isOutstanding,
   operationTaskId,
   sameTaskField,
@@ -38,6 +43,7 @@ export interface TaskBrowserState {
   completed: import("./types").ProviderTask[];
   writable: boolean;
   aliases: Record<string, string>;
+  occurrences?: TaskOccurrenceRecord[];
 }
 
 export class TaskService {
@@ -97,7 +103,7 @@ export class TaskService {
     });
   }
 
-  private publish(patch: Partial<TaskBrowserState> = {}) {
+  publish(patch: Partial<TaskBrowserState> = {}) {
     const snapshot = this.cache.snapshot;
     const owned = this.registry
       .snapshot()
@@ -150,6 +156,12 @@ export class TaskService {
         snapshot: effective,
         operations,
         completed,
+        occurrences: Object.values(this.registry.snapshot().occurrences).filter(
+          (record) =>
+            record.provider === snapshot?.provider &&
+            record.accountId === snapshot.account.id &&
+            record.phase !== "cancelled",
+        ),
         writable: this.canWrite && current.connected,
         aliases: Object.fromEntries(
           owned
@@ -306,6 +318,14 @@ export class TaskService {
         mutation.kind === "moveParent" ? mutation.parentId : null;
       if (
         (targetId &&
+          pendingTaskOccurrence(state, owner, targetId, intent?.id)) ||
+        (parentId && pendingTaskOccurrence(state, owner, parentId))
+      )
+        throw new TaskReadError(
+          "Finish this task's saved occurrence history before editing its next occurrence.",
+        );
+      if (
+        (targetId &&
           pendingTaskDeletion(
             state,
             owner,
@@ -350,6 +370,7 @@ export class TaskService {
         sourceUid: source?.uid,
       };
       state.operations.push(saved);
+      recordTaskOccurrence(state, snapshot, saved, current.completed);
       if (mutation.kind === "delete")
         state.deletions[saved.id]!.phase = "queued";
       return saved;
@@ -537,6 +558,25 @@ export class TaskService {
       original.resolutionIds = replacements.map((item) => item.id);
       original.readback = current.current ?? undefined;
       original.error = undefined;
+      if (state.occurrences[original.id]?.phase === "pending")
+        state.occurrences[original.id]!.phase = "cancelled";
+      for (const replacement of replacements) {
+        if (
+          replacement.mutation.kind === "complete" &&
+          replacement.base?.due?.recurring
+        )
+          replacement.recurringCompletion = original.recurringCompletion ?? {
+            resetSubtasks:
+              this.cache.snapshot!.account.preferences
+                ?.resetRecurringSubtasks ?? false,
+          };
+        recordTaskOccurrence(
+          state,
+          this.cache.snapshot!,
+          replacement,
+          get(this.state).completed,
+        );
+      }
       state.operations.splice(index + 1, 0, ...replacements);
       const link = original.sourceUid && state.links[original.sourceUid];
       if (link && current.current) {

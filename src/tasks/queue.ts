@@ -1,4 +1,5 @@
 import { deletionTaskTree } from "./deletion-types";
+import { recordTaskOccurrence, verifyTaskOccurrence } from "./occurrence-types";
 import {
   isOutstanding,
   matchesOperationResult,
@@ -36,6 +37,7 @@ export class TaskQueue {
       )
         return false;
       Object.assign(saved, patch);
+      if (saved.status === "verified") verifyTaskOccurrence(state, saved);
       return true;
     });
     if (updated) this.changed();
@@ -140,6 +142,15 @@ export class TaskQueue {
           operation.provider === snapshot.provider &&
           operation.accountId === snapshot.account.id,
       );
+    await this.registry.change((state) => {
+      for (const operation of owned.filter((item) =>
+        ["pending", "sent", "acknowledged", "verified"].includes(item.status),
+      )) {
+        recordTaskOccurrence(state, snapshot, operation, [], true);
+        if (operation.status === "verified")
+          verifyTaskOccurrence(state, operation);
+      }
+    });
     const operations = owned.filter((operation) =>
       ["pending", "sent", "acknowledged"].includes(operation.status),
     );

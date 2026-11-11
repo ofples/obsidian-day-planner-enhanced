@@ -1,4 +1,5 @@
 import { TFile, type App } from "obsidian";
+import { DateTime } from "luxon";
 import { get } from "svelte/store";
 import { describe, expect, test, vi } from "vitest";
 
@@ -242,6 +243,16 @@ async function harness() {
         tasks.delete(remote.id);
       }
     }
+    else if (!commands.has(operation.id) && operation.mutation.kind === "complete" && operation.base?.due?.recurring) {
+      const remote = tasks.get(operation.mutation.taskId)!;
+      const due = remote.due!;
+      tasks.set(remote.id, {
+        ...remote,
+        completed: false,
+        completionCount: remote.completionCount! + 1,
+        due: { ...due, date: DateTime.fromISO(due.date, { zone: due.timezone ?? "UTC" }).plus({ days: 1 }).toISO()! },
+      });
+    }
     else if (!commands.has(operation.id) && operation.mutation.kind !== "create")
       tasks.set(operation.mutation.taskId, {
         ...tasks.get(operation.mutation.taskId)!,
@@ -404,6 +415,298 @@ async function harness() {
     },
   };
 }
+
+describe("recurring occurrence freezing", () => {
+  async function scheduled() {
+    const h = await harness();
+    h.tasks.set(root.id, {
+      ...root,
+      completionCount: 0,
+      due: {
+        date: "2026-11-11",
+        text: "every day",
+        recurring: true,
+        timezone: "UTC",
+      },
+    });
+    await h.service.refresh();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    return { h, projection, source: h.texts.get(projection.source.path)! };
+  }
+
+  test("completion freezes the checked note and children while the next occurrence gets fresh links/events", async () => {
+    const { h, projection, source } = await scheduled();
+    const oldChildUid = Object.entries(
+      h.service.registry.snapshot().links,
+    ).find(([, link]) => link.taskId === child.id)![0];
+    const completion = await h.service.complete(h.tasks.get(root.id)!);
+    await h.service.refresh();
+    const before = structuredClone(
+      h.service.registry.snapshot().occurrences[completion.id]!.before,
+    );
+    expect(before.links[projection.linkUid]?.source.raw).toContain("- [ ]");
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.phase,
+    ).toBe("freezing");
+    await h.reconcile();
+    const record = h.service.registry.snapshot().occurrences[completion.id]!;
+    expect(record.phase).toBe("complete");
+    expect(record.before).toEqual(before);
+    expect(record.links[projection.linkUid]?.source.raw).toContain("- [x]");
+    expect(record.links[oldChildUid]?.taskId).toBe(child.id);
+    expect(h.texts.get(projection.source.path)).toBe(
+      source.replace("- [ ]", "- [x]"),
+    );
+    expect(record.projections[projection.linkUid]?.googleEventId).toBe(
+      projection.googleEventId,
+    );
+    expect(h.events.size).toBe(1);
+    expect(h.scheduler.projection(root.id)).toBeUndefined();
+    expect(Object.keys(h.service.registry.snapshot().links)).toHaveLength(0);
+    expect(
+      get(h.service.state).snapshot?.tasks.find((task) => task.id === root.id),
+    ).toMatchObject({ completionCount: 1, completed: false });
+    const nextInterval = {
+      start: "2026-11-12T10:00:00Z",
+      end: "2026-11-12T10:30:00Z",
+    };
+    await h.scheduler.schedule(root.id, nextInterval);
+    await h.settle();
+    const next = h.scheduler.projection(root.id)!;
+    expect(next.linkUid).not.toBe(projection.linkUid);
+    expect(next.googleUid).not.toBe(projection.googleUid);
+    expect(next.googleEventId).not.toBe(projection.googleEventId);
+    expect(next.occurrenceKey).toBe("recurring:1");
+    expect(h.events.size).toBe(2);
+    const candidates = h.capture.candidates();
+    expect(
+      candidates.find((candidate) => candidate.uid === projection.linkUid)
+        ?.completed,
+    ).toBe(true);
+    expect(
+      candidates.find((candidate) => candidate.uid === next.linkUid)?.completed,
+    ).toBe(false);
+    expect(
+      candidates.find((candidate) => candidate.uid === oldChildUid)?.path,
+    ).toBe(projection.source.path);
+    await h.restart();
+    await h.reconcile();
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.before,
+    ).toEqual(before);
+    expect(h.scheduler.projection(root.id)?.linkUid).toBe(next.linkUid);
+    expect(h.events.size).toBe(2);
+    expect(
+      h.apply.mock.calls.filter(
+        ([operation]) => operation.mutation.kind === "complete",
+      ),
+    ).toHaveLength(1);
+    h.service.stop();
+  });
+
+  test("a calendar-only history retry remains independent of scheduling the next occurrence across restart", async () => {
+    const { h, projection } = await scheduled();
+    h.setFailCalendar(true);
+    const completion = await h.service.complete(h.tasks.get(root.id)!);
+    await h.service.refresh();
+    await h.reconcile();
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.phase,
+    ).toBe("complete");
+    const freeze = h.service.registry
+      .snapshot()
+      .schedules.find((operation) => operation.occurrenceId === completion.id)!;
+    expect(freeze).toMatchObject({
+      phase: "calendar-pending",
+      taskAcknowledged: true,
+    });
+    await h.scheduler.schedule(root.id, {
+      start: "2026-11-12T09:00:00Z",
+      end: "2026-11-12T09:30:00Z",
+    });
+    await h.settle();
+    expect(
+      h.service.registry
+        .snapshot()
+        .schedules.find((operation) => operation.id === freeze.id)?.phase,
+    ).toBe("calendar-pending");
+    expect(h.scheduler.projection(root.id)?.occurrenceKey).toBe("recurring:1");
+    await h.restart();
+    h.setFailCalendar(false);
+    await h.settle();
+    await h.reconcile();
+    expect(
+      h.service.registry
+        .snapshot()
+        .schedules.find((operation) => operation.id === freeze.id)?.phase,
+    ).toBe("complete");
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.projections[
+        projection.linkUid
+      ]?.googleEventId,
+    ).toBe(projection.googleEventId);
+    expect(h.events.size).toBe(2);
+    expect(
+      Date.parse(h.events.get(projection.googleEventId!)!.start!.dateTime!),
+    ).toBe(Date.parse(interval.start));
+    h.service.stop();
+  });
+
+  test("an interrupted historical note write resumes from its saved plan without completing the next task", async () => {
+    const { h, projection } = await scheduled();
+    const completion = await h.service.complete(h.tasks.get(root.id)!);
+    await h.service.refresh();
+    h.setFailPath(projection.source.path);
+    await h.reconcile();
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.phase,
+    ).toBe("freezing");
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.error,
+    ).toContain("note write");
+    await expect(h.scheduler.schedule(root.id, interval)).rejects.toThrow(
+      "occurrence history",
+    );
+    await expect(
+      h.service.mutate({
+        kind: "update",
+        taskId: child.id,
+        changes: { title: "Changed" },
+      }),
+    ).rejects.toThrow("occurrence history");
+    await expect(h.deleter.review(root.id)).rejects.toThrow();
+    await h.restart();
+    h.setFailPath("");
+    await h.reconciler.retryOccurrence(completion.id);
+    await h.settle();
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.phase,
+    ).toBe("complete");
+    expect(h.texts.get(projection.source.path)).toContain("- [x]");
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    expect(
+      h.apply.mock.calls.filter(
+        ([operation]) => operation.mutation.kind === "complete",
+      ),
+    ).toHaveLength(1);
+    h.service.stop();
+  });
+
+  test("focused historical edits defer freezing and preserve their note text without changing the next task", async () => {
+    const { h, projection } = await scheduled();
+    const completion = await h.service.complete(h.tasks.get(root.id)!);
+    await h.service.refresh();
+    h.setStable(false);
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace("Work #todoist", "Historical title #todoist"),
+    );
+    await h.reconcile();
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.phase,
+    ).toBe("freezing");
+    expect(get(h.reconciler.state).issues).toHaveLength(0);
+    h.setStable(true);
+    await h.reconcile();
+    expect(
+      h.service.registry.snapshot().occurrences[completion.id]?.phase,
+    ).toBe("complete");
+    expect(h.texts.get(projection.source.path)).toContain("Historical title");
+    expect(h.tasks.get(root.id)?.title).toBe(root.title);
+    h.service.stop();
+  });
+
+  test("unchecking a historical occurrence reserves its old identity and never creates or reopens a task", async () => {
+    const { h, projection } = await scheduled();
+    const completion = await h.service.complete(h.tasks.get(root.id)!);
+    await h.service.refresh();
+    await h.reconcile();
+    const count = h.apply.mock.calls.length;
+    h.texts.set(
+      projection.source.path,
+      h.texts.get(projection.source.path)!.replace("- [x]", "- [ ]"),
+    );
+    await h.capture.scan();
+    await h.reconcile();
+    expect(get(h.capture.state).issues[0]?.occurrenceId).toBe(completion.id);
+    expect(h.apply).toHaveBeenCalledTimes(count);
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    expect(h.service.registry.snapshot().links).toEqual({});
+    h.service.stop();
+  });
+
+  test("an independently scheduled child retains its active projection when its parent occurrence is frozen", async () => {
+    const { h } = await scheduled();
+    await h.scheduler.schedule(child.id, {
+      start: "2026-11-12T11:00:00Z",
+      end: "2026-11-12T11:30:00Z",
+    });
+    await h.settle();
+    await h.indexNotes();
+    const independent = h.scheduler.projection(child.id)!;
+    const completion = await h.service.complete(h.tasks.get(root.id)!);
+    await h.service.refresh();
+    await h.reconcile();
+    const record = h.service.registry.snapshot().occurrences[completion.id]!;
+    expect(record.phase).toBe("complete");
+    expect(
+      Object.values(record.links).some((link) => link.taskId === child.id),
+    ).toBe(false);
+    expect(h.scheduler.projection(child.id)?.linkUid).toBe(independent.linkUid);
+    expect(h.scheduler.projection(child.id)?.googleEventId).toBe(
+      independent.googleEventId,
+    );
+    await h.scheduler.schedule(root.id, {
+      start: "2026-11-13T10:00:00Z",
+      end: "2026-11-13T10:30:00Z",
+    });
+    await h.settle();
+    expect(
+      h.texts.get(h.scheduler.projection(root.id)!.source.path),
+    ).not.toContain(child.title);
+    expect(h.tasks.get(child.id)?.parentId).toBe(root.id);
+    expect(h.events.size).toBe(3);
+    h.service.stop();
+  });
+
+  test("moving a completed note retains history identities independently of the next occurrence", async () => {
+    const { h, projection } = await scheduled();
+    const completion = await h.service.complete(h.tasks.get(root.id)!);
+    await h.service.refresh();
+    await h.reconcile();
+    await h.scheduler.schedule(root.id, {
+      start: "2026-11-12T10:00:00Z",
+      end: "2026-11-12T10:30:00Z",
+    });
+    await h.settle();
+    const current = h.scheduler.projection(root.id)!;
+    const movedPath = "Archive/Completed.md";
+    h.texts.set(movedPath, h.texts.get(projection.source.path)!);
+    h.texts.delete(projection.source.path);
+    h.file(movedPath);
+    const count = h.apply.mock.calls.length;
+    await h.indexNotes();
+    await h.reconcile();
+    const record = h.service.registry.snapshot().occurrences[completion.id]!;
+    expect(record.links[projection.linkUid]?.source.path).toBe(movedPath);
+    expect(record.before.links[projection.linkUid]?.source.path).toBe(
+      projection.source.path,
+    );
+    expect(
+      h.capture
+        .candidates()
+        .find((candidate) => candidate.uid === projection.linkUid)?.path,
+    ).toBe(movedPath);
+    expect(h.scheduler.projection(root.id)?.linkUid).toBe(current.linkUid);
+    expect(h.apply).toHaveBeenCalledTimes(count);
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    h.service.stop();
+  });
+});
 
 describe("verified task deletion", () => {
   async function finish(h: Awaited<ReturnType<typeof harness>>) {

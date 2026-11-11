@@ -12,6 +12,7 @@ import {
 } from "./capture-settings";
 import { pendingTaskDeletion } from "./deletion-types";
 import { TaskDrag } from "./drag";
+import { pendingTaskOccurrence } from "./occurrence-types";
 import {
   mutationFields,
   isOutstanding,
@@ -155,6 +156,7 @@ export class TaskScheduler {
     repairCaptureTag?: boolean;
     missingSource?: { document: string | null };
     deletionId?: string;
+    occurrenceId?: string;
   }) {
     await this.pending;
     const browser = get(this.service.state),
@@ -183,6 +185,31 @@ export class TaskScheduler {
       provider: snapshot.provider,
       accountId: snapshot.account.id,
     };
+    if (pendingTaskOccurrence(state, owner, input.task.id, input.occurrenceId))
+      throw new TaskReadError(
+        "Finish this task's saved occurrence history before changing its projection.",
+      );
+    if (input.occurrenceId) {
+      const record = state.occurrences[input.occurrenceId];
+      const completion = state.operations.find(
+        (item) => item.id === input.occurrenceId,
+      );
+      if (
+        !record ||
+        record.phase !== "freezing" ||
+        completion?.status !== "complete" ||
+        record.provider !== owner.provider ||
+        record.accountId !== owner.accountId ||
+        record.before.task.id !== input.task.id ||
+        !record.before.links[input.linkUid] ||
+        input.task.completionCount !== record.before.task.completionCount ||
+        !input.task.completed ||
+        input.mutations.length
+      )
+        throw new TaskReadError(
+          "Verify this occurrence's saved completion before freezing its note.",
+        );
+    }
     if (pendingTaskDeletion(state, owner, input.task.id, input.deletionId))
       throw new TaskReadError(
         "Finish this task's saved deletion before changing its projection.",
@@ -233,6 +260,7 @@ export class TaskScheduler {
       repairCaptureTag: input.repairCaptureTag,
       missingSource: input.missingSource,
       deletionId: input.deletionId,
+      occurrenceId: input.occurrenceId,
       providerSteps: input.mutations.map((step) => ({
         ...step,
         id: crypto.randomUUID(),
@@ -252,6 +280,12 @@ export class TaskScheduler {
     await this.service.registry.change((current) => {
       if (
         !this.current(operation) ||
+        pendingTaskOccurrence(
+          current,
+          operation,
+          operation.task.id,
+          input.occurrenceId,
+        ) ||
         pendingTaskDeletion(
           current,
           operation,
@@ -303,6 +337,16 @@ export class TaskScheduler {
     if (!task || taskId.startsWith("local-"))
       throw new TaskReadError("Refresh this task before scheduling it.");
     const state = this.service.registry.snapshot();
+    if (
+      pendingTaskOccurrence(
+        state,
+        { provider: snapshot.provider, accountId: snapshot.account.id },
+        taskId,
+      )
+    )
+      throw new TaskReadError(
+        "Finish this task's saved occurrence history before scheduling its next occurrence.",
+      );
     if (
       pendingTaskDeletion(
         state,
@@ -430,6 +474,10 @@ export class TaskScheduler {
       createdAt: new Date().toISOString(),
     });
     const saved = await this.service.registry.change((current) => {
+      if (pendingTaskOccurrence(current, operation, operation.task.id))
+        throw new TaskReadError(
+          "Finish this task's saved occurrence history before scheduling its next occurrence.",
+        );
       if (pendingTaskDeletion(current, operation, operation.task.id))
         throw new TaskReadError(
           "Finish this task's saved deletion before scheduling it.",
@@ -508,6 +556,8 @@ export class TaskScheduler {
         item.provider === operation.provider &&
         item.accountId === operation.accountId &&
         item.task.id === operation.task.id &&
+        item.occurrenceKey === operation.occurrenceKey &&
+        !item.occurrenceId &&
         item.phase === "calendar-pending" &&
         item.taskAcknowledged,
     );
@@ -572,11 +622,22 @@ export class TaskScheduler {
       throw new TaskReadError(
         "Reconnect the original task account before retrying this schedule.",
       );
-    if (operation.phase === "conflict")
+    if (operation.phase === "conflict" && !operation.occurrenceId)
       throw new TaskReadError(
         "Review the note or task conflict before retrying this schedule.",
       );
-    await this.update(id, { error: undefined });
+    await this.update(id, {
+      error: undefined,
+      ...(operation.phase === "conflict" && operation.occurrenceId
+        ? {
+            phase: operation.taskAcknowledged
+              ? "calendar-pending"
+              : operation.plan
+                ? "prepared"
+                : "pending",
+          }
+        : {}),
+    });
     await this.resume();
   }
 
@@ -919,12 +980,23 @@ export class TaskScheduler {
         );
       if (!this.current(operation)) return;
       await this.service.registry.change((state) => {
-        if (!operation.unlink && !operation.repairCaptureTag)
-          state.projections[operation.linkUid]!.googleEventId = eventId;
+        if (!operation.unlink && !operation.repairCaptureTag) {
+          const projection = operation.occurrenceId
+            ? state.occurrences[operation.occurrenceId]!.projections[
+                operation.linkUid
+              ]
+            : state.projections[operation.linkUid];
+          if (!projection)
+            throw new TaskReadError(
+              "Restore this saved calendar projection before acknowledging it.",
+            );
+          projection.googleEventId = eventId;
+        }
         const saved = state.schedules.find((item) => item.id === operation.id)!;
         saved.phase = "complete";
         saved.error = undefined;
       });
+      if (operation.occurrenceId) this.service.publish();
       this.publish();
     }
   }
@@ -991,6 +1063,25 @@ export class TaskScheduler {
         delete state.issues[operation.linkUid];
       }
       saved.taskAcknowledged = true;
+      if (operation.occurrenceId) {
+        const record = state.occurrences[operation.occurrenceId]!;
+        for (const planned of operation.plan!.links) {
+          if (!record.before.links[planned.uid]) continue;
+          const archived = state.links[planned.uid]!;
+          record.links[planned.uid] = archived;
+          if (state.projections[planned.uid])
+            record.projections[planned.uid] = state.projections[planned.uid]!;
+          delete state.links[planned.uid];
+          delete state.projections[planned.uid];
+          delete state.issues[planned.uid];
+        }
+        const remaining = Object.entries(record.before.links).some(
+          ([uid, previous]) =>
+            previous.taskId === record.before.task.id && state.links[uid],
+        );
+        if (!remaining) record.phase = "complete";
+        record.error = undefined;
+      }
       if (operation.unlink) {
         delete state.links[operation.linkUid];
         delete state.projections[operation.linkUid];
@@ -999,6 +1090,7 @@ export class TaskScheduler {
       saved.phase = "calendar-pending";
       saved.error = undefined;
     });
+    this.service.publish();
     this.publish();
   }
 

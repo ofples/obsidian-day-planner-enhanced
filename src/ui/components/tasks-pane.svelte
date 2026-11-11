@@ -61,6 +61,7 @@
   import TaskPanelDelete from "./task-panel-delete.svelte";
   import TaskPanelDeleted from "./task-panel-deleted.svelte";
   import TaskPanelEditor from "./task-panel-editor.svelte";
+  import TaskPanelOccurrence from "./task-panel-occurrence.svelte";
   import TaskPanelRoute from "./task-panel-route.svelte";
   import TaskPanelSchedule from "./task-panel-schedule.svelte";
 
@@ -103,6 +104,33 @@
     revealTask: (task: ProviderTask) => void;
   } = $props();
   const browserState: Readable<TaskBrowserState> = $derived(service.state);
+  const occurrenceHistory = $derived(
+    ($browserState.occurrences ?? [])
+      .filter(
+        (record) =>
+          record.verifiedAt &&
+          (!$preferences.projectId ||
+            record.before.task.projectId === $preferences.projectId) &&
+          !["cancelled", "undone"].includes(record.phase) &&
+          record.before.task.title
+            .toLowerCase()
+            .includes($preferences.query.toLowerCase()),
+      )
+      .toReversed(),
+  );
+  const pendingOccurrences = $derived(
+    ($browserState.occurrences ?? []).filter((record) =>
+      ["pending", "freezing"].includes(record.phase),
+    ),
+  );
+  const selectedOccurrence = $derived.by(() => {
+    const current = $action;
+    return current?.kind === "occurrence"
+      ? ($browserState.occurrences ?? []).find(
+          (record) => record.id === current.id,
+        )
+      : undefined;
+  });
   const captureState = $derived(capture.state);
   const deletionState = $derived(
     deleter?.state ??
@@ -151,12 +179,16 @@
     new Set([
       ...$browserState.operations.map(operationTaskId),
       ...pendingDeletions.flatMap((item) => item.tasks.map((task) => task.id)),
+      ...pendingOccurrences.flatMap((record) =>
+        [record.before.task, ...record.before.children].map((task) => task.id),
+      ),
     ]),
   );
   const attentionCount = $derived(
     new Set([
       ...$browserState.operations.map(operationTaskId),
       ...pendingDeletions.map((item) => item.taskId),
+      ...pendingOccurrences.map((record) => record.before.task.id),
       ...$scheduleState.operations.map((operation) => operation.task.id),
       ...$reconcileState.issues.map((issue) => issue.taskId),
       ...$captureState.issues.map(
@@ -174,6 +206,7 @@
   const needsReview = $derived(
     $reconcileState.issues.length > 0 ||
       pendingDeletions.some((item) => item.error) ||
+      pendingOccurrences.some((item) => item.error) ||
       $captureState.issues.length > 0 ||
       $browserState.operations.some(
         (operation) =>
@@ -633,7 +666,13 @@
                 >{issue.message}</small
               >
             </div>
-            {#if issue.deletionId && deleter}<button
+            {#if issue.occurrenceId}<button
+                class="task-text-button"
+                onclick={() =>
+                  startAction({ kind: "occurrence", id: issue.occurrenceId! })}
+                >View occurrence</button
+              >
+            {:else if issue.deletionId && deleter}<button
                 class="task-text-button"
                 onclick={() =>
                   startAction({
@@ -684,10 +723,24 @@
                     : "Saving schedule…")}</small
               >
             </div>
-            {#if operation.phase !== "conflict"}<button
+            {#if operation.phase !== "conflict" || operation.occurrenceId}<button
                 class="task-text-button"
                 onclick={() => retrySchedule(operation.id)}>Retry</button
               >{/if}
+          </div>{/each}
+        {#each pendingOccurrences.filter((record) => record.phase === "freezing") as record (record.id)}<div
+            class="task-review-row"
+          >
+            <div>
+              <strong>{record.before.task.title}</strong><small
+                >{record.error ?? "Saving occurrence history"}</small
+              >
+            </div>
+            <button
+              class="task-text-button"
+              onclick={() => startAction({ kind: "occurrence", id: record.id })}
+              >Review occurrence</button
+            >
           </div>{/each}
         {#each pendingDeletions as record (record.id)}<div
             class="task-review-row"
@@ -728,6 +781,23 @@
             saved={actionSaved($action)}
             taskId={$action.task.id}
           />
+        {:else if $action.kind === "occurrence"}{#if selectedOccurrence}<TaskPanelOccurrence
+              openNote={openSavedNote}
+              pendingCalendar={$scheduleState.operations.some(
+                (operation) => operation.occurrenceId === selectedOccurrence.id,
+              )}
+              record={selectedOccurrence}
+              retry={reconciler
+                ? (id: string) => reconciler!.retryOccurrence(id)
+                : undefined}
+              timezone={snapshot?.account.timezone ?? "local"}
+            />
+          {:else}<div class="task-panel-form">
+              <p class="task-form-error" role="status">
+                Reconnect the original task account to view this occurrence's
+                history.
+              </p>
+            </div>{/if}
         {:else if $action.kind === "deleted-record" && deleter}<TaskPanelDeleted
             id={$action.id}
             close={cancelAction}
@@ -1029,6 +1099,28 @@
                 class="task-text-button"
                 disabled={!$browserState.writable}
                 onclick={() => reopenTask(task)}>Reopen</button
+              >
+            </div>{/each}
+        </details>{/if}
+      {#if occurrenceHistory.length}<details class="task-completed">
+          <summary
+            ><Check size={14} />Completed occurrences<span
+              >{occurrenceHistory.length}</span
+            ></summary
+          >
+          {#each occurrenceHistory as record (record.id)}<div
+              class="task-completed-row task-occurrence-row"
+            >
+              <span
+                ><span>{record.before.task.title}</span><small
+                  >{record.before.task.due?.date.slice(0, 10)}</small
+                ></span
+              >
+              <button
+                class="task-text-button"
+                onclick={() =>
+                  startAction({ kind: "occurrence", id: record.id })}
+                >Details</button
               >
             </div>{/each}
         </details>{/if}
