@@ -15,6 +15,7 @@ export interface GoogleEvent {
   recurringEventId?: string;
   eventType?: string;
   description?: string;
+  source?: { title?: string; url?: string };
   location?: string;
   attendees?: Array<{ self?: boolean; responseStatus?: string }>;
   extendedProperties?: { private?: Record<string, string> };

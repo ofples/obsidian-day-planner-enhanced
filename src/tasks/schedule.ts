@@ -54,7 +54,8 @@ export class TaskScheduler {
     private readonly calendar: Pick<
       GoogleCalendarSync,
       "editNotes" | "syncProjection" | "recoverProjection" | "removeProjection"
-    >,
+    > &
+      Partial<Pick<GoogleCalendarSync, "assertTaskExportAllowed">>,
     private readonly host: {
       read(path: string): Promise<string | null>;
       flush(paths: string[]): Promise<void>;
@@ -818,6 +819,14 @@ export class TaskScheduler {
       operation = this.saved(operation.id);
     }
     if (operation.phase === "provider-pending") {
+      if (
+        operation.plan?.interval &&
+        !operation.unlink &&
+        !operation.repairCaptureTag
+      ) {
+        await this.calendar.assertTaskExportAllowed?.();
+        if (!this.current(operation)) return;
+      }
       const steps = operation.providerSteps ?? [
         {
           id: operation.providerOperationId,

@@ -180,7 +180,8 @@
           operation.status === "conflict" || operation.status === "failed",
       ) ||
       $scheduleState.operations.some(
-        (operation) => operation.phase === "conflict",
+        (operation) =>
+          operation.phase === "conflict" || Boolean(operation.error),
       ),
   );
   const workflow = $derived(!!$action && $action.kind !== "create");

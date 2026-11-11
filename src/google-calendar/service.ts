@@ -385,6 +385,30 @@ export class GoogleCalendarSync {
     }
   }
 
+  private async validateManagedCalendar(api: GoogleCalendarApi) {
+    const canonicalId = await api.validateCalendar();
+    if (this.state.calendarId && this.state.calendarId !== canonicalId)
+      throw new Error(
+        "This sync state belongs to another calendar/account. Use the original target calendar.",
+      );
+    if (
+      Object.values(this.getSettings().taskCapture.accounts).some((account) =>
+        account.calendarDisplay?.googleCalendarIds.includes(canonicalId),
+      )
+    )
+      throw new Error(
+        "The managed calendar is also selected as a task feed. Choose a separate export calendar or correct the task-feed selection before retrying.",
+      );
+    await api.assertTaskExportAllowed();
+    return canonicalId;
+  }
+
+  async assertTaskExportAllowed() {
+    const config = this.getSettings().googleCalendar;
+    if (!config.clientId.trim() || !config.calendarId.trim()) return;
+    await this.validateManagedCalendar(this.api());
+  }
+
   async run(automatic = false) {
     if (this.busy || this.stopped) return;
     this.busy = true;
@@ -404,12 +428,8 @@ export class GoogleCalendarSync {
         config.calendarId.trim(),
         this.state.namespace,
       );
-      const canonicalId = await api.validateCalendar();
+      const canonicalId = await this.validateManagedCalendar(api);
       await api.usePlannerColors(settings);
-      if (this.state.calendarId && this.state.calendarId !== canonicalId)
-        throw new Error(
-          "This sync state belongs to another calendar/account. Use the original target calendar.",
-        );
       this.state.calendarId = canonicalId;
       await this.save();
       const { notes, timeMin, timeMax } = this.noteContext(settings);
@@ -452,7 +472,7 @@ export class GoogleCalendarSync {
     return new GoogleCalendarApi(
       this.auth,
       this.getSettings().googleCalendar.clientId.trim(),
-      calendarId,
+      calendarId.trim(),
       this.state.namespace,
     );
   }

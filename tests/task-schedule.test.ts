@@ -58,6 +58,8 @@ async function harness() {
     failCalendar = false,
     loseCalendarResponse = false;
   let stable = true;
+  let exportGuardFailure = "";
+  const exportGuard = vi.fn(async () => { if (exportGuardFailure) throw new Error(exportGuardFailure); });
   let failWriteCountdown = 0;
   const calendarSettings = structuredClone(defaultSettings);
   let calendarState: CalendarSyncState = {
@@ -170,8 +172,9 @@ async function harness() {
   };
   const calendar: Pick<
     GoogleCalendarSync,
-    "editNotes" | "syncProjection" | "recoverProjection" | "removeProjection"
+    "editNotes" | "syncProjection" | "recoverProjection" | "removeProjection" | "assertTaskExportAllowed"
   > = {
+    assertTaskExportAllowed: exportGuard,
     editNotes: async (edit) => edit(notes, await notes.scan()),
     recoverProjection: async (uid, snapshot, path, base) => {
       if (failCalendar) throw new Error("calendar offline");
@@ -329,6 +332,8 @@ async function harness() {
     tasks,
     apply,
     readTask,
+    exportGuard,
+    setExportGuardFailure(value: string) { exportGuardFailure = value; },
     process,
     setFailTaskWrite(value: boolean) {
       failTaskWrite = value;
@@ -586,6 +591,39 @@ describe("verified task deletion", () => {
 });
 
 describe("linked task scheduling", () => {
+  test("an exporter collision retains the local schedule and prevents task-date writes until retry", async () => {
+    const h = await harness();
+    h.setExportGuardFailure("Todoist is already exporting into this managed calendar.");
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const intent = h.service.registry.snapshot().schedules.at(-1)!;
+    expect(intent.phase).toBe("provider-pending");
+    expect(intent.error).toContain("already exporting");
+    expect([...h.texts.values()].join("\n")).toContain("Work #todoist");
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.events.size).toBe(0);
+    await h.restart();
+    h.setExportGuardFailure("");
+    await h.scheduler.retry(intent.id);
+    await h.settle();
+    expect(h.service.registry.snapshot().schedules.find(op => op.id === intent.id)?.phase).toBe("complete");
+    expect(h.events.size).toBe(1);
+    expect(h.tasks.get(root.id)?.due?.date).toBe(interval.start);
+    h.scheduler.stop();h.service.stop();
+  });
+
+  test("an untimed task capture remains available while calendar export is paused", async () => {
+    const h = await harness();
+    h.setExportGuardFailure("Calendar unavailable");
+    const path = "Tasks.md", before = "# Tasks\n";
+    h.texts.set(path, before);h.file(path);
+    await h.scheduler.insert(root.id, { path, offset: before.length, before });
+    await h.settle();
+    expect(h.exportGuard).not.toHaveBeenCalled();
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe("complete");
+    expect(h.texts.get(path)).toContain("Work #todoist");
+    h.scheduler.stop();h.service.stop();
+  });
   test("a restored note before missing-source acknowledgment cancels stale detachment", async () => {
     const h = await harness();
     await h.scheduler.schedule(root.id, interval);

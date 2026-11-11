@@ -128,6 +128,12 @@ Two controlled HTTP calendar fixtures exercised Obsidian's actual feed fetcher, 
 
 The existing task-service disconnect restored both events after the reactive display update. Reconnecting the same account reapplied its saved exact-source exclusion. The test configuration originally had zero internet calendars. Cleanup restored the original calendar list and account settings, reloaded the isolated window and verified zero fixture events and zero fixture exclusions. The local HTTP helper was stopped. These checks use controlled feed data. Earlier live Google-calendar readback covers the selected Todoist Google source. Native exporter collision handling, M5 and remaining M6 acceptance continue.
 
+### Managed calendar exporter guard
+
+Read-only inspection of native Todoist events identified structured task URLs in Google's source metadata. The managed calendar check scans all source-projected event pages with recurring masters and unrestricted dates. Exact Todoist source hosts/paths identify a collision. Explicit selected task-feed IDs also reserve empty calendars. Malformed identities/pages, repeated cursors and authorization errors retain pending work.
+
+The scheduling coordinator checks before provider-date commands. A blocked or offline check retains its local note and saved intent for retry. The ordinary Google bridge checks before binding state or accessing its note journal, covering independent manual/automatic export. Custom review flags schedule errors and exposes Retry. Manual combined sync awaits deletion recovery as well. Four focused files have 133 passing cases. Full validation has 957 passes, the inherited ICS timeout, nine skips and 17 todo cases. Required source checks, the separate strict scorecard and production build pass. Isolated installed and disposable-source collision acceptance follows. M5 and remaining M6 acceptance continue.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

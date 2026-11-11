@@ -280,6 +280,12 @@ Controlled HTTP fixtures exercised actual Obsidian fetching and parsing. Their U
 
 Cleanup restored the original empty internet-calendar list and original account settings, reloaded and verified zero fixture events and exclusions. The helper server was stopped. This adds desktop HTTP-source evidence for A32 and A33 alongside the earlier live Google-source readback. Actual Todoist native-exporter collision handling remains open under A34. Source validation counts remain at the preceding 934-pass checkpoint with the inherited ICS timeout.
 
+### Exporter collision regression
+
+API cases recognize exact native Todoist task-source URLs across recurring-master pages and date ranges. Ordinary description links, other source hosts/paths and cancelled events complete their checks. Malformed ownership identities, malformed/repeated pages and permission failures retain a failed preflight. Original managed-account validation and explicit task-feed selection apply before source scanning, including an empty feed with hiding disabled.
+
+Normal Google service initialization/sync tests verify that a detected exporter sends only reads and preserves the original registry before note access. A cleared source permits fresh preflight. Task scheduling retains the local block and pauses before task-date writes, survives restart and finishes the same intent after resolution. Untimed insertion completes through its local journal. The custom disclosure labels a preflight error for review and dispatches its Retry action. Four focused files have 133 passes. Full validation has 957 passes and the inherited ICS timeout, with nine skips and 17 todo cases. Source checks, strict scorecard and production build pass. Installed/native source-fixture acceptance remains pending at this source checkpoint.
+
 ### Live missing-source verification
 
 The v8-to-v9 migration retained the original bytes in a matching content-addressed backup. The first desktop check exposed unloaded Markdown views without editor instances. The stability guard now uses Obsidian's isDeferred API before accessing an editor. A dedicated lifecycle regression covers deferred and loaded tabs with focus transitions.

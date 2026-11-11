@@ -10,6 +10,7 @@ vi.mock("obsidian", async () => ({
 
 import { GoogleCalendarApi } from "../src/google-calendar/api";
 import { GoogleCalendarAuth } from "../src/google-calendar/auth";
+import { isTodoistCalendarExport } from "../src/google-calendar/exporter";
 import type { GoogleEvent, LocalBlock } from "../src/google-calendar/types";
 import { renderSubtasks, withSubtasks } from "../src/google-calendar/subtasks";
 import { defaultSettings } from "../src/settings";
@@ -167,6 +168,44 @@ describe("Google REST transport", () => {
     expect(urls[0]?.searchParams.get("singleEvents")).toBe("true");
     expect(urls[1]?.searchParams.get("pageToken")).toBe("page2");
   });
+
+  test("exporter preflight checks every page without expanding recurring tasks", async () => {
+    const { api } = setup();
+    vi.mocked(requestUrl).mockResolvedValueOnce(response(200, { items: [], nextPageToken: "next" }))
+      .mockResolvedValueOnce(response(200, { items: [{ id: "native", source: { url: "https://app.todoist.com/app/task/remote", title: "Renamed source" } }] }));
+    await expect(api.assertTaskExportAllowed()).rejects.toThrow("separate Day Planner calendar");
+    const urls = vi.mocked(requestUrl).mock.calls.map(([arg]) => new URL((arg as { url: string }).url));
+    expect(urls).toHaveLength(2);
+    expect(urls[0]!.searchParams.get("singleEvents")).toBe("false");
+    expect(urls[0]!.searchParams.get("showDeleted")).toBe("false");
+    expect(urls[0]!.searchParams.has("timeMin")).toBe(false);
+    expect(urls[0]!.searchParams.get("fields")).toBe("items(id,status,source),nextPageToken");
+    expect(urls[1]!.searchParams.get("pageToken")).toBe("next");
+  });
+
+  test("ordinary task links in descriptions and cancelled exports allow the managed calendar", async () => {
+    const { api } = setup();
+    vi.mocked(requestUrl).mockResolvedValue(response(200, { items: [
+      { ...event, description: "https://app.todoist.com/app/task/task", summary: "Todoist" },
+      { id: "cancelled", status: "cancelled", source: { url: "https://app.todoist.com/app/task/task" } },
+    ] }));
+    await expect(api.assertTaskExportAllowed()).resolves.toBeUndefined();
+  });
+
+  test("malformed or repeated exporter pages cannot authorize task export", async () => {
+    const { api } = setup();
+    vi.mocked(requestUrl).mockResolvedValueOnce(response(200, { items: [{ source: { url: "https://app.todoist.com/app/task/task" } }] }));
+    await expect(api.assertTaskExportAllowed()).rejects.toThrow("incomplete exporter check");
+    vi.mocked(requestUrl).mockResolvedValue(response(200, { items: [], nextPageToken: "same" }));
+    await expect(api.assertTaskExportAllowed()).rejects.toThrow("repeated");
+  });
+
+  test("permission failure preserves the exporter preflight failure", async () => {
+    const { api } = setup();
+    vi.mocked(requestUrl).mockResolvedValue(response(403));
+    await expect(api.assertTaskExportAllowed()).rejects.toThrow("403");
+    expect(requestUrl).toHaveBeenCalledOnce();
+  });
   test("PATCH changes only title and times and uses the Google version", async () => {
     const { api } = setup();
     vi.mocked(requestUrl).mockResolvedValue(response(200, event));
@@ -218,12 +257,38 @@ describe("Google REST transport", () => {
     );
     await expect(api.validateCalendar()).rejects.toThrow("can edit");
   });
+  test("calendar ownership requires a nonempty authoritative identity", async () => {
+    const { api } = setup();
+    vi.mocked(requestUrl).mockResolvedValue(response(200, { accessRole: "owner" }));
+    await expect(api.validateCalendar()).rejects.toThrow("invalid calendar identity");
+  });
   test("a duplicate insert is recovered by reading its deterministic ID", async () => {
     const { api } = setup();
     vi.mocked(requestUrl)
       .mockResolvedValueOnce(response(409))
       .mockResolvedValueOnce(response(200, event));
     expect(await api.create("test", "uid", snapshot)).toEqual(event);
+  });
+});
+
+describe("structured task calendar source", () => {
+  test.each([
+    "https://app.todoist.com/app/task/6hxTask",
+    "https://todoist.com/app/task/123456/",
+    "http://www.todoist.com/showTask?id=123456",
+  ])("recognizes the native task link %s", url => {
+    expect(isTodoistCalendarExport({ source: { url, title: "Other name" } })).toBe(true);
+  });
+  test.each([
+    "https://todoist.com.example.test/app/task/task",
+    "https://example.test/?url=https://app.todoist.com/app/task/task",
+    "https://app.todoist.com/app/project/project",
+    "https://todoist.com/showTask",
+    "https://app.todoist.com:8443/app/task/task",
+    "https://name@app.todoist.com/app/task/task",
+    "invalid",
+  ])("ignores other source URLs %s", url => {
+    expect(isTodoistCalendarExport({ source: { url, title: "Todoist" } })).toBe(false);
   });
 });
 

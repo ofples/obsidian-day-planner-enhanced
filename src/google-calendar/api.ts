@@ -1,9 +1,11 @@
 import { requestUrl } from "obsidian";
+import { z } from "zod";
 
 import type { DayPlannerSettings } from "../settings";
 
 import type { GoogleCalendarAuth } from "./auth";
 import { plannerEventColor, type EventColors } from "./colors";
+import { isTodoistCalendarExport } from "./exporter";
 import { renderSubtasks, withSubtasks } from "./subtasks";
 import type {
   CalendarApi,
@@ -78,9 +80,18 @@ export class GoogleCalendarApi implements CalendarApi {
   }
 
   async validateCalendar() {
-    const calendar = await this.request<{ accessRole: string; id: string }>(
-      `users/me/calendarList/${encodeURIComponent(this.calendarId)}`,
-    );
+    const result = z
+      .object({ accessRole: z.string(), id: z.string().min(1) })
+      .safeParse(
+        await this.request<unknown>(
+          `users/me/calendarList/${encodeURIComponent(this.calendarId)}`,
+        ),
+      );
+    if (!result.success)
+      throw new Error(
+        "Google Calendar returned an invalid calendar identity. Refresh before exporting tasks.",
+      );
+    const calendar = result.data;
     if (!["writer", "owner"].includes(calendar.accessRole))
       throw new Error("Choose a calendar you can edit.");
     return calendar.id;
@@ -117,6 +128,55 @@ export class GoogleCalendarApi implements CalendarApi {
 
   private eventsPath() {
     return `calendars/${encodeURIComponent(this.calendarId)}/events`;
+  }
+
+  /** Recurring masters and all pages keep the check independent of the visible date range. */
+  async assertTaskExportAllowed() {
+    const pageSchema = z.object({
+      items: z
+        .array(
+          z.object({
+            id: z.string().min(1),
+            status: z.string().optional(),
+            source: z
+              .object({
+                url: z.string().optional(),
+                title: z.string().optional(),
+              })
+              .optional(),
+          }),
+        )
+        .default([]),
+      nextPageToken: z.string().min(1).optional(),
+    });
+    const pages = new Set<string>();
+    let page: string | undefined;
+    do {
+      const query = new URLSearchParams({
+        maxResults: "2500",
+        singleEvents: "false",
+        showDeleted: "false",
+        fields: "items(id,status,source),nextPageToken",
+      });
+      if (page) query.set("pageToken", page);
+      const parsed = pageSchema.safeParse(
+        await this.request<unknown>(`${this.eventsPath()}?${query.toString()}`),
+      );
+      if (!parsed.success)
+        throw new Error(
+          "Google Calendar returned an incomplete exporter check. Retry before exporting tasks.",
+        );
+      if (parsed.data.items.some(isTodoistCalendarExport))
+        throw new Error(
+          "Todoist is already exporting into this managed calendar. Select a separate Day Planner calendar in Google Calendar settings, then retry this saved schedule.",
+        );
+      page = parsed.data.nextPageToken;
+      if (page && pages.has(page))
+        throw new Error(
+          "Google Calendar repeated an exporter-check page. Retry before exporting tasks.",
+        );
+      if (page) pages.add(page);
+    } while (page);
   }
 
   async list(timeMin: string, timeMax: string) {

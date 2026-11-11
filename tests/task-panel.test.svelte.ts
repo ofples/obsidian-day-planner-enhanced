@@ -18,6 +18,8 @@ import { taskDeletionSchema } from "../src/tasks/deletion-types";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 import type { TaskOperation } from "../src/tasks/operations";
 import type { TaskReconciler } from "../src/tasks/reconcile";
+import type { TaskScheduler } from "../src/tasks/schedule";
+import { scheduleOperationSchema } from "../src/tasks/schedule-types";
 import type { TaskBrowserState, TaskService } from "../src/tasks/service";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
 import TasksPane from "../src/ui/components/tasks-pane.svelte";
@@ -60,6 +62,7 @@ function render(
   actionValue: TaskPanelAction | null = null,
   reconciler?: TaskReconciler,
   deleter?: TaskDeletionController,
+  scheduler?: TaskScheduler,
 ) {
   const state = writable<TaskBrowserState>({
     snapshot,
@@ -79,6 +82,7 @@ function render(
   } as unknown as TaskCapture;
   const action = writable(actionValue);
   const fallbackSettings = vi.fn();
+  const retrySchedule = vi.fn();
   const target = document.createElement("div");
   document.body.append(target);
   mounted.push(
@@ -90,6 +94,7 @@ function render(
         action,
         reconciler,
         deleter,
+        scheduler,
         settings: writable(defaultSettingsForTests),
         calendar: { calendars: async () => [] },
         preferences: writable(taskViewStateSchema.parse({})),
@@ -97,13 +102,13 @@ function render(
         completeTask: vi.fn(),
         reopenTask: vi.fn(),
         retry: vi.fn(),
-        retrySchedule: vi.fn(),
+        retrySchedule,
         revealTask: vi.fn(),
       },
     }),
   );
   flushSync();
-  return { target, state, action, mutate, fallbackSettings, capture };
+  return { target, state, action, mutate, fallbackSettings, capture, retrySchedule };
 }
 
 function press(element: EventTarget, key: string, isComposing = false) {
@@ -119,6 +124,23 @@ function press(element: EventTarget, key: string, isComposing = false) {
 }
 
 describe("custom Tasks panel", () => {
+  test("exporter preflight failures expose a retry in the review disclosure", () => {
+    const operation = scheduleOperationSchema.parse({
+      id: crypto.randomUUID(), provider: "todoist", accountId: "account", task,
+      linkUid: "source", googleUid: "calendar-source", providerOperationId: crypto.randomUUID(),
+      occurrenceKey: "single", target: { kind: "schedule", interval: { start: "2026-11-20T03:30:00Z", end: "2026-11-20T04:00:00Z" } },
+      children: [], raw: "- [ ] Shopping #todoist", generatedTaskIds: [task.id], syncTaskDate: true,
+      phase: "provider-pending", createdAt: snapshot.fetchedAt, error: "Todoist is already exporting into this managed calendar.",
+    });
+    const scheduler = { state: writable({ operations: [operation], projections: [], error: "" }) } as unknown as TaskScheduler;
+    const h = render(null, undefined, undefined, scheduler);
+    const review = h.target.querySelector<HTMLDetailsElement>("details.task-review")!;
+    expect(review.querySelector("summary")?.textContent).toContain("1 needs review");
+    expect(review.textContent).toContain("already exporting");
+    review.querySelector<HTMLButtonElement>("button")!.click();
+    expect(h.retrySchedule).toHaveBeenCalledWith(operation.id);
+  });
+
   function deletionController() {
     const record = taskDeletionSchema.parse({
       id: crypto.randomUUID(), provider: "todoist", accountId: snapshot.account.id,
