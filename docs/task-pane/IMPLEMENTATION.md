@@ -164,6 +164,18 @@ Occurrence records now save captured task/child, note-link and calendar baseline
 
 Regression checks cover saved-command recovery, exact v11 migration backup, interrupted note writes, calendar failure across restart, deferred focused edits, preserved local history text, historical uncheck reservation, next-occurrence scheduling, independently scheduled children and moving completed notes. Custom history browsing retains dates, repeat rules, description, known child states, note navigation and actionable retry errors. Multiple history rows can refer to the same remote task ID. The current full suite has 986 passes, the inherited ICS timeout, nine skips and 17 todo cases. Required source checks and production build pass. Isolated installed acceptance, local checkbox/external completion, exact undo and remaining M5/M6 work continue.
 
+### Installed occurrence-history verification
+
+The matching history build was installed in the isolated vault with equal bundle hashes, a full plugin backup and exact v11 migration-byte preservation. Native pane completion automatically checked a disposable 45-minute note, archived its nested child link and left one active next task. Direct Google readback retained the past event ID, interval, mapped color and child description. The note contained the checked task and readable tags, with identity metadata in the registry.
+
+Native history expansion, details and saved-note navigation displayed the original date/time, repeat rule, description and known subtask state. Scheduling the next occurrence created fresh note, calendar UID and event identities with the same mapped color. The old note/event stayed at its original time. Full reload retained both mappings, the original captured baseline and one completion command, with zero pending operations or source issues.
+
+Product deletion removed the fixture tree and retained its recovery/history records. Cleanup restored original note bytes or file absence and removed both managed events. Final refreshed/reloaded readback confirmed fixture tasks/events absent, zero native echoes, preserved history, zero pending operations/schedules, zero source/reconciliation issues and unchanged calendar settings. Restoring pane preferences exposed the earlier missing workspace-save callback. An explicit workspace save restored them, and a source/lifecycle regression now addresses automatic persistence. Native verification of that fix continues.
+
+### Pane preference persistence
+
+The Tasks view now requests Obsidian's debounced workspace save when serialized preferences change and removes that subscription on close. Lifecycle checks cover restoration through setState, unchanged values, close and reopen, alongside the existing unlink-close cases. All five pass. Full validation has 988 passes, the inherited ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, the strict scorecard and production build pass. Installed native preference/reload verification continues.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

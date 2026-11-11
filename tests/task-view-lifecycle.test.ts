@@ -8,21 +8,35 @@ import type { TaskService } from "../src/tasks/service";
 import { TasksView } from "../src/ui/tasks-view";
 
 const notice = vi.hoisted(() => vi.fn());
+const requestSaveLayout = vi.hoisted(() => vi.fn());
+vi.mock("svelte", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("svelte")>()),
+  mount: vi.fn(() => ({})),
+  unmount: vi.fn(async () => {}),
+}));
 vi.mock("obsidian", () => ({
   ItemView: class {
-    contentEl = { removeClass: vi.fn() };
+    contentEl = { addClass: vi.fn(), removeClass: vi.fn() };
+    app = { workspace: { requestSaveLayout } };
+    registerInterval(id: number) {
+      window.clearInterval(id);
+    }
+    async setState() {}
   },
   Notice: notice,
 }));
 
-beforeEach(() => notice.mockClear());
+beforeEach(() => {
+  notice.mockClear();
+  requestSaveLayout.mockClear();
+});
 
 function view(keepLinked = vi.fn(async () => {})) {
   return {
     keepLinked,
     instance: new TasksView(
       {} as WorkspaceLeaf,
-      {} as TaskService,
+      { refresh: vi.fn(async () => {}) } as unknown as TaskService,
       {} as TaskCapture,
       vi.fn(),
       undefined,
@@ -33,6 +47,45 @@ function view(keepLinked = vi.fn(async () => {})) {
 }
 
 describe("Tasks view link decisions", () => {
+  test("preference changes request durable workspace saves and close removes the subscription", async () => {
+    const h = view();
+    await h.instance.onOpen();
+    expect(requestSaveLayout).not.toHaveBeenCalled();
+    h.instance.preferences.update((state) => ({
+      ...state,
+      query: "Saved search",
+      groupBy: "project",
+      collapsed: ["home"],
+    }));
+    expect(requestSaveLayout).toHaveBeenCalledTimes(1);
+    h.instance.preferences.set(structuredClone(h.instance.getState()));
+    expect(requestSaveLayout).toHaveBeenCalledTimes(1);
+    await h.instance.onClose();
+    h.instance.preferences.update((state) => ({
+      ...state,
+      query: "After closing",
+    }));
+    expect(requestSaveLayout).toHaveBeenCalledTimes(1);
+    await h.instance.onOpen();
+    h.instance.preferences.update((state) => ({ ...state, query: "Reopened" }));
+    expect(requestSaveLayout).toHaveBeenCalledTimes(2);
+    await h.instance.onClose();
+  });
+  test("the normal state restoration entry point saves the parsed preferences", async () => {
+    const h = view();
+    await h.instance.onOpen();
+    await h.instance.setState(
+      { query: "Restored search", selectedId: "original", projectId: "home" },
+      {} as import("obsidian").ViewStateResult,
+    );
+    expect(h.instance.getState()).toMatchObject({
+      query: "Restored search",
+      selectedId: "original",
+      projectId: "home",
+    });
+    expect(requestSaveLayout).toHaveBeenCalledTimes(1);
+    await h.instance.onClose();
+  });
   test("closing a tag-removal decision restores the capture tag", async () => {
     const h = view();
     h.instance.panelAction.set({

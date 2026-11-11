@@ -100,6 +100,14 @@ Calendar-only history retries remain durable while the next occurrence is schedu
 
 Custom-pane checks cover historical metadata and note navigation, distinct occurrence rows sharing one task ID and retry/error behavior. Full validation has 986 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics and production build pass. Native installed/API acceptance, local-checkbox and external completion, exact occurrence undo and full child/copy repair remain pending.
 
+### Installed occurrence-history verification
+
+The isolated installed build matched its source bundle hash, retained a full plugin backup and preserved exact v11 bytes during migration. Native completion of a disposable scheduled parent automatically froze its checked 45-minute note and nested child link. Direct Google readback retained the original event ID, interval, mapped color and child description. The active provider task kept its ID and advanced one counter/date. Native history details and note navigation displayed the saved occurrence and checked note.
+
+Scheduling the next occurrence produced fresh note/calendar identities and a separate event with the same mapped color. The past note/event retained its original time. Reload retained both mappings, immutable original baselines and exactly one completion command. Product deletion and fixture cleanup restored original note bytes/file absence and removed both managed events. Final readback confirmed all fixture tasks/events absent, zero native echoes, retained history/recovery records, zero pending operations/schedules, zero source/reconciliation issues and unchanged calendar settings.
+
+This supplies installed pane-origin A47 evidence and recurrence identity/color evidence for A48. Local-checkbox and external completion, exact undo and full child/copy repair continue. Preference restoration reproduced the missing workspace-save callback. An explicit workspace save restored the original pane state. The automatic persistence source fix and lifecycle regression receive their own installed acceptance.
+
 ## Failure-injection matrix
 
 Exercise each mutation at the boundaries before intent save, after intent save, after local write, after remote success with a lost response, after remote acknowledgment save, after Google write and before operation completion. Restart after every injected failure. Required outcomes are one task per create operation, one event per occurrence, preserved source text and a retriable or explicitly conflicted operation.

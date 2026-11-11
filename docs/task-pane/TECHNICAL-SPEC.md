@@ -187,6 +187,8 @@ Pending operations and source issues share a compact disclosure above the list. 
 
 Opening a workflow or task details collapses the review disclosure. Task calendar feeds is reachable from Capture and routing and shares its custom form with the full settings entry. Retain exact unavailable saved sources when reloading the calendar list. Show Google IDs alongside names and keep internet-feed URLs out of visible text. Reject a changed task account both after loading and before saving. Copy reactive selections into ordinary arrays before dispatching settings through the Redux display policy.
 
+The custom Tasks view requests Obsidian's debounced workspace-layout save when its serialized preferences change. Restore preferences through the parsed view-state entry point and stop the subscription when the view closes. Search, grouping, project selection, selected task and group folding remain per-leaf workspace state.
+
 ## Performance and refresh
 
 Refresh at connection, manual request, pane activation if stale and at a visible-pane interval. Coalesce overlapping refresh calls. Avoid reading all daily-note files during every row render. Use the existing vault index and update affected links incrementally. Keep account snapshots immutable to support Svelte subscriptions. Profile 2,000 active tasks and deep nesting before release. Add virtualization only if measured pane performance requires it.

@@ -26,6 +26,7 @@ export class TasksView extends ItemView {
   readonly preferences = writable(taskViewStateSchema.parse({}));
   readonly panelAction = writable<TaskPanelAction | null>(null);
   private component?: ReturnType<typeof mount>;
+  private stopSavingPreferences?: () => void;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -65,6 +66,14 @@ export class TasksView extends ItemView {
 
   async onOpen() {
     this.contentEl.addClass("day-planner-tasks-view");
+    this.stopSavingPreferences?.();
+    let previousState = JSON.stringify(get(this.preferences));
+    this.stopSavingPreferences = this.preferences.subscribe((state) => {
+      const serialized = JSON.stringify(state);
+      if (serialized === previousState) return;
+      previousState = serialized;
+      this.app.workspace.requestSaveLayout();
+    });
     const handle = (operation: Promise<unknown>) => {
       void operation.catch((error: unknown) => {
         new Notice(
@@ -112,6 +121,8 @@ export class TasksView extends ItemView {
   }
 
   async onClose() {
+    this.stopSavingPreferences?.();
+    this.stopSavingPreferences = undefined;
     const action = get(this.panelAction);
     if (
       action?.kind === "unlink" &&
