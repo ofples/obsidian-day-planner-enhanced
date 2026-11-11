@@ -21,11 +21,13 @@ Open Tasks from the ribbon or the Show tasks command. Connect Todoist using its 
 
 Open Capture and routing to choose capture folders, the default project, project tags and label tags. Initial project tags come from unique single-tag project names, and the Inbox is the initial default. Settings are account-specific. Add `#todoist` to an unchecked Markdown task and leave its line to capture it. For example, `- [ ] Buy rice #todoist #karma` routes to the project mapped to `#karma`. A task with tags mapping to several projects waits for Choose project. The editor context menu also provides Todoist routing for a specific task. Remote IDs remain in plugin state.
 
-Tagged capture currently creates and links tasks. Linked note updates and scheduling are being implemented in subsequent milestones. The feature build is under development in its separate branch. The production baseline remains installed during verification.
+Tagged capture creates and links tasks. Use Schedule in task details, the row context menu or Schedule selected task to choose a date, start and duration. Drag a pane task into a day/week timeline to use its snap interval. A repeated drop moves its existing linked block. A schedule chip opens the note. Remove from schedule keeps the checklist and provider date and removes its managed event after confirmation. Dropping into an editable Markdown line moves the linked checklist there, with a confirmation when this removes a scheduled interval.
+
+Direct note edits, timeline resize and remote task edits will gain full reconciliation in M4. Recurrence/history and independently scheduled children follow in M5. The feature build is under development in its separate branch. The production baseline remains installed during verification.
 
 Calendar feeds in the full Tasks settings selects the exact Google or internet-calendar sources to hide for the connected task account. Enable Hide selected task feeds after making that selection. Disconnecting the task account restores feed display. This plugin-level choice is saved per task account.
 
-Todoist duration sync depends on its Pro or Business entitlement. The scheduling implementation will retain full time ranges in Obsidian and Google Calendar for every account, with the start synchronized to Todoist. Provider duration will synchronize when supported. [Todoist duration availability](https://www.todoist.com/help/todoist/features/set-a-task-duration-L1kYkZv8d)
+Todoist duration sync depends on its Pro or Business entitlement. Scheduling retains full time ranges in Obsidian and Google Calendar for every account. Sync schedule start to task date in Calendar feeds controls the provider date update. Provider duration synchronizes when the account supports it. [Todoist duration availability](https://www.todoist.com/help/todoist/features/set-a-task-duration-L1kYkZv8d)
 
 ## Decisions
 

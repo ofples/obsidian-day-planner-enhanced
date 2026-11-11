@@ -1,6 +1,7 @@
 <script lang="ts">
   /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
-  import { get } from "svelte/store";
+  import { Notice } from "obsidian";
+  import { get, readable } from "svelte/store";
   import { isNotVoid } from "typed-assert";
 
   import { getObsidianContext } from "../../context/obsidian-context";
@@ -14,6 +15,8 @@
   import { selectLogTimeBlocksForDay } from "../../redux";
   import { selectLogEntriesById } from "../../redux/index/index-slice";
   import { selectRecurringPreviewsForDay } from "../../redux/index/recurring-preview-selectors";
+  import { taskDragMime } from "../../tasks/drag";
+  import type { ProviderTask } from "../../tasks/types";
   import type {
     LogTimeBlock,
     TimeBlock,
@@ -83,7 +86,77 @@
     logEntryEditor,
     workspaceFacade,
     openLogEntryEditModal,
+    taskScheduler,
   } = getObsidianContext();
+  const draggedTask =
+    taskScheduler?.drag.state ?? readable<ProviderTask | null>(null);
+  let taskDropPreview: { start: Moment; end: Moment; title: string } | null =
+    $state(null);
+  $effect(() => {
+    if (!$draggedTask) taskDropPreview = null;
+  });
+
+  function taskIntervalAt(event: DragEvent) {
+    const task = taskScheduler?.drag.current();
+    if (!task || !taskScheduler || !el) return null;
+    const settings = $settingsStore;
+    const minutes = offsetYToMinutes(
+      snap(event.clientY - el.getBoundingClientRect().top, settings),
+      settings.zoomLevel,
+      settings.startHour,
+    );
+    const start = minutesToMomentOfDay(minutes, day);
+    return {
+      start,
+      end: start
+        .clone()
+        .add(
+          taskScheduler.duration(task, settings.defaultDurationMinutes),
+          "minutes",
+        ),
+      title: task.title,
+    };
+  }
+
+  function taskDragOver(event: DragEvent) {
+    if (
+      !event.dataTransfer?.types.includes(taskDragMime) ||
+      !taskScheduler?.drag.current()
+    )
+      return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    taskDropPreview = taskIntervalAt(event);
+  }
+
+  async function dropTask(event: DragEvent) {
+    if (!event.dataTransfer?.types.includes(taskDragMime) || !taskScheduler)
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      const drop = taskScheduler.drag.accept(event.dataTransfer),
+        interval = taskIntervalAt(event);
+      if (interval)
+        await taskScheduler.schedule(
+          drop.task.id,
+          {
+            start: interval.start.toISOString(),
+            end: interval.end.toISOString(),
+          },
+          drop.id,
+        );
+    } catch (error) {
+      new Notice(
+        error instanceof Error
+          ? error.message
+          : "Could not save this task drop.",
+      );
+    } finally {
+      taskScheduler.drag.cancel();
+      taskDropPreview = null;
+    }
+  }
 
   const displayedTimeBlocksForTimeline = $derived(
     getDisplayedTimeBlocksForTimeline(day),
@@ -330,6 +403,15 @@
       <div
         bind:this={el}
         class="tasks absolute-stretch-x"
+        ondragleave={(event) => {
+          if (
+            !event.relatedTarget ||
+            !el?.contains(event.relatedTarget as Node)
+          )
+            taskDropPreview = null;
+        }}
+        ondragover={taskDragOver}
+        ondrop={dropTask}
         onpointerdown={(event) => {
           if (isTouchEvent(event) || event.target !== el) {
             return;
@@ -342,6 +424,25 @@
         use:timelineGestures
         use:updateDragPointerOnAutoScroll
       >
+        {#if taskDropPreview}<div
+            style:top="{(getMinutesSinceMidnight(taskDropPreview.start) -
+              $settingsStore.startHour * 60) *
+              $settingsStore.zoomLevel}px"
+            style:height="{taskDropPreview.end.diff(
+              taskDropPreview.start,
+              'minutes',
+            ) * $settingsStore.zoomLevel}px"
+            class="task-drop-preview"
+            aria-hidden="true"
+          >
+            <strong>{taskDropPreview.title}</strong><small
+              >{taskDropPreview.start.format(
+                $settingsStore.timestampFormat,
+              )}–{taskDropPreview.end.format(
+                $settingsStore.timestampFormat,
+              )}</small
+            >
+          </div>{/if}
         {#if showRecurringPreviews}
           <RecurringTaskPreviews
             {dayKey}
@@ -406,6 +507,26 @@
 <!-- eslint-enable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Re-enable scorecard compatibility suppressions after this file. -->
 
 <style>
+  .task-drop-preview {
+    pointer-events: none;
+
+    position: absolute;
+    z-index: 6;
+    inset-inline: 3px;
+
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+
+    padding: 4px 8px;
+
+    color: var(--text-normal);
+
+    background: var(--background-secondary);
+    border: 2px dashed var(--interactive-accent);
+    border-radius: var(--radius-s);
+  }
+
   .timeline {
     isolation: isolate;
     position: relative;

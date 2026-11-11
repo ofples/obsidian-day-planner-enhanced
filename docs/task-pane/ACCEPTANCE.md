@@ -89,11 +89,11 @@ Use deterministic provider responses for focused regression tests and a real dis
 | Evidence | State | Required record |
 | --- | --- | --- |
 | Baseline source | Confirmed | `82ae46ff` equals origin `feat/google-calendar-sync` |
-| New source checks | M3 foundations verified | 57 task-focused passes, 737 full-suite passes, one inherited ICS timeout, TypeScript/Svelte, formatting/style lint, strict scorecard and build pass |
+| New source checks | M3 coordinator verified | Task scheduling/input/migration/capture regression checks pass. Full-suite count and exact validation are recorded below. One inherited ICS timeout persists |
 | Inherited ICS timeout | Known baseline issue | `tests/ical.test.ts`, last visible day inclusive case, independently reproduced on upstream previously |
 | Synthetic desktop acceptance | M1 partial | Dockable pane, tree folding, cached/disconnected state, search and details inspected. Exhaustive keyboard/popout checks pending |
 | Live Todoist acceptance | M2 editing and capture verified | Complete account reads, persisted credentials, native creation/edit/project move/subtask/completion/reopen, cursor-leave capture and explicit routing readbacks. All disposable task IDs returned 404 after cleanup. Recurring writes pending |
-| Live Google acceptance | Pending | Stable event IDs, one exporter, description/color preservation and cleanup |
+| Live Google acceptance | M3 scheduling verified | Stable event IDs across day/week moves, child description and planner color, explicit unschedule deletion and cleanup. Full reconciliation and exact live feed-policy acceptance pending |
 | Working-vault installation | Pending | Matching backup, exact artifact hashes, reload and normal-entry readback |
 
 A passing focused suite establishes its covered behavior. The release record must state the inherited full-suite failure separately from new regressions. Completion requires the product scenarios above and honest evidence for any remaining external limitation.
@@ -137,3 +137,17 @@ The outbox now persists a verified readback before another command edits the sam
 Registry v2 migration was checked in the isolated desktop profile. Namespace and operation count matched the original state, and the content-addressed v1 backup matched the original bytes. Automated cases also cover failed backups and unsupported future versions.
 
 A28 must exercise both capability states. Accounts with duration support synchronize it to the provider. Accounts without that capability synchronize the start while retaining the planned interval in Markdown and Google. Paid-provider duration readback remains unverified.
+
+### M3 scheduling coordinator evidence
+
+The durable coordinator saves the task/account owner, drop nonce, source bytes, provider field patch, prepared note edits and independent provider/calendar phase before the corresponding side effects. Task and Google identities remain stable during moves. A prepared note reserves its capture identity before link acknowledgment, preventing a second automatic creation. Registry v3 migration preserves verified provider readbacks and backs up original v1/v2 bytes. Future formats remain untouched.
+
+Focused regression cases cover repeated/concurrent drop delivery, existing Google block adoption, first-intent failure, cross-day interrupted note writes and restart, independent Google retry after verified task success, untimed Markdown relocation, changed-destination conflict, unschedule date preservation, child retention, protected Markdown regions, literal tag/block-ID/time-looking title handling, DST gaps/repeated offsets and drag ownership/expiry. The scheduling/input/registry/capture subset has 26 passing cases.
+
+In an isolated desktop profile, the native Schedule dialog created a 45-minute interval and one managed Google event. Provider readback confirmed its scheduled start. The event retained the planner color and contained the child checklist text in its description. Synthetic HTML5 events exercised the actual Svelte day and week drop handlers. Moving to another day retained the same event ID and 45-minute duration. Remove from schedule opened its native confirmation, retained the provider date and checklist children, and deleted the owned event. The public Markdown editor-drop handler moved the same linked checklist into another note. Its internal link ID and child text remained intact. Readback then confirmed both disposable provider tasks returned 404 and the Google event was absent/cancelled. The disposable note was removed.
+
+Selected-task controls initially overflowed a narrow pane. Wrapping those controls and placing schedule chips below the task title produced zero measured horizontal overflow in the pane, list and details. Native pointer input could not activate the isolated window and its native capture was black. Actual pointer drag and OS input-method acceptance remain pending. Synthetic DOM event acceptance is recorded separately from those checks.
+
+Full source validation passed formatting, standard/style lint, TypeScript and Svelte with zero diagnostics. The full suite had 753 passes, one inherited ICS timeout, nine skips and 17 todo cases. Strict scorecard and production build also passed. Review additionally found and corrected task-view registration after failed registry initialization. An isolated desktop check loaded an unsupported future task schema, verified that calendar startup continued and the future bytes stayed untouched, then restored the original bytes and reloaded scheduling successfully.
+
+Remaining M3/M4 acceptance includes timeline resize/direct-note edits, explicit native-exporter collision handling, exact live selected-feed exclusion, offline supersession and field conflict resolution. M5 recurrence/history and independent child scheduling remain pending. The feature build has not been installed into the working vault.

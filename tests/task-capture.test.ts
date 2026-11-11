@@ -98,6 +98,53 @@ async function setup(initial = "- [ ] Buy rice #todoist #karma") {
 }
 
 describe("tagged task capture", () => {
+  test("a prepared schedule reserves its note before capture can create another task", async () => {
+    const h = await setup();
+    const source = h.host.candidates()[0]!;
+    const task: ProviderTask = {
+      id: "existing",
+      title: "Buy rice",
+      description: "",
+      projectId: "karma",
+      parentId: null,
+      labels: [],
+      priority: 1,
+      order: 1,
+      completed: false,
+      due: null,
+    };
+    await h.service.registry.change((state) => {
+      state.schedules.push({
+        id: crypto.randomUUID(),
+        provider: "todoist",
+        accountId: "account",
+        task,
+        linkUid: "root",
+        googleUid: "calendar",
+        providerOperationId: crypto.randomUUID(),
+        occurrenceKey: "single",
+        target: { kind: "insert", path: source.path, offset: 0, before: "" },
+        children: [],
+        raw: source.raw,
+        generatedTaskIds: [task.id],
+        syncTaskDate: false,
+        phase: "prepared",
+        createdAt: new Date().toISOString(),
+        plan: {
+          edits: [],
+          interval: null,
+          links: [{ uid: "root", task, source }],
+        },
+      });
+    });
+    await h.capture.scan();
+    await h.service.refresh();
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(get(h.capture.state).error).toBe("");
+    h.capture.stop();
+    h.service.stop();
+  });
+
   test("parses real first-line tags while ignoring code, comments, links and escaped tags", () => {
     const text = [
       "---",

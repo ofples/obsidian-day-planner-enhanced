@@ -4,6 +4,20 @@ export interface SourceIdentity {
   from: number;
 }
 
+export function locateSource(
+  text: string,
+  source: { raw: string; from?: number },
+) {
+  if (!source.raw) return -1;
+  if (
+    source.from !== undefined &&
+    text.slice(source.from, source.from + source.raw.length) === source.raw
+  )
+    return source.from;
+  const index = text.indexOf(source.raw);
+  return index >= 0 && text.indexOf(source.raw, index + 1) < 0 ? index : -1;
+}
+
 /** Conservative whole-block matching shared by note projections and calendar sync. */
 export function resolveSourceIdentities<T extends SourceIdentity>(
   candidates: (T & { uid?: string })[],

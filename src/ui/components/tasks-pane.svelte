@@ -8,11 +8,16 @@
     Search,
     X,
   } from "lucide-svelte";
-  import type { Readable, Writable } from "svelte/store";
+  import { readable, type Readable, type Writable } from "svelte/store";
 
   import { taskDay, taskGroups, type TaskViewState } from "../../tasks/browser";
   import type { TaskCapture, CaptureIssue } from "../../tasks/capture";
   import { operationTaskId } from "../../tasks/operations";
+  import type { TaskScheduler } from "../../tasks/schedule";
+  import type {
+    ScheduleOperation,
+    TaskProjection,
+  } from "../../tasks/schedule-types";
   import type { TaskBrowserState, TaskService } from "../../tasks/service";
   import type { ProviderTask } from "../../tasks/types";
 
@@ -30,6 +35,12 @@
     capture,
     captureSettings,
     routeCapture,
+    scheduler,
+    scheduleTask,
+    revealTask,
+    unscheduleTask,
+    retrySchedule,
+    taskMenu,
   }: {
     service: TaskService;
     preferences: Writable<TaskViewState>;
@@ -43,9 +54,36 @@
     capture: TaskCapture;
     captureSettings: () => void;
     routeCapture: (issue: CaptureIssue) => void;
+    scheduler?: TaskScheduler;
+    scheduleTask: (task: ProviderTask) => void;
+    revealTask: (task: ProviderTask) => void;
+    unscheduleTask: (task: ProviderTask) => void;
+    retrySchedule: (id: string) => void;
+    taskMenu: (task: ProviderTask, position: { x: number; y: number }) => void;
   } = $props();
   const browserState: Readable<TaskBrowserState> = $derived(service.state);
   const captureState = $derived(capture.state);
+  const emptySchedule = readable({
+    operations: [] as ScheduleOperation[],
+    projections: [] as TaskProjection[],
+    error: "",
+  });
+  const scheduleState = $derived(scheduler?.state ?? emptySchedule);
+  const selectedProjection = $derived(
+    $scheduleState.projections.find(
+      (projection) => projection.taskId === selected?.id,
+    ),
+  );
+  function scheduleLabel(projection: TaskProjection) {
+    return projection.interval
+      ? new Date(projection.interval.start).toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : "Linked note";
+  }
   const groups = $derived(
     $browserState.snapshot
       ? taskGroups($browserState.snapshot, $preferences)
@@ -192,6 +230,27 @@
       {/each}
     </details>
   {/if}
+  {#if $scheduleState.error}<p role="status">{$scheduleState.error}</p>{/if}
+  {#if $scheduleState.operations.length}<details class="task-changes" open>
+      <summary
+        >{$scheduleState.operations.length} saved schedule {$scheduleState
+          .operations.length === 1
+          ? "change"
+          : "changes"}</summary
+      >
+      {#each $scheduleState.operations as operation (operation.id)}<div
+          class="task-change"
+        >
+          <span>{operation.task.title}</span><small
+            >{operation.error ??
+              (operation.phase === "calendar-pending"
+                ? "Google Calendar pending"
+                : "Saving schedule…")}</small
+          >{#if operation.phase !== "conflict"}<button
+              onclick={() => retrySchedule(operation.id)}>Retry</button
+            >{/if}
+        </div>{/each}
+    </details>{/if}
   {#if !$browserState.snapshot}
     <div class="task-empty">
       <h3>Connect Todoist</h3>
@@ -227,6 +286,9 @@
           </button>
           {#if !$preferences.collapsed.includes(group.id)}
             {#each group.rows as row (row.task.id)}
+              {@const projection = $scheduleState.projections.find(
+                (item) => item.taskId === row.task.id,
+              )}
               <div
                 style:--task-depth={Math.min(row.depth, 6)}
                 class="task-row-container"
@@ -256,31 +318,68 @@
                   onchange={() => completeTask(row.task)}
                   type="checkbox"
                 />
-                <button
-                  class="task-row"
-                  class:task-context={row.context}
-                  class:task-selected={selected?.id === row.task.id}
-                  onclick={() => {
-                    $preferences = { ...$preferences, selectedId: row.task.id };
-                  }}
-                >
-                  <span class="task-copy"
-                    ><span>{row.task.title || "Untitled task"}</span><small
-                      >{$browserState.snapshot?.projects.find(
-                        (project) => project.id === row.task.projectId,
-                      )?.name ?? "Unavailable project"}</small
-                    ></span
+                <div class="task-row-content">
+                  <button
+                    class="task-row"
+                    class:task-context={row.context}
+                    class:task-selected={selected?.id === row.task.id}
+                    draggable={!!scheduler &&
+                      $browserState.writable &&
+                      !pendingIds.has(row.task.id)}
+                    onclick={() => {
+                      $preferences = {
+                        ...$preferences,
+                        selectedId: row.task.id,
+                      };
+                    }}
+                    oncontextmenu={(event) => {
+                      event.preventDefault();
+                      taskMenu(row.task, {
+                        x: event.clientX,
+                        y: event.clientY,
+                      });
+                    }}
+                    ondragend={() => scheduler?.drag.cancel()}
+                    ondragstart={(event) => {
+                      if (scheduler && event.dataTransfer)
+                        scheduler.drag.start(row.task, event.dataTransfer);
+                    }}
+                    onkeydown={(event) => {
+                      if (
+                        event.key === "ContextMenu" ||
+                        (event.shiftKey && event.key === "F10")
+                      ) {
+                        event.preventDefault();
+                        const rect =
+                          event.currentTarget.getBoundingClientRect();
+                        taskMenu(row.task, { x: rect.left, y: rect.bottom });
+                      }
+                    }}
                   >
-                  {#if row.task.due}<small class="task-date"
-                      >{taskDay(
-                        row.task,
-                        $browserState.snapshot?.account.timezone ?? "UTC",
-                      )}</small
+                    <span class="task-copy"
+                      ><span>{row.task.title || "Untitled task"}</span><small
+                        >{$browserState.snapshot?.projects.find(
+                          (project) => project.id === row.task.projectId,
+                        )?.name ?? "Unavailable project"}</small
+                      ></span
+                    >
+                    {#if row.task.due && !projection?.interval}<small
+                        class="task-date"
+                        >{taskDay(
+                          row.task,
+                          $browserState.snapshot?.account.timezone ?? "UTC",
+                        )}</small
+                      >{/if}
+                    {#if pendingIds.has(row.task.id)}<small class="task-pending"
+                        >Pending</small
+                      >{/if}
+                  </button>
+                  {#if projection?.interval}<button
+                      class="task-schedule-chip"
+                      onclick={() => revealTask(row.task)}
+                      title="Open schedule">{scheduleLabel(projection)}</button
                     >{/if}
-                  {#if pendingIds.has(row.task.id)}<small class="task-pending"
-                      >Pending</small
-                    >{/if}
-                </button>
+                </div>
               </div>
             {/each}
           {/if}
@@ -317,9 +416,26 @@
           <button onclick={() => editTask(selected)}>Edit task</button><button
             onclick={() => addSubtask(selected)}>Add subtask</button
           >
+          {#if scheduler}<button onclick={() => scheduleTask(selected)}
+              >{selectedProjection?.interval
+                ? "Move schedule"
+                : "Schedule"}</button
+            >{/if}
+          {#if selectedProjection?.interval}<button
+              onclick={() => unscheduleTask(selected)}
+              >Remove from schedule</button
+            >{/if}
         </div>
       {/if}
       <dl>
+        {#if selectedProjection}<dt>
+            {selectedProjection.interval ? "Scheduled" : "Note"}
+          </dt>
+          <dd>
+            <button onclick={() => revealTask(selected)}
+              >{scheduleLabel(selectedProjection)}</button
+            >
+          </dd>{/if}
         <dt>Project</dt>
         <dd>
           {$browserState.snapshot?.projects.find(
@@ -355,6 +471,13 @@
 </section>
 
 <style>
+  .task-schedule-chip {
+    max-width: 100%;
+    height: auto;
+    font-size: var(--font-ui-smaller);
+    white-space: normal;
+  }
+
   .task-pane {
     display: flex;
     flex-direction: column;
@@ -395,8 +518,23 @@
 
   .task-row-container {
     display: flex;
+    flex-wrap: wrap;
     align-items: start;
     padding-inline-start: calc(var(--task-depth) * 14px);
+  }
+
+  .task-row-content {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--size-2-1);
+
+    min-width: 0;
+  }
+
+  .task-row-content .task-schedule-chip {
+    align-self: start;
+    margin-inline-start: var(--size-4-2);
   }
 
   .task-tree-toggle {
@@ -482,12 +620,12 @@
 
   .task-row {
     display: flex;
-    flex: 1;
+    flex: none;
     flex-wrap: wrap;
     gap: var(--size-4-2);
     align-items: start;
 
-    width: auto;
+    width: 100%;
     min-width: 0;
     height: auto;
     padding: var(--size-4-3);
@@ -606,8 +744,10 @@
   .task-completed-row,
   .task-actions {
     display: flex;
+    flex-wrap: wrap;
     gap: var(--size-4-2);
     align-items: center;
+
     padding-block: var(--size-4-2);
   }
 

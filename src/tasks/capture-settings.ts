@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { TaskSnapshot } from "./types";
 
 export const taskAccountSettingsSchema = z.object({
+  syncScheduleToTaskDate: z.boolean().optional(),
   calendarDisplay: z
     .object({
       enabled: z.boolean(),

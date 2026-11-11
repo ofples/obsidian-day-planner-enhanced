@@ -78,7 +78,14 @@ import { type DayPlannerSettings, mergeStoredSettings } from "./settings";
 import { registerTaskCalendarDisplay } from "./tasks/calendar-display";
 import type { TaskCapture } from "./tasks/capture";
 import { createTaskCapture } from "./tasks/capture-obsidian";
+import { taskDragMime } from "./tasks/drag";
 import { createTaskService } from "./tasks/obsidian";
+import type { TaskScheduler } from "./tasks/schedule";
+import {
+  taskDropAllowed,
+  taskDropUsesPlanner,
+} from "./tasks/schedule-markdown";
+import { createTaskScheduler } from "./tasks/schedule-obsidian";
 import type { TaskService } from "./tasks/service";
 import { createGetTasksApi } from "./tasks-plugin";
 import type { EditableTimeBlock, RemoteTimeBlock } from "./time-block-types";
@@ -100,6 +107,7 @@ import {
   TaskCaptureSettingsModal,
   TaskCaptureRouteModal,
 } from "./ui/task-capture-modal";
+import { TaskScheduleModal } from "./ui/task-schedule-modal";
 import { TasksView, viewTypeTasks } from "./ui/tasks-view";
 import {
   createTimeTrackerCommandCheck,
@@ -124,6 +132,7 @@ export default class DayPlanner extends Plugin {
   googleCalendarSync!: GoogleCalendarSync;
   taskService!: TaskService;
   taskCapture!: TaskCapture;
+  taskScheduler?: TaskScheduler;
   getSettings!: () => DayPlannerSettings;
   private settingsStore!: Writable<DayPlannerSettings>;
   private workspaceFacade!: WorkspaceFacade;
@@ -262,6 +271,7 @@ export default class DayPlanner extends Plugin {
 
     this.initSettingsStore({ initialSettings, dispatch });
     this.taskService = createTaskService(this);
+    let tasksReady = false;
     try {
       await this.taskService.initialize();
       this.taskCapture = createTaskCapture(
@@ -281,13 +291,6 @@ export default class DayPlanner extends Plugin {
         effect: () => this.taskCapture.scan(),
       });
       this.register(() => this.taskService.stop());
-      this.registerView(
-        viewTypeTasks,
-        (leaf) =>
-          new TasksView(leaf, this.taskService, this.taskCapture, () =>
-            this.openTaskCaptureSettings(),
-          ),
-      );
       this.addCommand({
         id: "show-tasks",
         name: "Show tasks",
@@ -327,6 +330,7 @@ export default class DayPlanner extends Plugin {
             );
         }),
       );
+      tasksReady = true;
     } catch {
       new Notice(
         "Tasks could not load its saved state. Restore the matching task cache and registry backup, then reopen this vault.",
@@ -338,8 +342,10 @@ export default class DayPlanner extends Plugin {
       this.getSettings,
       store,
     );
+    let calendarReady = false;
     try {
       await this.googleCalendarSync.initialize();
+      calendarReady = true;
       listenerMiddleware.startListening({
         predicate: (action, current, previous) =>
           icalRefreshRequested.match(action) ||
@@ -354,6 +360,119 @@ export default class DayPlanner extends Plugin {
         `Google Calendar sync could not initialize: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
+    if (calendarReady && tasksReady)
+      this.taskScheduler = createTaskScheduler(
+        this,
+        this.taskService,
+        this.googleCalendarSync,
+        this.settingsStore,
+        this.workspaceFacade,
+      );
+    if (tasksReady)
+      this.registerView(
+        viewTypeTasks,
+        (leaf) =>
+          new TasksView(
+            leaf,
+            this.taskService,
+            this.taskCapture,
+            () => this.openTaskCaptureSettings(),
+            this.taskScheduler,
+            () => this.getSettings().defaultDurationMinutes,
+          ),
+      );
+    this.addCommand({
+      id: "schedule-selected-task",
+      name: "Schedule selected task",
+      callback: () => {
+        const leaves = this.app.workspace.getLeavesOfType(viewTypeTasks);
+        const leaf =
+          leaves.find((item) =>
+            item.view.containerEl.contains(activeDocument.activeElement),
+          ) ??
+          leaves.find((item) => (item.view as TasksView).getState().selectedId);
+        if (leaf) (leaf.view as TasksView).scheduleTask();
+        else new Notice("Select a task in the Tasks pane before scheduling.");
+      },
+    });
+    this.registerEvent(
+      this.app.workspace.on("editor-drop", (event, editor, view) => {
+        if (
+          event.defaultPrevented ||
+          !event.dataTransfer?.types.includes(taskDragMime) ||
+          !this.taskScheduler
+        )
+          return;
+        event.preventDefault();
+        event.stopPropagation();
+        const scheduler = this.taskScheduler;
+        void (async () => {
+          const { task, id } = scheduler.drag.accept(event.dataTransfer!);
+          const before = editor.getValue(),
+            offset = editor.posToOffset(editor.getCursor());
+          if (
+            !view.file ||
+            (event.target as HTMLElement | null)?.closest?.(
+              '[contenteditable="false"]',
+            ) ||
+            !taskDropAllowed(before, offset)
+          )
+            throw new Error(
+              "Drop the task on an editable Markdown line outside code, comments and properties.",
+            );
+          const date = this.periodicNotes.getDateFromFile(view.file, "day");
+          const heading = this.getSettings().plannerHeading;
+          if (date && taskDropUsesPlanner(before, offset, heading)) {
+            const start = date
+              .clone()
+              .startOf("day")
+              .add(this.getSettings().startHour, "hours");
+            new TaskScheduleModal(
+              this.app,
+              scheduler,
+              task,
+              this.getSettings().defaultDurationMinutes,
+              {
+                start: start.toISOString(),
+                end: start
+                  .clone()
+                  .add(
+                    scheduler.duration(
+                      task,
+                      this.getSettings().defaultDurationMinutes,
+                    ),
+                    "minutes",
+                  )
+                  .toISOString(),
+              },
+            ).open();
+            return;
+          }
+          if (
+            scheduler.projection(task.id)?.interval &&
+            !(await askForConfirmation({
+              app: this.app,
+              title: "Move task out of its schedule?",
+              text: "Move the linked task to this note and remove its managed Google event. Its Todoist date stays available.",
+              cta: "Move task",
+            }))
+          )
+            return;
+          await scheduler.insert(
+            task.id,
+            { path: view.file.path, offset, before },
+            id,
+          );
+        })().catch(
+          (error: unknown) =>
+            new Notice(
+              error instanceof Error
+                ? error.message
+                : "Could not save this task drop.",
+            ),
+        );
+      }),
+    );
     this.registerHoverLinkSource(dayPlannerHoverLinkSource, {
       display: this.manifest.name,
       defaultMod: false,
@@ -852,9 +971,7 @@ export default class DayPlanner extends Plugin {
     this.addCommand({
       id: "re-sync",
       name: "Re-sync tasks",
-      callback: async () => {
-        dispatch(icalRefreshRequested());
-      },
+      callback: () => reSync(),
     });
 
     this.addCommand({
@@ -918,8 +1035,22 @@ export default class DayPlanner extends Plugin {
 
     const reSync = () => {
       dispatch(icalRefreshRequested());
-      if (this.getSettings().googleCalendar.clientId)
-        void this.googleCalendarSync.run();
+      void (async () => {
+        if (this.taskCapture && this.taskService.registry) {
+          await this.taskCapture.scan();
+          await this.taskService.refresh();
+          await this.taskScheduler?.resume();
+        }
+        if (this.getSettings().googleCalendar.clientId)
+          await this.googleCalendarSync.run();
+      })().catch(
+        (error: unknown) =>
+          new Notice(
+            error instanceof Error
+              ? error.message
+              : "Could not finish calendar and task sync.",
+          ),
+      );
     };
     const openNestedItemsEditModal = createNestedItemsEditModalCreator(
       this.app,
@@ -936,6 +1067,7 @@ export default class DayPlanner extends Plugin {
     };
 
     const defaultObsidianContext: ObsidianContext = {
+      taskScheduler: this.taskScheduler,
       exportSchedule: (day) => {
         const blocks = get(editContext.getDisplayedTimeBlocksForTimeline(day));
         new ScheduleExportModal(

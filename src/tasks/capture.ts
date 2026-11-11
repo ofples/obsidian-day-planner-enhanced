@@ -124,6 +124,21 @@ export class TaskCapture {
         ([uid, link]) => [uid, link.source],
       ),
     );
+    for (const operation of this.service.registry.snapshot().schedules) {
+      if (["complete", "cancelled"].includes(operation.phase)) continue;
+      for (const link of operation.plan?.links ?? []) {
+        if (
+          Object.values(previous).some(
+            (source) =>
+              source.path === link.source.path &&
+              source.from === link.source.from &&
+              source.raw === link.source.raw,
+          )
+        )
+          continue;
+        previous[`reserved:${operation.id}:${link.uid}`] = link.source;
+      }
+    }
     try {
       resolveSourceIdentities<TaskSource>(candidates, previous, {
         duplicate:

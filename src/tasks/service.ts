@@ -143,6 +143,12 @@ export class TaskService {
   async mutate(
     input: TaskMutation,
     source?: { uid: string; value: TaskSource },
+    intent?: {
+      id: string;
+      base: import("./types").ProviderTask;
+      provider: string;
+      accountId: string;
+    },
   ): Promise<TaskOperation> {
     const snapshot = this.cache.snapshot;
     if (this.closed || !snapshot || !get(this.state).writable)
@@ -152,6 +158,16 @@ export class TaskService {
         true,
       );
     const mutation = taskMutationSchema.parse(input);
+    if (
+      intent &&
+      (intent.provider !== snapshot.provider ||
+        intent.accountId !== snapshot.account.id ||
+        mutation.kind === "create" ||
+        intent.base.id !== mutation.taskId)
+    )
+      throw new TaskReadError(
+        "This saved change belongs to another task account or task.",
+      );
     const duration =
       mutation.kind === "create"
         ? mutation.task.duration
@@ -178,6 +194,20 @@ export class TaskService {
     if (mutation.kind !== "create" && !base)
       throw new TaskReadError("Refresh this task before editing it.");
     const operation = await this.registry.change((state) => {
+      if (intent) {
+        const saved = state.operations.find((item) => item.id === intent.id);
+        if (saved) {
+          if (
+            JSON.stringify(saved.mutation) !== JSON.stringify(mutation) ||
+            saved.provider !== intent.provider ||
+            saved.accountId !== intent.accountId
+          )
+            throw new TaskReadError(
+              "The saved operation has different task fields. Review it before retrying.",
+            );
+          return saved;
+        }
+      }
       if (source) {
         const sameSourceUid = Object.entries(state.links).find(
           ([, link]) =>
@@ -204,12 +234,12 @@ export class TaskService {
         };
       }
       const saved: TaskOperation = {
-        id: crypto.randomUUID(),
+        id: intent?.id ?? crypto.randomUUID(),
         tempId: crypto.randomUUID(),
         provider: snapshot.provider,
         accountId: snapshot.account.id,
         mutation,
-        base,
+        base: intent?.base ?? base,
         status: "pending",
         attempts: 0,
         createdAt: new Date().toISOString(),

@@ -1,6 +1,7 @@
 import { TFile, type App } from "obsidian";
 
 import type { PeriodicNotes } from "../service/periodic-notes";
+import { locateSource } from "../service/source-identity";
 import type { DayPlannerSettings } from "../settings";
 
 import { resolveIdentities, type IdentityCandidate } from "./identity";
@@ -154,13 +155,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
   }
 
   private locate(text: string, block: LocalBlock) {
-    if (
-      block.from !== undefined &&
-      text.slice(block.from, block.from + block.raw.length) === block.raw
-    )
-      return block.from;
-    const index = text.indexOf(block.raw);
-    return index >= 0 && text.indexOf(block.raw, index + 1) < 0 ? index : -1;
+    return locateSource(text, block);
   }
 
   private file(path: string) {
@@ -232,8 +227,15 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     uid: string,
     snapshot: CalendarSnapshot,
     previous?: LocalBlock,
+    ensurePlanner = false,
+    templateRaw?: string,
   ): Promise<CalendarNoteWritePlan> {
-    const raw = renderBlock(uid, snapshot, this.settings, previous?.raw);
+    const raw = renderBlock(
+      uid,
+      snapshot,
+      this.settings,
+      previous?.raw ?? templateRaw,
+    );
     const target = await this.daily.createDailyNoteIfNeeded(
       window.moment(snapshot.start).startOf("day"),
     );
@@ -241,13 +243,34 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     const edits: Array<{ path: string; before: string; after: string }> = [];
     let after: string;
     let from: number;
-    if (previous && previous.path === target.path) {
+    const alreadyInPlanner =
+      previous &&
+      parseBlocks(
+        before,
+        window.moment(snapshot.start).format("YYYY-MM-DD"),
+        this.settings,
+      ).some(
+        (block) => block.from === previous.from && block.raw === previous.raw,
+      );
+    if (
+      previous &&
+      previous.path === target.path &&
+      (!ensurePlanner || alreadyInPlanner)
+    ) {
       from = this.locate(before, previous);
       if (from < 0) throw new Error("The note changed during sync; retry.");
       after =
         before.slice(0, from) + raw + before.slice(from + previous.raw.length);
     } else {
-      after = appendToPlanner(before, raw, this.settings);
+      let destination = before;
+      if (previous?.path === target.path) {
+        const index = this.locate(before, previous);
+        if (index < 0)
+          throw new Error("The note changed during scheduling; retry.");
+        destination =
+          before.slice(0, index) + before.slice(index + previous.raw.length);
+      }
+      after = appendToPlanner(destination, raw, this.settings);
       const appended = parseBlocks(
         after,
         window.moment(snapshot.start).format("YYYY-MM-DD"),
@@ -288,6 +311,16 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       [uid]: identity,
     });
     return plan.block;
+  }
+
+  async applyEdits(
+    edits: Array<{ path: string; before: string; after: string }>,
+  ) {
+    if (this.state.pendingNoteChange || this.state.pendingMove)
+      throw new Error(
+        "Finish the pending note operation before applying another write.",
+      );
+    await this.changeNotes(edits, { ...this.state.identities });
   }
 
   async recoverMove() {

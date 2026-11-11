@@ -35,6 +35,17 @@ export class TaskCalendarDisplayModal extends Modal {
     };
     const google = new Set(policy.googleCalendarIds),
       icals = new Set(policy.icalUrls);
+    let syncTaskDate = account.syncScheduleToTaskDate !== false;
+    new Setting(this.contentEl)
+      .setName("Sync schedule start to task date")
+      .setDesc(
+        "Set Todoist's start time when scheduling. The planner keeps the full time range, including when provider durations are unavailable.",
+      )
+      .addToggle((toggle) =>
+        toggle.setValue(syncTaskDate).onChange((value) => {
+          syncTaskDate = value;
+        }),
+      );
     this.contentEl.createEl("p", {
       text: "Select Todoist feeds for Day Planner to hide while this task account is connected. Disconnecting the task account restores their display.",
     });
@@ -132,6 +143,7 @@ export class TaskCalendarDisplayModal extends Modal {
                   ...settings.taskCapture.accounts,
                   [taskAccountKey(snapshot)]: {
                     ...taskAccountSettings(settings.taskCapture, snapshot),
+                    syncScheduleToTaskDate: syncTaskDate,
                     calendarDisplay: account.calendarDisplay,
                   },
                 },

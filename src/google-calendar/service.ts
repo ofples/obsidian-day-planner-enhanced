@@ -13,6 +13,7 @@ import { syncCalendar } from "./engine";
 import { ObsidianCalendarNotes } from "./notes";
 import type { CalendarSyncState } from "./types";
 import type { LocalBlock } from "./types";
+import { sameSnapshot, snapshotOf, type CalendarSnapshot } from "./types";
 import { googleEventsToBlocks, visibleGoogleCalendars } from "./view";
 
 export interface GoogleCalendarSettings {
@@ -229,6 +230,72 @@ export class GoogleCalendarSync {
       return await operation(notes, blocks);
     } finally {
       this.busy = false;
+    }
+  }
+
+  async syncProjection(uid: string, snapshot: CalendarSnapshot) {
+    if (this.busy || this.stopped)
+      throw new Error(
+        "Calendar sync is busy. The scheduled task is saved for retry.",
+      );
+    await this.run(true);
+    if (this.lastError) throw new Error(this.lastError);
+    const record = this.state.records[uid];
+    if (!record || record.deleted || !sameSnapshot(record.base, snapshot))
+      throw new Error(
+        "The schedule is saved. Connect Google Calendar or resolve its sync conflict to finish exporting it.",
+      );
+    return record.eventId;
+  }
+
+  async removeProjection(
+    uid: string,
+    snapshot: CalendarSnapshot,
+    path: string,
+  ) {
+    if (this.busy || this.stopped)
+      throw new Error(
+        "Calendar sync is busy. Removing this schedule is saved for retry.",
+      );
+    this.busy = true;
+    try {
+      const record = this.state.records[uid];
+      if (record?.deleted) return;
+      const api = this.api();
+      const calendarId = await api.validateCalendar();
+      if (this.state.calendarId && this.state.calendarId !== calendarId)
+        throw new Error(
+          "Choose the original managed calendar before removing this schedule.",
+        );
+      const eventId = record?.eventId ?? `dp${this.state.namespace}${uid}`;
+      const event = await api.get(eventId);
+      if (event && event.status !== "cancelled") {
+        if (
+          !record &&
+          event.extendedProperties?.private?.["dayPlannerVault"] !==
+            this.state.namespace
+        )
+          throw new Error(
+            "Review this event's calendar ownership before removing the schedule.",
+          );
+        const current = snapshotOf(event);
+        if (!current || !sameSnapshot(current, record?.base ?? snapshot))
+          throw new Error(
+            "This event changed in Google Calendar. Review the changes before removing its schedule.",
+          );
+        await api.remove(event);
+      }
+      this.state.calendarId = calendarId;
+      this.state.records[uid] = {
+        eventId,
+        path,
+        base: record?.base ?? snapshot,
+        deleted: true,
+      };
+      await this.save();
+    } finally {
+      this.busy = false;
+      await this.refreshView();
     }
   }
 

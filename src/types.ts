@@ -14,6 +14,7 @@ import type { PeriodicNotes } from "./service/periodic-notes";
 import type { VaultFacade } from "./service/vault-facade";
 import type { WorkspaceFacade } from "./service/workspace-facade";
 import type { DayPlannerSettings, IcalConfig } from "./settings";
+import type { TaskScheduler } from "./tasks/schedule";
 import type { EditableTimeBlock, PlanTimeBlock } from "./time-block-types";
 import type { ConfirmationModalProps } from "./ui/confirmation-modal";
 import type { OpenNestedItemsEditModal } from "./ui/create-nested-items-edit-modal";
@@ -65,6 +66,7 @@ export type PointerDateTime = {
 export type Signal<T> = { current: T };
 
 export interface ObsidianContext {
+  taskScheduler?: TaskScheduler;
   exportSchedule: (day: Moment) => void;
   workspaceFacade: WorkspaceFacade;
   periodicNotes: PeriodicNotes;

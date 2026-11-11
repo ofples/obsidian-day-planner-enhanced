@@ -36,13 +36,13 @@ function nodeText(node: Nodes): string {
 }
 
 export function exportPlainText(markdown: string) {
-  return restoreWikilinks(nodeText(fromMarkdown(markdown)))
+  const source = markdown.replace(/\s\^[\w-]+\s*$/u, "");
+  return restoreWikilinks(nodeText(fromMarkdown(source)))
     .replace(
       /!?\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
       (_match, target: string, alias?: string) => alias ?? target,
     )
     .replace(/^\s*(?:[-*+]\s+)?\[[^\]]\]\s*/u, "")
-    .replace(/\s\^[\w-]+\s*$/u, "")
     .trim();
 }
 
