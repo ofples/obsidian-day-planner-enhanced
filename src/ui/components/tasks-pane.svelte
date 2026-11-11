@@ -152,6 +152,7 @@
   let menuLeft = $state(0);
   let menuTop = $state(0);
   let busy = $state(false);
+  let restoringLink = $state(false);
   let actionError = $state("");
   let paneElement = $state<HTMLElement>();
   let actionOrigin: HTMLElement | undefined;
@@ -177,6 +178,18 @@
     showDetails = true;
   }
   function startAction(value: TaskPanelAction) {
+    if (busy) return;
+    if (
+      $action?.kind === "unlink" &&
+      $action.restoreTagOnCancel &&
+      reconciler
+    ) {
+      void restoreLink($action, value);
+      return;
+    }
+    openAction(value);
+  }
+  function openAction(value: TaskPanelAction) {
     const focused = paneElement?.ownerDocument.activeElement as
       | HTMLElement
       | undefined;
@@ -226,6 +239,36 @@
   }
   function actionSaved(expected: TaskPanelAction) {
     return (id?: string) => finishAction(expected, id);
+  }
+  function cancelAction() {
+    if (busy) return;
+    if ($action?.kind === "unlink" && $action.restoreTagOnCancel && reconciler)
+      void restoreLink($action);
+    else closeAction();
+  }
+  async function restoreLink(
+    opened: Extract<TaskPanelAction, { kind: "unlink" }>,
+    next?: TaskPanelAction,
+  ) {
+    if (!reconciler) return;
+    busy = true;
+    restoringLink = true;
+    actionError = "";
+    try {
+      await reconciler.keepLinked(opened.linkUid);
+      if ($action !== opened) return;
+      if (next) openAction(next);
+      else closeAction();
+    } catch (failure) {
+      if ($action === opened)
+        actionError =
+          failure instanceof Error
+            ? failure.message
+            : "Could not restore the capture tag. Retry this decision.";
+    } finally {
+      busy = false;
+      restoringLink = false;
+    }
   }
   function projectName(task: ProviderTask) {
     return (
@@ -352,7 +395,7 @@
       !busy
     ) {
       event.preventDefault();
-      closeAction();
+      cancelAction();
     }
   }}
   tabindex="-1"
@@ -474,7 +517,20 @@
                   "Linked task"}</strong
               ><small>{issue.message}</small>
             </div>
-            {#if !issue.fields.some( (field) => ["source", "task", "recurrence"].includes(field), )}<button
+            {#if issue.fields.includes("unlink")}<button
+                class="task-text-button"
+                disabled={!$browserState.writable}
+                onclick={() =>
+                  startAction({
+                    kind: "unlink",
+                    linkUid: issue.linkUid,
+                    title:
+                      issue.source?.title ??
+                      issue.remote?.title ??
+                      "Linked task",
+                    restoreTagOnCancel: true,
+                  })}>Review link</button
+              >{:else if !issue.fields.some( (field) => ["source", "task", "recurrence"].includes(field), )}<button
                 class="task-text-button"
                 disabled={!$browserState.writable ||
                   $browserState.loading ||
@@ -565,30 +621,30 @@
         class="task-icon-button task-close-action"
         aria-label="Close task form"
         disabled={busy}
-        onclick={closeAction}><X size={17} /></button
+        onclick={cancelAction}><X size={17} /></button
       >
       {#key $action}
         {#if $action.kind === "connect"}<TaskPanelConnect
-            cancel={closeAction}
+            cancel={cancelAction}
             saved={actionSaved($action)}
             {service}
           />
         {:else if $action.kind === "settings" && settings}<TaskPanelCaptureSettings
-            cancel={closeAction}
+            cancel={cancelAction}
             {capture}
             saved={actionSaved($action)}
             {service}
             {settings}
           />
         {:else if $action.kind === "route"}<TaskPanelRoute
-            cancel={closeAction}
+            cancel={cancelAction}
             {capture}
             issue={$action.issue}
             saved={actionSaved($action)}
             {service}
           />
         {:else if ($action.kind === "create" || $action.kind === "edit") && snapshot}<TaskPanelEditor
-            cancel={closeAction}
+            cancel={cancelAction}
             parent={$action.kind === "create" ? $action.parent : undefined}
             saved={actionSaved($action)}
             {service}
@@ -596,7 +652,7 @@
             task={$action.kind === "edit" ? $action.task : undefined}
           />
         {:else if $action.kind === "schedule" && scheduler}<TaskPanelSchedule
-            cancel={closeAction}
+            cancel={cancelAction}
             {defaultDuration}
             saved={actionSaved($action)}
             {scheduler}
@@ -604,13 +660,13 @@
           />
         {:else if $action.kind === "conflict"}{#if $action.source && reconciler}<TaskPanelConflict
               id={$action.id}
-              cancel={closeAction}
+              cancel={cancelAction}
               controller={reconciler}
               saved={actionSaved($action)}
               {snapshot}
             />{:else}<TaskPanelConflict
               id={$action.id}
-              cancel={closeAction}
+              cancel={cancelAction}
               controller={service}
               saved={actionSaved($action)}
               {snapshot}
@@ -622,19 +678,25 @@
             <p class="task-form-context">{$action.title}</p>
             <p>
               Keep the note as a local task and manage the Todoist task
-              separately. Remove its #todoist capture tag.
+              separately.{#if $action.restoreTagOnCancel}
+                Cancel restores #todoist and continues task sync.{:else}
+                Remove its #todoist capture tag.{/if}
             </p>
             {#if actionError}<p class="task-form-error" role="status">
                 {actionError}
               </p>{/if}
             <div class="task-form-actions">
               <button class="task-primary" disabled={busy} onclick={unlinkNote}
-                >{busy ? "Unlinking…" : "Unlink note"}</button
+                >{restoringLink
+                  ? "Restoring link…"
+                  : busy
+                    ? "Unlinking…"
+                    : "Unlink note"}</button
               >
               <button
                 class="task-text-button"
                 disabled={busy}
-                onclick={closeAction}>Cancel</button
+                onclick={cancelAction}>Cancel</button
               >
             </div>
           </div>
@@ -654,7 +716,7 @@
               ><button
                 class="task-text-button"
                 disabled={busy}
-                onclick={closeAction}>Cancel</button
+                onclick={cancelAction}>Cancel</button
               >
             </div>
           </div>{/if}

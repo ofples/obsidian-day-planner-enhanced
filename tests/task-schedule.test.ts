@@ -361,6 +361,351 @@ async function harness() {
 }
 
 describe("linked task scheduling", () => {
+  test("capture-tag removal pauses propagation until keeping the link restores independent edits", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path)!;
+    const writes = h.apply.mock.calls.length;
+    h.texts.set(
+      projection.source.path,
+      before.replace("Work #todoist", "Renamed local"),
+    );
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      description: "Independent remote description",
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    expect(
+      get(h.reconciler.state).issues.find((issue) => issue.taskId === root.id)
+        ?.fields,
+    ).toEqual(["unlink"]);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect(h.tasks.get(root.id)?.title).toBe("Work");
+    await h.reconciler.keepLinked(projection.linkUid);
+    await h.reconcile();
+    expect(h.tasks.get(root.id)).toMatchObject({
+      title: "Renamed local",
+      description: "Independent remote description",
+    });
+    expect(h.texts.get(projection.source.path)).toContain(
+      "Renamed local #todoist #work",
+    );
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(
+      projection.googleEventId,
+    );
+    expect(Object.values(h.service.registry.snapshot().issues)).toEqual([]);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("cancelled tag removal restores exact original note bytes without a task command", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path)!;
+    const writes = h.apply.mock.calls.length;
+    h.texts.set(projection.source.path, before.replace(" #todoist", ""));
+    await h.reconcile();
+    await h.reconciler.keepLinked(projection.linkUid);
+    expect(h.texts.get(projection.source.path)).toBe(before);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid]?.noteBase?.raw,
+    ).toBe(projection.source.raw);
+    expect(h.service.registry.snapshot().schedules.at(-1)).toMatchObject({
+      repairCaptureTag: true,
+      phase: "complete",
+    });
+    expect(h.scheduler.projection(root.id)?.googleEventId).toBe(
+      projection.googleEventId,
+    );
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("keeping a link reconciles combined title and interval edits after restoring its tag", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const updated = {
+      start: "2026-11-11T10:15:00Z",
+      end: "2026-11-11T11:00:00Z",
+    };
+    const range = (value: typeof interval) =>
+      `${window.moment(value.start).format("HH:mm")} - ${window.moment(value.end).format("HH:mm")}`;
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace(range(interval), range(updated))
+        .replace("Work #todoist", "Changed planned"),
+    );
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.title).toBe("Work");
+    expect(h.tasks.get(root.id)?.due?.date).toBe(interval.start);
+    await h.reconciler.keepLinked(projection.linkUid);
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.title).toBe("Changed planned");
+    expect(Date.parse(h.tasks.get(root.id)!.due!.date)).toBe(
+      Date.parse(updated.start),
+    );
+    expect(h.scheduler.projection(root.id)?.interval).toEqual({
+      start: new Date(updated.start).toISOString(),
+      end: new Date(updated.end).toISOString(),
+    });
+    expect([...h.events.keys()]).toEqual([projection.googleEventId]);
+    expect(h.texts.get(projection.source.path)).toContain(
+      "Changed planned #todoist",
+    );
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("confirming tag removal unlinks the same note without creating a replacement task", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const removed = h.texts
+      .get(projection.source.path)!
+      .replace(" #todoist", "");
+    h.texts.set(projection.source.path, removed);
+    await h.reconcile();
+    const writes = h.apply.mock.calls.length;
+    await h.reconciler.unlink(projection.linkUid);
+    await h.reconcile();
+    expect(h.texts.get(projection.source.path)).toBe(removed);
+    expect(h.scheduler.projection(root.id)).toBeUndefined();
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect([...h.events.keys()]).toEqual([projection.googleEventId]);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("failed tag-repair intent keeps the unresolved decision and acknowledged note baseline", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const removed = h.texts
+      .get(projection.source.path)!
+      .replace(" #todoist", "");
+    h.texts.set(projection.source.path, removed);
+    await h.reconcile();
+    h.setFailTaskWrite(true);
+    await expect(h.reconciler.keepLinked(projection.linkUid)).rejects.toThrow(
+      "task state offline",
+    );
+    expect(h.texts.get(projection.source.path)).toBe(removed);
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid]?.noteBase?.raw,
+    ).toBe(projection.source.raw);
+    expect(
+      get(h.reconciler.state).issues.find((issue) => issue.taskId === root.id)
+        ?.fields,
+    ).toEqual(["unlink"]);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("tag restoration resumes after interrupted note writes and retains unacknowledged title edits", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace("Work #todoist", "Recovered edit"),
+    );
+    await h.reconcile();
+    h.setFailPath(projection.source.path);
+    await expect(h.reconciler.keepLinked(projection.linkUid)).rejects.toThrow(
+      "interrupted note write",
+    );
+    expect(h.service.registry.snapshot().schedules.at(-1)).toMatchObject({
+      repairCaptureTag: true,
+      phase: "prepared",
+    });
+    h.setFailPath("");
+    await h.restart();
+    await h.settle();
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.title).toBe("Recovered edit");
+    expect(h.texts.get(projection.source.path)).toContain(
+      "Recovered edit #todoist #work",
+    );
+    expect([...h.events.keys()]).toEqual([projection.googleEventId]);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("keeping the link during an uncertain calendar export preserves later task edits across restart", async () => {
+    const h = await harness();
+    h.setLoseCalendarResponse(true);
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const eventId = [...h.events.keys()][0]!;
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace("Work #todoist", "Offline kept edit"),
+    );
+    await h.reconcile();
+    await h.reconciler.keepLinked(projection.linkUid);
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.title).toBe("Offline kept edit");
+    expect(h.texts.get(projection.source.path)).toContain(
+      "Offline kept edit #todoist #work",
+    );
+    await h.restart();
+    h.setLoseCalendarResponse(false);
+    h.setFailCalendar(false);
+    await h.settle();
+    expect([...h.events.keys()]).toEqual([eventId]);
+    expect(h.events.get(eventId)?.summary).toContain("Offline kept edit");
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("tag restoration rejects an outstanding task change without acknowledging its removed tag", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const removed = h.texts
+      .get(projection.source.path)!
+      .replace(" #todoist", "");
+    h.texts.set(projection.source.path, removed);
+    await h.reconcile();
+    await h.service.registry.change((state) => {
+      state.operations.push({
+        id: crypto.randomUUID(),
+        tempId: crypto.randomUUID(),
+        provider: "todoist",
+        accountId: "account",
+        mutation: {
+          kind: "update",
+          taskId: root.id,
+          changes: { title: "Queued edit" },
+        },
+        base: h.tasks.get(root.id)!,
+        status: "conflict",
+        attempts: 0,
+        createdAt: new Date().toISOString(),
+      });
+    });
+    await expect(h.reconciler.keepLinked(projection.linkUid)).rejects.toThrow(
+      "saved change",
+    );
+    await expect(h.reconciler.unlink(projection.linkUid)).rejects.toThrow(
+      "saved change",
+    );
+    expect(h.texts.get(projection.source.path)).toBe(removed);
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid]?.noteBase?.raw,
+    ).toBe(projection.source.raw);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("tag repair resumes after successful note writing followed by failed link acknowledgment", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace("Work #todoist", "Restored acknowledged edit"),
+    );
+    await h.reconcile();
+    h.process.mockImplementationOnce(async (value, update) => {
+      const next = update(h.texts.get(value.path) ?? "");
+      h.texts.set(value.path, next);
+      h.setFailTaskWrite(true);
+      return next;
+    });
+    await expect(h.reconciler.keepLinked(projection.linkUid)).rejects.toThrow(
+      "saved tag restoration",
+    );
+    expect(h.texts.get(projection.source.path)).toContain(
+      "Restored acknowledged edit #todoist",
+    );
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid]?.noteBase?.raw,
+    ).toBe(projection.source.raw);
+    h.setFailTaskWrite(false);
+    await h.restart();
+    await h.settle();
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.title).toBe("Restored acknowledged edit");
+    expect([...h.events.keys()]).toEqual([projection.googleEventId]);
+    expect(Object.values(h.service.registry.snapshot().issues)).toEqual([]);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("capture-tag repair journals reject task commands, unlink and new scheduling", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    h.texts.set(
+      projection.source.path,
+      h.texts.get(projection.source.path)!.replace(" #todoist", ""),
+    );
+    await h.reconcile();
+    await h.reconciler.keepLinked(projection.linkUid);
+    const before = h.service.registry.snapshot();
+    for (const patch of [
+      { unlink: true },
+      { syncTaskDate: true },
+      { target: { kind: "schedule", interval } },
+      { providerChanges: { title: "Wrong edit" } },
+      {
+        providerSteps: [
+          {
+            id: crypto.randomUUID(),
+            base: root,
+            mutation: { kind: "complete", taskId: root.id },
+          },
+        ],
+      },
+    ]) {
+      await expect(
+        h.service.registry.change((state) => {
+          Object.assign(state.schedules.at(-1)!, patch);
+        }),
+      ).rejects.toThrow("journals");
+      expect(h.service.registry.snapshot()).toEqual(before);
+    }
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
   test("unlink keeps the timed note, children, remote task and existing calendar event", async () => {
     const h = await harness();
     await h.scheduler.schedule(root.id, interval);

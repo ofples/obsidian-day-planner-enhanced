@@ -50,6 +50,8 @@ M1 stores a versioned `task-cache.json` with a generated vault namespace and the
 
 Use a single service operation queue and coalesce refresh requests. Compare the last serialized disk state before every state mutation. A mismatch reports another writer, stops mutation and preserves local changes for recovery. Persist a before/after journal before touching a note. Resolve account and lifecycle generation after every asynchronous boundary so a disconnected account cannot repopulate the pane.
 
+Registry v8 adds local capture-tag repair while preserving the previous acknowledged note baseline. The repair changes the opt-in tag through the note journal. Title, interval, checkbox and routing changes remain eligible for normal field reconciliation after that acknowledgment. Earlier owned calendar recovery remains durable. Older registry versions retain their original-byte migration backup.
+
 A snapshot is published only after all user, task, project and required section pages finish and validate. A failed page retains the previous snapshot. Repeated cursors stop with an error. Cache load failures report an actionable recovery message and preserve the damaged file. Initialization does not clear user data automatically.
 
 ## Todoist adapter and authentication
@@ -122,6 +124,8 @@ Remove from schedule removes the local time range, deletes the already-owned man
 Explicit Unlink note confirms a local-only operation. Remove the parsed parent #todoist tag with exact surrounding note bytes and the existing note journal. Keep nested tags and independently registered children. After note acknowledgment, remove the active task link and task projection. Retain the intent, original task/source, note images and occurrence key as recovery history. This operation sends no task command. Its active timed note continues through the ordinary Day Planner calendar bridge.
 
 An unlink inherits earlier uncertain owned calendar exports and explicit event removals. Recover those saved phases after restart while preserving subsequent local edits. Unlink itself creates no calendar export or removal. A pending unlink continues blocking a new schedule for that task until inherited work completes. Runtime validation rejects unlink journals containing provider changes, provider steps, a new schedule target or a prepared calendar block. The intent transaction rechecks active account, expected link and outstanding task changes. Unstable or ambiguous sources require their current note identity before unlink can apply.
+
+Removing a previously acknowledged #todoist tag pauses propagation and creates a link decision. Confirming it uses the unlink journal. Cancel, Escape, closing the form, switching forms and closing the Tasks pane restore the tag through a local repair journal. Recover the exact original placement when other bytes match. Otherwise insert it into the current first line while preserving its native block ID, comments and child bytes. Revalidate the current note and account before writing. Preserve the old common note baseline so concurrent title and time edits still reconcile. A failed repair leaves the decision actionable. Provider commands and new calendar exports are excluded from these repair journals.
 
 ## Calendar duplicate prevention
 

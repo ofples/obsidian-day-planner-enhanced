@@ -19,6 +19,24 @@ export function withoutTaskCaptureTag(raw: string) {
   return result;
 }
 
+/** Restore an opt-in without acknowledging other edits made while the decision was open. */
+export function withTaskCaptureTag(raw: string, previousRaw?: string) {
+  const candidate = parseCaptureCandidates("", raw)[0];
+  if (!candidate)
+    throw new Error("Restore the linked checklist before keeping its link.");
+  if (candidate.tags.some((tag) => tag.name.toLowerCase() === "todoist"))
+    return raw;
+  if (previousRaw && withoutTaskCaptureTag(previousRaw) === raw)
+    return previousRaw;
+  const firstTag = candidate.tags[0];
+  if (firstTag)
+    return raw.slice(0, firstTag.from) + "#todoist " + raw.slice(firstTag.from);
+  const first = raw.split(/\r?\n/)[0] ?? "";
+  const suffix = first.match(/\s*(?:\^[\w-]+\s*)?$/)?.[0] ?? "";
+  const index = first.length - suffix.length;
+  return raw.slice(0, index) + " #todoist" + raw.slice(index);
+}
+
 /** Change owned first-line fields while retaining child bytes, comments and native IDs. */
 export function rewriteTaskNote(
   raw: string,

@@ -33,7 +33,7 @@ const taskReconcileIssueSchema = z.object({
 export type TaskReconcileIssue = z.infer<typeof taskReconcileIssueSchema>;
 
 const taskRegistrySchema = z.object({
-  version: z.literal(7),
+  version: z.literal(8),
   namespace: z.string().regex(/^[a-f0-9]{32}$/),
   operations: z.array(taskOperationSchema),
   links: z.record(z.string(), taskLinkSchema),
@@ -50,6 +50,7 @@ const legacyRegistrySchema = taskRegistrySchema.extend({
     z.literal(4),
     z.literal(5),
     z.literal(6),
+    z.literal(7),
   ]),
   schedules: z.array(scheduleOperationSchema).default([]),
   projections: z.record(z.string(), taskProjectionSchema).default({}),
@@ -81,7 +82,7 @@ export class TaskRegistry {
     this.state =
       this.lastSaved === null
         ? {
-            version: 7,
+            version: 8,
             namespace: this.namespace,
             operations: [],
             links: {},
@@ -93,7 +94,7 @@ export class TaskRegistry {
             legacy.success
               ? {
                   ...legacy.data,
-                  version: 7,
+                  version: 8,
                   links: Object.fromEntries(
                     Object.entries(legacy.data.links).map(([uid, link]) => [
                       uid,

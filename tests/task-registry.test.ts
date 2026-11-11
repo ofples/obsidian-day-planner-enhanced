@@ -11,6 +11,32 @@ const legacy = JSON.stringify({
 });
 
 describe("task registry migration", () => {
+  test("v7 migration backs up the original unlink format before capture-tag repair", async () => {
+    let disk = JSON.stringify({
+      version: 7,
+      namespace,
+      operations: [],
+      links: {},
+      schedules: [],
+      projections: {},
+      issues: {},
+    });
+    const original = disk;
+    const backupState = vi.fn(async () => {});
+    const registry = new TaskRegistry(
+      {
+        readState: async () => disk,
+        writeState: async (value) => {
+          disk = value;
+        },
+        backupState,
+      },
+      namespace,
+    );
+    await registry.initialize();
+    expect(backupState).toHaveBeenCalledWith(original, 7);
+    expect(JSON.parse(disk).version).toBe(8);
+  });
   test("v6 migration backs up the original bytes before enabling unlink journals", async () => {
     let disk = JSON.stringify({
       version: 6,
@@ -35,7 +61,7 @@ describe("task registry migration", () => {
     );
     await registry.initialize();
     expect(backupState).toHaveBeenCalledWith(original, 6);
-    expect(JSON.parse(disk).version).toBe(7);
+    expect(JSON.parse(disk).version).toBe(8);
   });
   test("v5 migration backs up the registry and keeps its note baselines", async () => {
     let disk = JSON.stringify({
@@ -61,7 +87,7 @@ describe("task registry migration", () => {
     );
     await registry.initialize();
     expect(backupState).toHaveBeenCalledWith(original, 5);
-    expect(registry.snapshot().version).toBe(7);
+    expect(registry.snapshot().version).toBe(8);
   });
 
   test("v4 migration retains the acknowledged projection instead of accepting an unmerged note edit", async () => {
@@ -171,8 +197,8 @@ describe("task registry migration", () => {
     const registry = new TaskRegistry(storage, namespace);
     await registry.initialize();
     expect(events).toEqual(["backup", "write"]);
-    expect(registry.snapshot().version).toBe(7);
-    expect(JSON.parse(disk).version).toBe(7);
+    expect(registry.snapshot().version).toBe(8);
+    expect(JSON.parse(disk).version).toBe(8);
   });
 
   test("failed backup preserves the original registry", async () => {

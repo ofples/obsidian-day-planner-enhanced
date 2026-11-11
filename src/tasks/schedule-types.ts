@@ -92,6 +92,7 @@ export const scheduleOperationSchema = z
     syncTaskDate: z.boolean(),
     unlink: z.boolean().optional(),
     unlinkNoteBase: taskSourceSchema.optional(),
+    repairCaptureTag: z.boolean().optional(),
     providerChanges: taskPatchSchema.optional(),
     providerSteps: z
       .array(
@@ -146,6 +147,7 @@ export const scheduleOperationSchema = z
     (operation) =>
       !operation.unlink ||
       (operation.target.kind === "reconcile" &&
+        !operation.repairCaptureTag &&
         !operation.syncTaskDate &&
         !operation.providerChanges &&
         !operation.providerSteps?.length &&
@@ -153,6 +155,20 @@ export const scheduleOperationSchema = z
     {
       message:
         "Unlink journals contain local note edits and calendar recovery only.",
+    },
+  )
+  .refine(
+    (operation) =>
+      !operation.repairCaptureTag ||
+      (operation.target.kind === "reconcile" &&
+        !operation.unlink &&
+        !operation.syncTaskDate &&
+        !operation.providerChanges &&
+        !operation.providerSteps?.length &&
+        !operation.plan?.block),
+    {
+      message:
+        "Capture-tag repair journals contain local note edits and calendar recovery only.",
     },
   );
 

@@ -9,5 +9,10 @@ export type TaskPanelAction =
   | { kind: "settings" }
   | { kind: "route"; issue: CaptureIssue }
   | { kind: "unschedule"; task: ProviderTask }
-  | { kind: "unlink"; linkUid: string; title: string }
+  | {
+      kind: "unlink";
+      linkUid: string;
+      title: string;
+      restoreTagOnCancel?: boolean;
+    }
   | { kind: "conflict"; id: string; source: boolean };

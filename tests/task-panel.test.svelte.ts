@@ -113,6 +113,171 @@ function press(element: EventTarget, key: string, isComposing = false) {
 }
 
 describe("custom Tasks panel", () => {
+  test.each(["Cancel", "Close", "Escape"])(
+    "%s restores a removed capture tag before closing its decision",
+    async (close) => {
+      const keepLinked = vi.fn(async () => {});
+      const reconciler = {
+        state: writable({ issues: [], error: "" }),
+        keepLinked,
+      } as unknown as TaskReconciler;
+      const h = render(
+        {
+          kind: "unlink",
+          linkUid: "link",
+          title: "Shopping",
+          restoreTagOnCancel: true,
+        },
+        reconciler,
+      );
+      if (close === "Cancel")
+        h.target
+          .querySelector<HTMLButtonElement>(
+            ".task-action-area .task-text-button",
+          )!
+          .click();
+      else if (close === "Close")
+        h.target
+          .querySelector<HTMLButtonElement>('[aria-label="Close task form"]')!
+          .click();
+      else press(h.target.querySelector("section")!, "Escape");
+      await vi.waitFor(() => expect(get(h.action)).toBeNull());
+      expect(keepLinked).toHaveBeenCalledExactlyOnceWith("link");
+    },
+  );
+
+  test("switching forms restores a removed capture tag before opening the next editor", async () => {
+    let finish!: () => void;
+    const keepLinked = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const reconciler = {
+      state: writable({ issues: [], error: "" }),
+      keepLinked,
+    } as unknown as TaskReconciler;
+    const h = render(
+      {
+        kind: "unlink",
+        linkUid: "link",
+        title: "Shopping",
+        restoreTagOnCancel: true,
+      },
+      reconciler,
+    );
+    h.target
+      .querySelector<HTMLButtonElement>('[aria-label="New task"]')!
+      .click();
+    flushSync();
+    expect(keepLinked).toHaveBeenCalledOnce();
+    expect(get(h.action)?.kind).toBe("unlink");
+    expect(h.target.textContent).toContain("Restoring link…");
+    finish();
+    await vi.waitFor(() => expect(get(h.action)?.kind).toBe("create"));
+    expect(
+      h.target.querySelector<HTMLInputElement>('[aria-label="Task title"]')
+        ?.value,
+    ).toBe("");
+  });
+
+  test("a failed tag restoration retains the decision and error for retry", async () => {
+    const keepLinked = vi.fn(async () => {
+      throw new Error("The tag restoration is saved. Retry its note write.");
+    });
+    const reconciler = {
+      state: writable({ issues: [], error: "" }),
+      keepLinked,
+    } as unknown as TaskReconciler;
+    const h = render(
+      {
+        kind: "unlink",
+        linkUid: "link",
+        title: "Shopping",
+        restoreTagOnCancel: true,
+      },
+      reconciler,
+    );
+    h.target
+      .querySelector<HTMLButtonElement>('[aria-label="Close task form"]')!
+      .click();
+    await vi.waitFor(() =>
+      expect(h.target.textContent).toContain("Retry its note write"),
+    );
+    expect(get(h.action)?.kind).toBe("unlink");
+    expect(
+      h.target.querySelector<HTMLButtonElement>(
+        '[aria-label="Close task form"]',
+      )?.disabled,
+    ).toBe(false);
+  });
+
+  test("confirming unlink after capture-tag removal skips tag restoration", async () => {
+    const unlink = vi.fn(async () => {}),
+      keepLinked = vi.fn(async () => {});
+    const reconciler = {
+      state: writable({ issues: [], error: "" }),
+      unlink,
+      keepLinked,
+    } as unknown as TaskReconciler;
+    const h = render(
+      {
+        kind: "unlink",
+        linkUid: "link",
+        title: "Shopping",
+        restoreTagOnCancel: true,
+      },
+      reconciler,
+    );
+    h.target
+      .querySelector<HTMLButtonElement>(".task-action-area .task-primary")!
+      .click();
+    await vi.waitFor(() => expect(get(h.action)).toBeNull());
+    expect(unlink).toHaveBeenCalledExactlyOnceWith("link");
+    expect(keepLinked).not.toHaveBeenCalled();
+  });
+
+  test("capture-tag removal opens its own link decision from the compact review list", () => {
+    const reconciler = {
+      state: writable({
+        issues: [
+          {
+            id: crypto.randomUUID(),
+            provider: "todoist",
+            accountId: "account",
+            linkUid: "link",
+            taskId: task.id,
+            fields: ["unlink"],
+            remote: task,
+            message: "The capture tag was removed.",
+            source: {
+              path: "Tasks.md",
+              from: 0,
+              raw: "- [ ] Shopping",
+              title: "Shopping",
+            },
+          },
+        ],
+        error: "",
+      }),
+    } as unknown as TaskReconciler;
+    const h = render(null, reconciler);
+    const review = Array.from(
+      h.target.querySelectorAll<HTMLButtonElement>(".task-review button"),
+    ).find((button) => button.textContent === "Review link")!;
+    expect(review).toBeDefined();
+    review.click();
+    flushSync();
+    expect(get(h.action)).toEqual({
+      kind: "unlink",
+      linkUid: "link",
+      title: "Shopping",
+      restoreTagOnCancel: true,
+    });
+    expect(h.target.textContent).toContain("Cancel restores #todoist");
+  });
+
   test("unlink requires confirmation and keeps the decision open while it saves", async () => {
     let finish!: () => void;
     const unlink = vi.fn(

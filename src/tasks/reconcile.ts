@@ -27,7 +27,11 @@ import {
   type TaskMutation,
   type TaskPatch,
 } from "./operations";
-import { rewriteTaskNote, withoutTaskCaptureTag } from "./reconcile-markdown";
+import {
+  rewriteTaskNote,
+  withoutTaskCaptureTag,
+  withTaskCaptureTag,
+} from "./reconcile-markdown";
 import type { TaskLink, TaskReconcileIssue } from "./registry";
 import type { TaskScheduler } from "./schedule";
 import {
@@ -461,7 +465,7 @@ export class TaskReconciler {
       );
     if (
       issue.fields.some((field) =>
-        ["source", "task", "recurrence"].includes(field),
+        ["source", "task", "recurrence", "unlink"].includes(field),
       )
     )
       throw new TaskReadError(
@@ -626,13 +630,13 @@ export class TaskReconciler {
     return { kind: "saved" };
   }
 
-  async unlink(linkUid: string) {
+  private async linkedNoteContext(linkUid: string) {
     await this.pending;
     await this.capture.scan();
     const snapshot = get(this.service.state).snapshot;
     if (!snapshot || !this.current(snapshot))
       throw new TaskReadError(
-        "Reconnect the original task account before unlinking.",
+        "Reconnect the original task account before reviewing its note link.",
       );
     const state = this.service.registry.snapshot();
     const link = state.links[linkUid];
@@ -643,7 +647,7 @@ export class TaskReconciler {
       link.accountId !== snapshot.account.id
     )
       throw new TaskReadError(
-        "This note link changed. Refresh before unlinking.",
+        "This note link changed. Refresh before reviewing it.",
       );
     if (
       state.operations.some(
@@ -655,18 +659,23 @@ export class TaskReconciler {
       )
     )
       throw new TaskReadError(
-        "Finish this task's saved change before unlinking.",
+        "Finish this task's saved change before reviewing its note link.",
       );
     const source = this.capture
       .candidates()
       .find((candidate) => candidate.uid === linkUid);
     if (!source || !(await this.capture.sourceIsCurrent(source)))
       throw new TaskReadError(
-        "Choose the current note block before unlinking this task.",
+        "Choose the current note block before reviewing this task link.",
       );
+    return { link, source, state, task: link.base };
+  }
+
+  async unlink(linkUid: string) {
+    const { link, source, state, task } = await this.linkedNoteContext(linkUid);
     await this.scheduler.reconcile({
       linkUid,
-      task: link.base,
+      task,
       source,
       raw: withoutTaskCaptureTag(source.raw),
       interval: state.projections[linkUid]?.interval ?? null,
@@ -674,6 +683,30 @@ export class TaskReconciler {
       expectedLink: link,
       unlink: true,
     });
+    this.publish();
+  }
+
+  async keepLinked(linkUid: string) {
+    const { link, source, state, task } = await this.linkedNoteContext(linkUid);
+    const operation = await this.scheduler.reconcile({
+      linkUid,
+      task,
+      source,
+      raw: withTaskCaptureTag(source.raw, link.noteBase?.raw),
+      interval: state.projections[linkUid]?.interval ?? null,
+      mutations: [],
+      expectedLink: link,
+      repairCaptureTag: true,
+    });
+    const saved = this.service.registry
+      .snapshot()
+      .schedules.find((item) => item.id === operation.id);
+    if (!saved?.taskAcknowledged)
+      throw new TaskReadError(
+        saved?.error ??
+          "Finish the saved tag restoration before closing this decision.",
+      );
+    await this.scan();
     this.publish();
   }
 
@@ -767,6 +800,26 @@ export class TaskReconciler {
         continue;
       }
       if (!(await this.capture.sourceIsCurrent(candidate))) continue;
+      const acknowledged = parseCaptureCandidates(
+        "",
+        (link.noteBase ?? link.source).raw,
+      )[0];
+      if (
+        acknowledged?.tags.some(
+          (tag) => tag.name.toLowerCase() === "todoist",
+        ) &&
+        !candidate.tags.some((tag) => tag.name.toLowerCase() === "todoist")
+      ) {
+        await this.issue(
+          uid,
+          link,
+          snapshot.tasks.find((task) => task.id === link.taskId) ?? link.base,
+          ["unlink"],
+          "The capture tag was removed. Review whether to unlink this note.",
+          candidate,
+        );
+        continue;
+      }
       const remote =
         snapshot.tasks.find((task) => task.id === link.taskId) ??
         (await this.service.readTask(link.taskId));

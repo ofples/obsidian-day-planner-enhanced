@@ -104,6 +104,21 @@ export class TasksView extends ItemView {
   }
 
   async onClose() {
+    const action = get(this.panelAction);
+    if (
+      action?.kind === "unlink" &&
+      action.restoreTagOnCancel &&
+      this.reconciler
+    ) {
+      try {
+        await this.reconciler.keepLinked(action.linkUid);
+        this.panelAction.set(null);
+      } catch {
+        new Notice(
+          "The link decision is saved. Reopen Tasks to finish restoring its capture tag.",
+        );
+      }
+    }
     if (this.component) await unmount(this.component);
     this.component = undefined;
     this.contentEl.removeClass("day-planner-tasks-view");

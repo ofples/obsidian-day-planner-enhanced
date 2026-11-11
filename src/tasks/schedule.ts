@@ -150,14 +150,17 @@ export class TaskScheduler {
     mutations: { mutation: TaskMutation; base: ProviderTask }[];
     expectedLink?: TaskLink;
     unlink?: boolean;
+    repairCaptureTag?: boolean;
   }) {
     await this.pending;
     const browser = get(this.service.state),
       snapshot = browser.snapshot;
     if (this.stopped || !snapshot || !browser.writable)
       throw new TaskReadError("Reconnect before reconciling this task.");
-    if (input.unlink && input.mutations.length)
-      throw new TaskReadError("Unlinking requires a local-only note change.");
+    if ((input.unlink || input.repairCaptureTag) && input.mutations.length)
+      throw new TaskReadError(
+        "Link recovery requires a local-only note change.",
+      );
     const state = this.service.registry.snapshot(),
       link = state.links[input.linkUid];
     if (
@@ -199,6 +202,7 @@ export class TaskScheduler {
       syncTaskDate: false,
       unlink: input.unlink,
       unlinkNoteBase: input.unlink ? link.noteBase : undefined,
+      repairCaptureTag: input.repairCaptureTag,
       providerSteps: input.mutations.map((step) => ({
         ...step,
         id: crypto.randomUUID(),
@@ -210,7 +214,7 @@ export class TaskScheduler {
       if (
         !this.current(operation) ||
         JSON.stringify(current.links[input.linkUid]) !== JSON.stringify(link) ||
-        (input.unlink &&
+        ((input.unlink || input.repairCaptureTag) &&
           current.operations.some(
             (item) =>
               item.provider === operation.provider &&
@@ -421,6 +425,8 @@ export class TaskScheduler {
   private calendarRemovals(operation: ScheduleOperation) {
     const removals = [...(operation.calendarRemovals ?? [])];
     if (
+      !operation.unlink &&
+      !operation.repairCaptureTag &&
       operation.plan &&
       !operation.plan.interval &&
       operation.previousInterval &&
@@ -634,7 +640,7 @@ export class TaskScheduler {
         let googleUid = operation.googleUid;
         const interval =
           "interval" in operation.target ? operation.target.interval : null;
-        if (interval && !operation.unlink) {
+        if (interval && !operation.unlink && !operation.repairCaptureTag) {
           const matching = operation.previous
             ? blocks.filter(
                 (block) =>
@@ -849,14 +855,18 @@ export class TaskScheduler {
       }
       if (!this.current(operation)) return;
       let eventId: string | undefined;
-      if (operation.plan!.interval && !operation.unlink)
+      if (
+        operation.plan!.interval &&
+        !operation.unlink &&
+        !operation.repairCaptureTag
+      )
         eventId = await this.calendar.syncProjection(
           operation.googleUid,
           operation.plan!.block!.snapshot,
         );
       if (!this.current(operation)) return;
       await this.service.registry.change((state) => {
-        if (!operation.unlink)
+        if (!operation.unlink && !operation.repairCaptureTag)
           state.projections[operation.linkUid]!.googleEventId = eventId;
         const saved = state.schedules.find((item) => item.id === operation.id)!;
         saved.phase = "complete";
@@ -890,7 +900,7 @@ export class TaskScheduler {
           Object.keys(mutationFields(step.mutation)),
         ) ?? Object.keys(operation.providerChanges ?? {});
       const base =
-        operation.target.kind === "reconcile"
+        operation.target.kind === "reconcile" && !operation.repairCaptureTag
           ? task
           : {
               ...(link.base ?? operation.task),
@@ -903,7 +913,10 @@ export class TaskScheduler {
             };
       state.projections[operation.linkUid]!.base = base;
       link.base = base;
-      if (operation.target.kind === "reconcile") {
+      if (
+        operation.target.kind === "reconcile" &&
+        !operation.repairCaptureTag
+      ) {
         link.noteBase = operation.plan!.links[0]!.source;
         delete state.issues[operation.linkUid];
       }
@@ -1044,7 +1057,7 @@ export class TaskScheduler {
   ): Promise<NonNullable<ScheduleOperation["plan"]>> {
     const lines = operation.raw.split(/\r?\n/),
       range = getTimeRangeMatch(lines[0] ?? "");
-    if (range && !operation.unlink)
+    if (range && !operation.unlink && !operation.repairCaptureTag)
       lines[0] = (
         lines[0]!.slice(0, range.startIndex).trimEnd() +
         " " +
@@ -1119,7 +1132,10 @@ export class TaskScheduler {
     return {
       edits,
       links: this.planLinks(operation, path, from, raw),
-      interval: operation.unlink ? (operation.previousInterval ?? null) : null,
+      interval:
+        operation.unlink || operation.repairCaptureTag
+          ? (operation.previousInterval ?? null)
+          : null,
     };
   }
 

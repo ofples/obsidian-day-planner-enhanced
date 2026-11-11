@@ -9,6 +9,7 @@ import { planTaskReconciliation } from "../src/tasks/reconcile";
 import {
   rewriteTaskNote,
   withoutTaskCaptureTag,
+  withTaskCaptureTag,
 } from "../src/tasks/reconcile-markdown";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
 
@@ -62,6 +63,27 @@ function plan(before: string, after: string, remote = task) {
 }
 
 describe("linked note field reconciliation", () => {
+  test("keeping a link restores its original capture-tag placement when other bytes match", () => {
+    const original =
+      "- [ ] Task #ToDoIsT #work <!-- keep --> ^native\r\n  - [ ] Child #todoist";
+    expect(withTaskCaptureTag(withoutTaskCaptureTag(original), original)).toBe(
+      original,
+    );
+  });
+
+  test("capture-tag restoration preserves changed titles, native IDs and child bytes", () => {
+    const raw =
+      "- [ ] Edited **task** #work <!-- keep --> ^native\r\n  - [ ] Child #todoist";
+    expect(withTaskCaptureTag(raw, "- [ ] Original #todoist #work")).toBe(
+      raw.replace(" #work", " #todoist #work"),
+    );
+    expect(withTaskCaptureTag("- [ ] Task ^native  ")).toBe(
+      "- [ ] Task #todoist ^native  ",
+    );
+    expect(withTaskCaptureTag("- [ ] Task `#todoist`  ")).toBe(
+      "- [ ] Task `#todoist` #todoist  ",
+    );
+  });
   test("unlink removes the parsed parent opt-in and preserves comments, code and nested tags", () => {
     const raw =
       "- [ ] **Task** #ToDoIsT #keep <!-- #todoist --> `#todoist` ^native\r\n  - [ ] Child #todoist";
