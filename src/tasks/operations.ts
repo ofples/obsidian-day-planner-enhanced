@@ -46,6 +46,7 @@ export const taskMutationSchema = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("complete"), taskId: z.string().min(1) }),
   z.object({ kind: z.literal("reopen"), taskId: z.string().min(1) }),
+  z.object({ kind: z.literal("delete"), taskId: z.string().min(1) }),
 ]);
 
 export const taskOperationSchema = z
@@ -68,6 +69,7 @@ export const taskOperationSchema = z
     ]),
     remoteId: z.string().optional(),
     readback: taskSchema.optional(),
+    deletionReadback: z.record(z.string(), taskSchema.nullable()).optional(),
     sourceUid: z.string().optional(),
     createdAt: z.iso.datetime(),
     attempts: z.number().int().nonnegative(),
@@ -78,8 +80,11 @@ export const taskOperationSchema = z
   .refine(
     (operation) =>
       operation.status !== "verified" ||
-      (Boolean(operation.remoteId) &&
-        operation.readback?.id === operation.remoteId),
+      (operation.mutation.kind === "delete"
+        ? operation.remoteId === operation.mutation.taskId &&
+          operation.deletionReadback?.[operation.remoteId] === null
+        : Boolean(operation.remoteId) &&
+          operation.readback?.id === operation.remoteId),
     {
       message:
         "Verified task operations require their matching provider readback.",
@@ -105,6 +110,8 @@ export function mutationFields(mutation: TaskMutation) {
       return { completed: true };
     case "reopen":
       return { completed: false };
+    case "delete":
+      return {};
   }
 }
 
@@ -142,6 +149,8 @@ export function preflightOperation(
   if (!remote || remote.id !== mutation.taskId) return "conflict";
   const base = operation.base;
   if (!base) return "conflict";
+  if (mutation.kind === "delete")
+    return sameDeletionTask(base, remote) ? "ready" : "conflict";
   if (
     (mutation.kind === "complete" || mutation.kind === "reopen") &&
     base.due?.recurring &&
@@ -166,6 +175,7 @@ export function matchesOperationResult(
   remote: ProviderTask | null,
   timezone: string,
 ) {
+  if (operation.mutation.kind === "delete") return remote === null;
   if (!remote || remote.id !== operationTaskId(operation)) return false;
   if (operation.mutation.kind === "complete" && operation.base?.due?.recurring)
     return (
@@ -213,6 +223,32 @@ export function operationTaskId(operation: TaskOperation) {
 
 export function isOutstanding(operation: TaskOperation) {
   return !["complete", "cancelled"].includes(operation.status);
+}
+
+export function operationAffectsTasks(
+  operation: TaskOperation,
+  ids: Set<string>,
+) {
+  const mutation = operation.mutation;
+  return (
+    ids.has(operationTaskId(operation)) ||
+    (mutation.kind === "create" &&
+      mutation.task.parentId !== null &&
+      ids.has(mutation.task.parentId)) ||
+    (mutation.kind === "moveParent" && ids.has(mutation.parentId))
+  );
+}
+
+export function sameDeletionTask(base: ProviderTask, current: ProviderTask) {
+  return [...new Set([...Object.keys(base), ...Object.keys(current)])]
+    .filter((key) => key !== "order")
+    .every((key) =>
+      sameTaskField(
+        base[key as keyof ProviderTask],
+        current[key as keyof ProviderTask],
+        key,
+      ),
+    );
 }
 
 /** Follow replacement commands without replaying the superseded provider UUID. */

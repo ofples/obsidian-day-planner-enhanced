@@ -20,6 +20,7 @@
     Settings,
     Tag,
     Unlink,
+    Trash2,
     X,
   } from "lucide-svelte";
   import { DateTime } from "luxon";
@@ -35,6 +36,11 @@
     type TaskViewState,
   } from "../../tasks/browser";
   import type { TaskCapture } from "../../tasks/capture";
+  import type {
+    TaskDeletionController,
+    TaskDeletionReview,
+  } from "../../tasks/deletion";
+  import type { TaskDeletionRecord } from "../../tasks/deletion-types";
   import { operationTaskId } from "../../tasks/operations";
   import type { TaskReconciler } from "../../tasks/reconcile";
   import type { TaskScheduler } from "../../tasks/schedule";
@@ -52,6 +58,8 @@
   import TaskPanelCaptureSettings from "./task-panel-capture-settings.svelte";
   import TaskPanelConflict from "./task-panel-conflict.svelte";
   import TaskPanelConnect from "./task-panel-connect.svelte";
+  import TaskPanelDelete from "./task-panel-delete.svelte";
+  import TaskPanelDeleted from "./task-panel-deleted.svelte";
   import TaskPanelEditor from "./task-panel-editor.svelte";
   import TaskPanelRoute from "./task-panel-route.svelte";
   import TaskPanelSchedule from "./task-panel-schedule.svelte";
@@ -68,6 +76,8 @@
     captureSettings,
     settings,
     calendar,
+    deleter,
+    openSavedNote,
     completeTask,
     reopenTask,
     retry,
@@ -84,6 +94,8 @@
     captureSettings: () => void;
     settings?: Writable<DayPlannerSettings>;
     calendar?: Pick<GoogleCalendarSync, "calendars">;
+    deleter?: TaskDeletionController;
+    openSavedNote?: (path: string) => void;
     completeTask: (task: ProviderTask) => void;
     reopenTask: (task: ProviderTask) => void;
     retry: (id: string) => void;
@@ -92,6 +104,27 @@
   } = $props();
   const browserState: Readable<TaskBrowserState> = $derived(service.state);
   const captureState = $derived(capture.state);
+  const deletionState = $derived(
+    deleter?.state ??
+      readable({ records: [] as TaskDeletionRecord[], error: "" }),
+  );
+  const pendingDeletions = $derived(
+    $deletionState.records.filter(
+      (item) => !["complete", "cancelled"].includes(item.phase),
+    ),
+  );
+  const deletionHistory = $derived(
+    $deletionState.records.filter(
+      (item) =>
+        ["complete", "cancelled"].includes(item.phase) &&
+        item.tasks[0]!.title.toLowerCase().includes(
+          $preferences.query.toLowerCase(),
+        ),
+    ),
+  );
+  const regularOperations = $derived(
+    $browserState.operations.filter((item) => item.mutation.kind !== "delete"),
+  );
   const reconcileState = $derived(
     reconciler?.state ?? readable({ issues: [], error: "" }),
   );
@@ -115,11 +148,15 @@
     selected && snapshot ? taskSubtree(snapshot, selected) : [],
   );
   const pendingIds = $derived(
-    new Set($browserState.operations.map(operationTaskId)),
+    new Set([
+      ...$browserState.operations.map(operationTaskId),
+      ...pendingDeletions.flatMap((item) => item.tasks.map((task) => task.id)),
+    ]),
   );
   const attentionCount = $derived(
     new Set([
       ...$browserState.operations.map(operationTaskId),
+      ...pendingDeletions.map((item) => item.taskId),
       ...$scheduleState.operations.map((operation) => operation.task.id),
       ...$reconcileState.issues.map((issue) => issue.taskId),
       ...$captureState.issues.map(
@@ -128,13 +165,15 @@
     ]).size,
   );
   const syncError = $derived(
-    $browserState.error ||
+    $deletionState.error ||
+      $browserState.error ||
       $captureState.error ||
       $reconcileState.error ||
       $scheduleState.error,
   );
   const needsReview = $derived(
     $reconcileState.issues.length > 0 ||
+      pendingDeletions.some((item) => item.error) ||
       $captureState.issues.length > 0 ||
       $browserState.operations.some(
         (operation) =>
@@ -196,6 +235,21 @@
       return;
     }
     openAction(value);
+  }
+  async function confirmTaskDeletion(review: TaskDeletionReview) {
+    if (!deleter) throw new Error("Reopen Tasks before confirming deletion.");
+    busy = true;
+    try {
+      return await deleter.confirm(review);
+    } finally {
+      busy = false;
+    }
+  }
+  function reviewDeletion(id: string, taskId: string) {
+    const task =
+      snapshot?.tasks.find((item) => item.id === taskId) ??
+      $deletionState.records.find((item) => item.id === id)?.tasks[0];
+    if (task) startAction({ kind: "delete", task, replaces: id });
   }
   function openAction(value: TaskPanelAction) {
     const focused = paneElement?.ownerDocument.activeElement as
@@ -578,7 +632,14 @@
                 >{issue.message}</small
               >
             </div>
-            {#if issue.kind === "identity"}<button
+            {#if issue.deletionId && deleter}<button
+                class="task-text-button"
+                onclick={() =>
+                  startAction({
+                    kind: "deleted-record",
+                    id: issue.deletionId!,
+                  })}>Review saved task</button
+              >{:else if issue.kind === "identity"}<button
                 class="task-text-button"
                 onclick={() => capture.scan()}>Recheck link</button
               >{:else}<button
@@ -587,7 +648,7 @@
                 >Choose project</button
               >{/if}
           </div>{/each}
-        {#each $browserState.operations as operation (operation.id)}<div
+        {#each regularOperations as operation (operation.id)}<div
             class="task-review-row"
           >
             <div>
@@ -627,6 +688,21 @@
                 onclick={() => retrySchedule(operation.id)}>Retry</button
               >{/if}
           </div>{/each}
+        {#each pendingDeletions as record (record.id)}<div
+            class="task-review-row"
+          >
+            <div>
+              <strong>{record.tasks[0]!.title}</strong><small
+                >{record.error ?? "Finishing saved task deletion"}</small
+              >
+            </div>
+            <button
+              class="task-text-button"
+              onclick={() =>
+                startAction({ kind: "deleted-record", id: record.id })}
+              >Review deletion</button
+            >
+          </div>{/each}
       </div>
     </details>{/if}
 
@@ -641,6 +717,22 @@
         {#if $action.kind === "connect"}<TaskPanelConnect
             cancel={cancelAction}
             saved={actionSaved($action)}
+            {service}
+          />
+        {:else if $action.kind === "delete" && deleter}<TaskPanelDelete
+            cancel={cancelAction}
+            confirm={confirmTaskDeletion}
+            controller={deleter}
+            replaces={$action.replaces}
+            saved={actionSaved($action)}
+            taskId={$action.task.id}
+          />
+        {:else if $action.kind === "deleted-record" && deleter}<TaskPanelDeleted
+            id={$action.id}
+            close={cancelAction}
+            controller={deleter}
+            {openSavedNote}
+            {reviewDeletion}
             {service}
           />
         {:else if $action.kind === "settings" && settings}<TaskPanelCaptureSettings
@@ -911,6 +1003,14 @@
                         target="_blank"
                         ><ExternalLink size={15} />Open in Todoist</a
                       >
+                      {#if deleter && snapshot?.account.capabilities?.delete}<button
+                          disabled={!$browserState.writable ||
+                            pendingIds.has(row.task.id)}
+                          onclick={() =>
+                            startAction({ kind: "delete", task: row.task })}
+                          role="menuitem"
+                          ><Trash2 size={15} />Delete from Todoist</button
+                        >{/if}
                     </div>
                   </div>
                 {/each}{/if}
@@ -928,6 +1028,22 @@
                 class="task-text-button"
                 disabled={!$browserState.writable}
                 onclick={() => reopenTask(task)}>Reopen</button
+              >
+            </div>{/each}
+        </details>{/if}
+      {#if deletionHistory.length}<details class="task-completed">
+          <summary
+            ><Trash2 size={14} />Deletion history<span
+              >{deletionHistory.length}</span
+            ></summary
+          >{#each deletionHistory as record (record.id)}<div
+              class="task-completed-row"
+            >
+              <span>{record.tasks[0]!.title}</span><button
+                class="task-text-button"
+                onclick={() =>
+                  startAction({ kind: "deleted-record", id: record.id })}
+                >Review</button
               >
             </div>{/each}
         </details>{/if}
@@ -1087,6 +1203,12 @@
                   })}><Unlink size={16} />Unlink note</button
               >{/if}
           </div>{/if}
+        {#if deleter && snapshot?.account.capabilities?.delete}<button
+            class="task-text-button task-delete-button"
+            disabled={!canEditSelected}
+            onclick={() => startAction({ kind: "delete", task: selected })}
+            ><Trash2 size={16} />Delete from Todoist</button
+          >{/if}
       </section>{/if}
   </div>
 

@@ -13,6 +13,8 @@ import {
 import { defaultSettingsForTests } from "../src/settings";
 import { taskViewStateSchema } from "../src/tasks/browser";
 import type { TaskCapture } from "../src/tasks/capture";
+import type { TaskDeletionController, TaskDeletionReview } from "../src/tasks/deletion";
+import { taskDeletionSchema } from "../src/tasks/deletion-types";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 import type { TaskOperation } from "../src/tasks/operations";
 import type { TaskReconciler } from "../src/tasks/reconcile";
@@ -57,6 +59,7 @@ afterEach(async () => {
 function render(
   actionValue: TaskPanelAction | null = null,
   reconciler?: TaskReconciler,
+  deleter?: TaskDeletionController,
 ) {
   const state = writable<TaskBrowserState>({
     snapshot,
@@ -86,6 +89,7 @@ function render(
         capture,
         action,
         reconciler,
+        deleter,
         settings: writable(defaultSettingsForTests),
         calendar: { calendars: async () => [] },
         preferences: writable(taskViewStateSchema.parse({})),
@@ -115,6 +119,74 @@ function press(element: EventTarget, key: string, isComposing = false) {
 }
 
 describe("custom Tasks panel", () => {
+  function deletionController() {
+    const record = taskDeletionSchema.parse({
+      id: crypto.randomUUID(), provider: "todoist", accountId: snapshot.account.id,
+      taskId: task.id, tasks: [task], links: {}, projections: {}, phase: "pending", createdAt: snapshot.fetchedAt,
+    });
+    const review: TaskDeletionReview = { record, fingerprint: "original", cached: false };
+    const state = writable({ records: [record], error: "" });
+    const confirm = vi.fn<TaskDeletionController["confirm"]>().mockResolvedValue({ kind: "saved", id: record.id });
+    const controller = { state, review: vi.fn().mockResolvedValue(review), confirm, cancel: vi.fn(), retry: vi.fn() } as unknown as TaskDeletionController;
+    return { controller, state, record, review, confirm };
+  }
+
+  test("task menus open the custom permanent-deletion confirmation", async () => {
+    const deletion = deletionController();
+    deletion.state.set({ records: [], error: "" });
+    const h = render(null, undefined, deletion.controller);
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, account: { ...snapshot.account, capabilities: { delete: true } } } }));
+    flushSync();
+    const button = Array.from(h.target.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent?.includes("Delete from Todoist"))!;
+    button.click();
+    await vi.waitFor(() => { flushSync(); expect(h.target.querySelector('form[aria-label="Confirm task deletion"]')?.textContent).toContain("Shopping"); });
+    expect(deletion.confirm).not.toHaveBeenCalled();
+    Array.from(h.target.querySelectorAll<HTMLButtonElement>("button")).find(button => button.textContent === "Cancel")!.click();
+    flushSync();
+    expect(get(h.action)).toBe(null);
+    expect(deletion.confirm).not.toHaveBeenCalled();
+  });
+
+  test("saving deletion holds the form open until its durable confirmation completes", async () => {
+    const deletion = deletionController();
+    let finish!: (result: Awaited<ReturnType<TaskDeletionController["confirm"]>>) => void;
+    deletion.confirm.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+    const h = render({ kind: "delete", task }, undefined, deletion.controller);
+    await vi.waitFor(() => { flushSync(); expect(h.target.querySelector('button[type="submit"]')).not.toBeNull(); });
+    h.target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(deletion.confirm).toHaveBeenCalledOnce());
+    press(h.target.querySelector("form")!, "Escape");
+    expect(get(h.action)?.kind).toBe("delete");
+    expect(h.target.querySelector<HTMLButtonElement>('[aria-label="Close task form"]')?.disabled).toBe(true);
+    finish({ kind: "saved", id: deletion.record.id });
+    await vi.waitFor(() => { flushSync(); expect(get(h.action)).toBe(null); });
+  });
+
+  test("changed confirmation details remain visible and require another submission", async () => {
+    const deletion = deletionController();
+    deletion.confirm.mockResolvedValueOnce({ kind: "changed", review: { ...deletion.review, fingerprint: "changed", record: { ...deletion.record, tasks: [{ ...task, title: "New title" }] } } });
+    const h = render({ kind: "delete", task }, undefined, deletion.controller);
+    await vi.waitFor(() => { flushSync(); expect(h.target.querySelector('button[type="submit"]')).not.toBeNull(); });
+    h.target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => { flushSync(); expect(h.target.textContent).toContain("New title"); });
+    expect(get(h.action)?.kind).toBe("delete");
+    expect(deletion.confirm).toHaveBeenCalledOnce();
+    expect(h.target.textContent).toContain("confirm again");
+  });
+
+  test("completed deletion history opens its saved details when the active list is empty", () => {
+    const deletion = deletionController();
+    deletion.state.set({ records: [{ ...deletion.record, phase: "complete" }], error: "" });
+    const h = render(null, undefined, deletion.controller);
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks: [] } }));
+    flushSync();
+    expect(h.target.textContent).toContain("Deletion history");
+    Array.from(h.target.querySelectorAll<HTMLButtonElement>("button")).find(button => button.textContent === "Review")!.click();
+    flushSync();
+    expect(h.target.querySelector('[aria-label="Task deletion recovery"]')?.textContent).toContain("Groceries");
+    expect(h.target.textContent).toContain("Deletion verified");
+  });
+
   test("restored identity issues offer a recheck without entering project capture", () => {
     const h = render();
     h.capture.state.set({

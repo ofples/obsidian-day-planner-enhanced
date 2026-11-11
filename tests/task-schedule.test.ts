@@ -18,6 +18,8 @@ import type { PeriodicNotes } from "../src/service/periodic-notes";
 import { defaultSettings } from "../src/settings";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 import { TaskCapture } from "../src/tasks/capture";
+import { TaskDeletionController } from "../src/tasks/deletion";
+import { taskSubtree } from "../src/tasks/browser";
 import { TaskReconciler } from "../src/tasks/reconcile";
 import { mutationFields } from "../src/tasks/operations";
 import { taskCaptureSettingsSchema } from "../src/tasks/capture-settings";
@@ -219,7 +221,7 @@ async function harness() {
       id: "account",
       name: "Test",
       timezone: "UTC",
-      capabilities: { duration: false },
+      capabilities: { duration: false, delete: true },
     },
     projects: [{ id: "work", name: "Work", order: 1, inbox: true }],
     tasks: structuredClone(
@@ -229,7 +231,15 @@ async function harness() {
   });
   const commands = new Map<string, string>();
   const apply = vi.fn(async (operation: TaskOperation) => {
-    if (!commands.has(operation.id) && operation.mutation.kind !== "create")
+    if (!commands.has(operation.id) && operation.mutation.kind === "delete") {
+      const remote = tasks.get(operation.mutation.taskId);
+      if (remote) {
+        for (const item of taskSubtree({ ...snapshot(), tasks: [...tasks.values()].map(task => ({ ...task, completed: false })) }, remote))
+          tasks.delete(item.task.id);
+        tasks.delete(remote.id);
+      }
+    }
+    else if (!commands.has(operation.id) && operation.mutation.kind !== "create")
       tasks.set(operation.mutation.taskId, {
         ...tasks.get(operation.mutation.taskId)!,
         ...mutationFields(operation.mutation),
@@ -242,9 +252,10 @@ async function harness() {
           : operation.mutation.taskId,
     };
   });
+  const readTask = vi.fn(async (id: string) => structuredClone(tasks.get(id) ?? null));
   const provider = () => ({
     read: async () => snapshot(),
-    get: async (id: string) => structuredClone(tasks.get(id) ?? null),
+    get: readTask,
     apply,
   });
   const storage = {
@@ -293,7 +304,10 @@ async function harness() {
     scheduler,
     host.settings,
   );
+  let deleter = new TaskDeletionController(service, capture, scheduler, reconciler);
   return {
+    get deleter() { return deleter; },
+    get capture() { return capture; },
     get service() {
       return service;
     },
@@ -314,6 +328,7 @@ async function harness() {
     events,
     tasks,
     apply,
+    readTask,
     process,
     setFailTaskWrite(value: boolean) {
       failTaskWrite = value;
@@ -363,6 +378,7 @@ async function harness() {
       await capture.scan();
     },
     async restart() {
+      deleter.stop();
       scheduler.stop();
       capture.stop();
       reconciler.stop();
@@ -379,9 +395,193 @@ async function harness() {
         scheduler,
         host.settings,
       );
+      deleter = new TaskDeletionController(service, capture, scheduler, reconciler);
     },
   };
 }
+
+describe("verified task deletion", () => {
+  async function finish(h: Awaited<ReturnType<typeof harness>>) {
+    await h.deleter.resume();
+    await h.service.refresh();
+    await h.deleter.resume();
+    await h.settle();
+    await h.deleter.resume();
+  }
+
+  test("opening a confirmation has no deletion intent or provider writes", async () => {
+    const h = await harness();
+    const review = await h.deleter.review(root.id);
+    expect(review.record.tasks.map(task => task.id)).toEqual([root.id, child.id]);
+    expect(h.service.registry.snapshot().deletions).toEqual({});
+    expect(h.service.registry.snapshot().operations).toEqual([]);
+    expect(h.apply).not.toHaveBeenCalled();
+    await expect(h.service.mutate({ kind: "delete", taskId: root.id })).rejects.toThrow("Confirm");
+    h.service.stop();
+  });
+
+  test("a changed task tree requires another confirmation", async () => {
+    const h = await harness();
+    const review = await h.deleter.review(root.id);
+    h.tasks.set(child.id, { ...child, title: "Edited child" });
+    const result = await h.deleter.confirm(review);
+    expect(result.kind).toBe("changed");
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.service.registry.snapshot().deletions).toEqual({});
+    h.service.stop();
+  });
+
+  test("deleting a scheduled tree saves metadata and preserves local notes and calendar events", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path)!;
+    const oldLinks = h.service.registry.snapshot().links;
+    const review = await h.deleter.review(root.id);
+    expect(review.record.links).toEqual(oldLinks);
+    expect(review.record.tasks[0]?.description).toBe("Keep");
+    const result = await h.deleter.confirm(review);
+    expect(result.kind).toBe("saved");
+    await finish(h);
+    const state = h.service.registry.snapshot();
+    const record = Object.values(state.deletions)[0]!;
+    expect(record.phase).toBe("complete");
+    expect(record.tasks.map(task => task.id)).toEqual([root.id, child.id]);
+    expect(h.tasks.size).toBe(0);
+    expect(state.links).toEqual({});
+    expect(Object.values(state.detached).every(item => item.reason === "deleted" && item.deletionId === record.id)).toBe(true);
+    expect(h.events.size).toBe(1);
+    expect(h.texts.get(projection.source.path)).toBe(before.replaceAll(" #todoist", ""));
+    expect(h.texts.get(projection.source.path)).toContain("Child");
+    expect(h.texts.get(projection.source.path)).not.toContain("#todoist");
+    const deletion = state.operations.find(op => op.mutation.kind === "delete")!;
+    expect(deletion.deletionReadback).toEqual({ root: null, child: null });
+    await h.restart();
+    h.texts.set(projection.source.path, before);
+    await h.indexNotes();
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(get(h.capture.state).issues.some(issue => issue.deletionId === record.id)).toBe(true);
+    expect(h.apply.mock.calls.filter(([op]) => op.mutation.kind === "create")).toHaveLength(0);
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("an interrupted note write resumes after restart without repeating deletion", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    h.setFailPath(projection.source.path);
+    await h.deleter.confirm(await h.deleter.review(root.id));
+    await finish(h);
+    expect(h.tasks.size).toBe(0);
+    expect(Object.values(h.service.registry.snapshot().deletions)[0]?.phase).toBe("unlinking");
+    expect(h.service.registry.snapshot().links[projection.linkUid]).toBeDefined();
+    await h.restart();
+    h.setFailPath("");
+    await h.service.refresh();
+    await finish(h);
+    expect(Object.values(h.service.registry.snapshot().deletions)[0]?.phase).toBe("complete");
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(h.apply.mock.calls.filter(([op]) => op.mutation.kind === "delete")).toHaveLength(1);
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("a confirmation state-write failure never deletes the remote task", async () => {
+    const h = await harness();
+    const review = await h.deleter.review(root.id);
+    h.setFailTaskWrite(true);
+    await expect(h.deleter.confirm(review)).rejects.toThrow("task state offline");
+    expect(h.tasks.size).toBe(2);
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.service.registry.snapshot().deletions).toEqual({});
+    h.setFailTaskWrite(false);
+    h.service.stop();
+  });
+
+  test("known completed children are preserved in recovery and removed from reopen history", async () => {
+    const h = await harness();
+    await h.service.mutate({ kind: "complete", taskId: child.id });
+    await h.service.refresh();
+    expect(get(h.service.state).completed.map(task => task.id)).toEqual([child.id]);
+    const review = await h.deleter.review(root.id);
+    expect(review.record.tasks.find(task => task.id === child.id)?.completed).toBe(true);
+    await h.deleter.confirm(review);
+    await finish(h);
+    expect(Object.values(h.service.registry.snapshot().deletions)[0]?.phase).toBe("complete");
+    expect(get(h.service.state).completed).toEqual([]);
+    h.service.stop();
+  });
+
+  test("a saved deletion reserves descendants and refuses new children until it is stopped", async () => {
+    const h = await harness();
+    const review = await h.deleter.review(root.id);
+    await h.service.registry.change(state => { state.deletions[review.record.id] = review.record; });
+    await expect(h.service.mutate({ kind: "update", taskId: child.id, changes: { title: "Blocked" } })).rejects.toThrow("saved deletion");
+    await expect(h.scheduler.schedule(child.id, interval)).rejects.toThrow("saved deletion");
+    await expect(h.service.mutate({ kind: "create", task: { ...child, parentId: root.id } })).rejects.toThrow("saved deletion");
+    await h.deleter.cancel(review.record.id);
+    await h.service.mutate({ kind: "update", taskId: child.id, changes: { title: "Allowed" } });
+    await h.service.refresh();
+    expect(h.tasks.get(child.id)?.title).toBe("Allowed");
+    h.service.stop();
+  });
+
+  test("switching account suspends a saved deletion and preserves its details", async () => {
+    const h = await harness();
+    const review = await h.deleter.review(root.id);
+    await h.service.registry.change(state => { state.deletions[review.record.id] = review.record; });
+    h.service.disconnect();
+    await h.deleter.resume();
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.service.registry.snapshot().deletions[review.record.id]?.tasks).toEqual(review.record.tasks);
+    await expect(h.deleter.cancel(review.record.id)).rejects.toThrow();
+    h.service.stop();
+  });
+
+  test("a child surviving the provider cascade retains its note link", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const childUid = Object.entries(h.service.registry.snapshot().links).find(([, link]) => link.taskId === child.id)![0];
+    const apply = h.apply.getMockImplementation()!;
+    h.apply.mockImplementation(async op => {
+      if (op.mutation.kind !== "delete") return apply(op);
+      h.tasks.delete(root.id);
+      h.tasks.set(child.id, { ...h.tasks.get(child.id)!, parentId: null });
+      return { taskId: root.id };
+    });
+    await h.deleter.confirm(await h.deleter.review(root.id));
+    await finish(h);
+    expect(h.service.registry.snapshot().links[childUid]?.taskId).toBe(child.id);
+    expect(h.service.registry.snapshot().detached[childUid]).toBeUndefined();
+    expect(Object.values(h.service.registry.snapshot().deletions)[0]?.phase).toBe("complete");
+    expect(h.events.size).toBe(1);
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("independently scheduled child notes survive deletion as local checklists", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    await h.scheduler.schedule(child.id, { start: "2026-11-12T10:00:00Z", end: "2026-11-12T10:30:00Z" });
+    await h.settle();
+    const paths = [...new Set(Object.values(h.service.registry.snapshot().links).map(link => link.source.path))];
+    expect(paths).toHaveLength(2);
+    await h.deleter.confirm(await h.deleter.review(root.id));
+    await finish(h);
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(h.events.size).toBe(2);
+    expect(paths.every(path => !h.texts.get(path)?.includes("#todoist"))).toBe(true);
+    expect(h.texts.get(paths[0]!)).toContain("Work");
+    expect(h.texts.get(paths[1]!)).toContain("Child");
+    h.scheduler.stop();
+    h.service.stop();
+  });
+});
 
 describe("linked task scheduling", () => {
   test("a restored note before missing-source acknowledgment cancels stale detachment", async () => {

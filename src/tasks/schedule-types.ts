@@ -94,6 +94,7 @@ export const scheduleOperationSchema = z
     unlinkNoteBase: taskSourceSchema.optional(),
     repairCaptureTag: z.boolean().optional(),
     missingSource: z.object({ document: z.string().nullable() }).optional(),
+    deletionId: z.uuid().optional(),
     providerChanges: taskPatchSchema.optional(),
     providerSteps: z
       .array(
@@ -144,6 +145,17 @@ export const scheduleOperationSchema = z
     createdAt: z.iso.datetime(),
     error: z.string().optional(),
   })
+  .refine(
+    (operation) =>
+      !operation.providerSteps?.some(
+        (step) => step.mutation.kind === "delete",
+      ) &&
+      (!operation.deletionId || operation.unlink === true),
+    {
+      message:
+        "Task deletion uses its confirmed recovery record and local unlink journals.",
+    },
+  )
   .refine(
     (operation) =>
       !operation.missingSource ||

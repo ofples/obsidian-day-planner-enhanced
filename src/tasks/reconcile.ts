@@ -19,6 +19,7 @@ import type {
   TaskConflictField,
   TaskConflictValues,
 } from "./conflict";
+import { pendingTaskDeletion } from "./deletion-types";
 import {
   isOutstanding,
   mutationFields,
@@ -633,7 +634,7 @@ export class TaskReconciler {
     return { kind: "saved" };
   }
 
-  private async linkedNoteContext(linkUid: string) {
+  private async linkedNoteContext(linkUid: string, deletionId?: string) {
     await this.pending;
     await this.capture.scan();
     const snapshot = get(this.service.state).snapshot;
@@ -643,6 +644,18 @@ export class TaskReconciler {
       );
     const state = this.service.registry.snapshot();
     const link = state.links[linkUid];
+    if (
+      link?.taskId &&
+      pendingTaskDeletion(
+        state,
+        { provider: link.provider, accountId: link.accountId },
+        link.taskId,
+        deletionId,
+      )
+    )
+      throw new TaskReadError(
+        "Finish this task's saved deletion before reviewing its note link.",
+      );
     if (
       !link?.taskId ||
       !link.base ||
@@ -674,8 +687,11 @@ export class TaskReconciler {
     return { link, source, state, task: link.base };
   }
 
-  async unlink(linkUid: string) {
-    const { link, source, state, task } = await this.linkedNoteContext(linkUid);
+  async unlink(linkUid: string, deletionId?: string) {
+    const { link, source, state, task } = await this.linkedNoteContext(
+      linkUid,
+      deletionId,
+    );
     await this.scheduler.reconcile({
       linkUid,
       task,
@@ -685,6 +701,7 @@ export class TaskReconciler {
       mutations: [],
       expectedLink: link,
       unlink: true,
+      deletionId,
     });
     this.publish();
   }
@@ -770,6 +787,11 @@ export class TaskReconciler {
       )
         continue;
       if (
+        pendingTaskDeletion(
+          state,
+          { provider: link.provider, accountId: link.accountId },
+          link.taskId,
+        ) ||
         state.schedules.some(
           (operation) =>
             operation.provider === link.provider &&

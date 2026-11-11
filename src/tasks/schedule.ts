@@ -10,6 +10,7 @@ import {
   taskAccountSettings,
   type TaskCaptureSettings,
 } from "./capture-settings";
+import { pendingTaskDeletion } from "./deletion-types";
 import { TaskDrag } from "./drag";
 import {
   mutationFields,
@@ -152,6 +153,7 @@ export class TaskScheduler {
     unlink?: boolean;
     repairCaptureTag?: boolean;
     missingSource?: { document: string | null };
+    deletionId?: string;
   }) {
     await this.pending;
     const browser = get(this.service.state),
@@ -176,6 +178,30 @@ export class TaskScheduler {
         "The note link changed. Refresh before reconciling it.",
       );
     const projection = state.projections[input.linkUid];
+    const owner = {
+      provider: snapshot.provider,
+      accountId: snapshot.account.id,
+    };
+    if (pendingTaskDeletion(state, owner, input.task.id, input.deletionId))
+      throw new TaskReadError(
+        "Finish this task's saved deletion before changing its projection.",
+      );
+    if (input.deletionId) {
+      const record = state.deletions[input.deletionId],
+        op = state.operations.find((item) => item.id === input.deletionId);
+      if (
+        !record ||
+        record.phase !== "unlinking" ||
+        record.provider !== owner.provider ||
+        record.accountId !== owner.accountId ||
+        !input.unlink ||
+        op?.status !== "complete" ||
+        op.deletionReadback?.[input.task.id] !== null
+      )
+        throw new TaskReadError(
+          "Verify the saved task deletion before unlinking this note.",
+        );
+    }
     const operation = scheduleOperationSchema.parse({
       id: crypto.randomUUID(),
       provider: snapshot.provider,
@@ -205,6 +231,7 @@ export class TaskScheduler {
       unlinkNoteBase: input.unlink ? link.noteBase : undefined,
       repairCaptureTag: input.repairCaptureTag,
       missingSource: input.missingSource,
+      deletionId: input.deletionId,
       providerSteps: input.mutations.map((step) => ({
         ...step,
         id: crypto.randomUUID(),
@@ -224,6 +251,12 @@ export class TaskScheduler {
     await this.service.registry.change((current) => {
       if (
         !this.current(operation) ||
+        pendingTaskDeletion(
+          current,
+          operation,
+          operation.task.id,
+          input.deletionId,
+        ) ||
         JSON.stringify(current.links[input.linkUid]) !== JSON.stringify(link) ||
         ((input.unlink || input.repairCaptureTag) &&
           current.operations.some(
@@ -269,6 +302,16 @@ export class TaskScheduler {
     if (!task || taskId.startsWith("local-"))
       throw new TaskReadError("Refresh this task before scheduling it.");
     const state = this.service.registry.snapshot();
+    if (
+      pendingTaskDeletion(
+        state,
+        { provider: snapshot.provider, accountId: snapshot.account.id },
+        taskId,
+      )
+    )
+      throw new TaskReadError(
+        "Finish this task's saved deletion before scheduling it.",
+      );
     const repeated = state.schedules.find((operation) => operation.id === id);
     if (repeated) {
       if (
@@ -386,6 +429,10 @@ export class TaskScheduler {
       createdAt: new Date().toISOString(),
     });
     const saved = await this.service.registry.change((current) => {
+      if (pendingTaskDeletion(current, operation, operation.task.id))
+        throw new TaskReadError(
+          "Finish this task's saved deletion before scheduling it.",
+        );
       const repeated = current.schedules.find((item) => item.id === id);
       if (repeated) {
         if (
@@ -892,14 +939,20 @@ export class TaskScheduler {
           ? result.task
           : operation.task;
       const link = state.links[operation.linkUid]!;
-      if (operation.missingSource)
+      const deletion = operation.deletionId
+        ? state.deletions[operation.deletionId]
+        : undefined;
+      if (operation.missingSource || operation.deletionId)
         state.detached[operation.linkUid] = {
-          reason: "missing",
+          reason: operation.deletionId ? "deleted" : "missing",
+          deletionId: operation.deletionId,
           link: {
-            ...link,
+            ...(deletion?.links[operation.linkUid] ?? link),
             noteBase: operation.unlinkNoteBase ?? link.noteBase,
           },
-          projection: state.projections[operation.linkUid],
+          projection:
+            deletion?.projections[operation.linkUid] ??
+            state.projections[operation.linkUid],
           operationId: operation.id,
           detachedAt: new Date().toISOString(),
         };

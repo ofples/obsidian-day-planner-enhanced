@@ -78,6 +78,8 @@ import { type DayPlannerSettings, mergeStoredSettings } from "./settings";
 import { registerTaskCalendarDisplay } from "./tasks/calendar-display";
 import type { TaskCapture } from "./tasks/capture";
 import { createTaskCapture } from "./tasks/capture-obsidian";
+import type { TaskDeletionController } from "./tasks/deletion";
+import { createTaskDeletionController } from "./tasks/deletion-obsidian";
 import { taskDragMime } from "./tasks/drag";
 import { createTaskService } from "./tasks/obsidian";
 import type { TaskReconciler } from "./tasks/reconcile";
@@ -136,6 +138,7 @@ export default class DayPlanner extends Plugin {
   taskCapture!: TaskCapture;
   taskScheduler?: TaskScheduler;
   taskReconciler?: TaskReconciler;
+  taskDeleter?: TaskDeletionController;
   getSettings!: () => DayPlannerSettings;
   private settingsStore!: Writable<DayPlannerSettings>;
   private workspaceFacade!: WorkspaceFacade;
@@ -381,6 +384,13 @@ export default class DayPlanner extends Plugin {
         this.taskScheduler,
         this.settingsStore,
       );
+      this.taskDeleter = createTaskDeletionController(
+        this,
+        this.taskService,
+        this.taskCapture,
+        this.taskScheduler,
+        this.taskReconciler,
+      );
     }
     if (tasksReady)
       this.registerView(
@@ -396,6 +406,7 @@ export default class DayPlanner extends Plugin {
             this.taskReconciler,
             this.settingsStore,
             this.googleCalendarSync,
+            this.taskDeleter,
           ),
       );
     this.addCommand({

@@ -27,6 +27,16 @@ const response = (json: unknown, status = 200) => ({
 beforeEach(() => vi.clearAllMocks());
 
 describe("Todoist UUID write commands", () => {
+  test("deletion uses item_delete with the same durable UUID on retry", async () => {
+    const op = operation({ kind: "delete", taskId: "task" });
+    vi.mocked(requestUrl).mockResolvedValue(response({ sync_status: { [op.id]: "ok" } }));
+    const api = new TodoistProvider("credential");
+    await api.apply(op);
+    await api.apply(op);
+    const commands = vi.mocked(requestUrl).mock.calls.map(([arg]) => JSON.parse(new URLSearchParams((arg as { body: string }).body).get("commands")!));
+    expect(commands[0]).toEqual([{ type: "item_delete", uuid: op.id, args: { id: "task" } }]);
+    expect(commands[1]).toEqual(commands[0]);
+  });
   test("schedule patches send the Sync duration object and can clear it explicitly", async () => {
     const api = new TodoistProvider("credential");
     const op = operation({

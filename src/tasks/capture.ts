@@ -24,6 +24,7 @@ export interface CaptureIssue {
   kind?: "identity";
   candidate: CaptureCandidate;
   message: string;
+  deletionId?: string;
 }
 export interface TaskIdentityIssue {
   path: string;
@@ -385,6 +386,16 @@ export class TaskCapture {
         !(await this.sourceIsCurrent(candidate))
       )
         continue;
+      if (item.reason === "deleted") {
+        issues.push({
+          kind: "identity",
+          candidate,
+          deletionId: item.deletionId,
+          message:
+            "This task was deleted. Review its saved details before creating another task from this block.",
+        });
+        continue;
+      }
       if (
         item.link.provider !== browser.snapshot.provider ||
         item.link.accountId !== browser.snapshot.account.id ||

@@ -11,6 +11,15 @@ const legacy = JSON.stringify({
 });
 
 describe("task registry migration", () => {
+  test("v9 migration preserves original recovery bytes before adding deletion records", async () => {
+    let disk = JSON.stringify({ version: 9, namespace, operations: [], links: {}, schedules: [], projections: {}, issues: {}, detached: {} }, null, 2);
+    const original = disk;
+    const backupState = vi.fn(async () => {});
+    const registry = new TaskRegistry({ readState: async () => disk, writeState: async value => { disk = value; }, backupState }, namespace);
+    await registry.initialize();
+    expect(backupState).toHaveBeenCalledWith(original, 9);
+    expect(registry.snapshot()).toMatchObject({ version: 10, detached: {}, deletions: {} });
+  });
   test("v8 migration backs up original bytes before enabling missing-link recovery", async () => {
     let disk = JSON.stringify({
       version: 8,
@@ -35,7 +44,7 @@ describe("task registry migration", () => {
     );
     await registry.initialize();
     expect(backupState).toHaveBeenCalledWith(original, 8);
-    expect(registry.snapshot()).toMatchObject({ version: 9, detached: {} });
+    expect(registry.snapshot()).toMatchObject({ version: 10, detached: {} });
   });
   test("v7 migration backs up the original unlink format before capture-tag repair", async () => {
     let disk = JSON.stringify({
@@ -61,7 +70,7 @@ describe("task registry migration", () => {
     );
     await registry.initialize();
     expect(backupState).toHaveBeenCalledWith(original, 7);
-    expect(JSON.parse(disk).version).toBe(9);
+    expect(JSON.parse(disk).version).toBe(10);
   });
   test("v6 migration backs up the original bytes before enabling unlink journals", async () => {
     let disk = JSON.stringify({
@@ -87,7 +96,7 @@ describe("task registry migration", () => {
     );
     await registry.initialize();
     expect(backupState).toHaveBeenCalledWith(original, 6);
-    expect(JSON.parse(disk).version).toBe(9);
+    expect(JSON.parse(disk).version).toBe(10);
   });
   test("v5 migration backs up the registry and keeps its note baselines", async () => {
     let disk = JSON.stringify({
@@ -113,7 +122,7 @@ describe("task registry migration", () => {
     );
     await registry.initialize();
     expect(backupState).toHaveBeenCalledWith(original, 5);
-    expect(registry.snapshot().version).toBe(9);
+    expect(registry.snapshot().version).toBe(10);
   });
 
   test("v4 migration retains the acknowledged projection instead of accepting an unmerged note edit", async () => {
@@ -223,8 +232,8 @@ describe("task registry migration", () => {
     const registry = new TaskRegistry(storage, namespace);
     await registry.initialize();
     expect(events).toEqual(["backup", "write"]);
-    expect(registry.snapshot().version).toBe(9);
-    expect(JSON.parse(disk).version).toBe(9);
+    expect(registry.snapshot().version).toBe(10);
+    expect(JSON.parse(disk).version).toBe(10);
   });
 
   test("failed backup preserves the original registry", async () => {

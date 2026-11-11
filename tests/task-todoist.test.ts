@@ -60,7 +60,7 @@ describe("Todoist complete snapshots", () => {
         : request(arg),
     );
     const snapshot = await new TodoistProvider("credential").read();
-    expect(snapshot.account.capabilities).toEqual({ duration: false });
+    expect(snapshot.account.capabilities).toEqual({ duration: false, delete: true });
     expect(JSON.stringify(snapshot)).not.toContain("must-not-cache");
   });
   test("normalizes duration data while accepting older cached task shapes", async () => {
@@ -87,6 +87,7 @@ describe("Todoist complete snapshots", () => {
       id: "user",
       name: "Test",
       timezone: "UTC",
+      capabilities: { delete: true },
     });
     expect(JSON.stringify(snapshot)).not.toContain("must-not-cache");
     expect(requestUrl).toHaveBeenCalledTimes(4);

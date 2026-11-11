@@ -193,6 +193,10 @@ export class TodoistProvider implements TaskProvider {
         command.type = "item_uncomplete";
         command.args = { id: mutation.taskId };
         break;
+      case "delete":
+        command.type = "item_delete";
+        command.args = { id: mutation.taskId };
+        break;
     }
     const response = z
       .object({
@@ -274,9 +278,12 @@ export class TodoistProvider implements TaskProvider {
         id: user.id,
         name: user.full_name,
         timezone: user.tz_info.timezone,
-        ...(user.is_premium !== undefined
-          ? { capabilities: { duration: user.is_premium } }
-          : {}),
+        capabilities: {
+          delete: true,
+          ...(user.is_premium !== undefined
+            ? { duration: user.is_premium }
+            : {}),
+        },
       },
       projects: projects.map((project) => ({
         id: project.id,

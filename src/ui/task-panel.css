@@ -1007,6 +1007,19 @@
   overflow-wrap: anywhere;
 }
 
+.dp-task-panel .task-primary.task-danger {
+  color: #fff;
+  background: #b72f40;
+}
+
+.dp-task-panel .task-delete-button {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0 0;
+  color: var(--tp-warning);
+}
+
 .dp-task-panel .task-panel-form .task-check-label {
   display: flex;
   gap: 8px;

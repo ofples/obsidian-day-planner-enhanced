@@ -6,6 +6,7 @@ import {
   type TaskConflictChoices,
   type TaskConflictReview,
 } from "./conflict";
+import { pendingTaskDeletion } from "./deletion-types";
 import {
   isOutstanding,
   operationTaskId,
@@ -105,6 +106,19 @@ export class TaskService {
       );
     const operations = owned.filter(isOutstanding);
     const effective = pendingSnapshot(snapshot, operations);
+    const deletedIds = new Set(
+      owned
+        .filter(
+          (operation) =>
+            operation.status === "complete" &&
+            operation.mutation.kind === "delete",
+        )
+        .flatMap((operation) =>
+          Object.entries(operation.deletionReadback ?? {})
+            .filter(([, task]) => task === null)
+            .map(([id]) => id),
+        ),
+    );
     const latest = new Map(
       owned
         .filter((operation) => operation.status === "complete")
@@ -115,6 +129,7 @@ export class TaskService {
         (operation) =>
           operation.status === "complete" &&
           operation.mutation.kind === "complete" &&
+          !deletedIds.has(operationTaskId(operation)) &&
           operation.base &&
           !operation.base.due?.recurring &&
           !effective?.tasks.some(
@@ -164,6 +179,14 @@ export class TaskService {
         true,
       );
     const mutation = taskMutationSchema.parse(input);
+    if (
+      mutation.kind === "delete" &&
+      (!snapshot.account.capabilities?.delete ||
+        !this.provider(this.storage.getSecret(this.secretKey()) ?? "").get)
+    )
+      throw new TaskReadError(
+        "Refresh a provider connection that supports verified task deletion.",
+      );
     if (
       intent &&
       (intent.provider !== snapshot.provider ||
@@ -240,6 +263,40 @@ export class TaskService {
           base: null,
         };
       }
+      const owner = {
+        provider: snapshot.provider,
+        accountId: snapshot.account.id,
+      };
+      const targetId =
+        mutation.kind === "create" ? mutation.task.parentId : mutation.taskId;
+      const parentId =
+        mutation.kind === "moveParent" ? mutation.parentId : null;
+      if (
+        (targetId &&
+          pendingTaskDeletion(
+            state,
+            owner,
+            targetId,
+            mutation.kind === "delete" ? intent?.id : undefined,
+          )) ||
+        (parentId && pendingTaskDeletion(state, owner, parentId))
+      )
+        throw new TaskReadError(
+          "Finish this task tree's saved deletion before editing it.",
+        );
+      if (mutation.kind === "delete") {
+        const record = intent && state.deletions[intent.id];
+        if (
+          !record ||
+          record.taskId !== mutation.taskId ||
+          record.provider !== snapshot.provider ||
+          record.accountId !== snapshot.account.id ||
+          !["pending", "queued"].includes(record.phase)
+        )
+          throw new TaskReadError(
+            "Confirm this task's deletion and recovery record before sending it.",
+          );
+      }
       const saved: TaskOperation = {
         id: intent?.id ?? crypto.randomUUID(),
         tempId: crypto.randomUUID(),
@@ -253,6 +310,8 @@ export class TaskService {
         sourceUid: source?.uid,
       };
       state.operations.push(saved);
+      if (mutation.kind === "delete")
+        state.deletions[saved.id]!.phase = "queued";
       return saved;
     });
     this.publish();
@@ -292,6 +351,10 @@ export class TaskService {
       .snapshot()
       .operations.find((item) => item.id === id);
     const snapshot = this.cache.snapshot;
+    if (operation?.mutation.kind === "delete")
+      throw new TaskReadError(
+        "Review this task's deletion recovery record before confirming another deletion.",
+      );
     if (
       !operation ||
       operation.status !== "conflict" ||

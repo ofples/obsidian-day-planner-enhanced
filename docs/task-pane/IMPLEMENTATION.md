@@ -106,6 +106,14 @@ A second cycle enabled the existing calendar deletion policy for the disposable 
 
 The seven-file recovery subset has 123 passing cases. Full validation has 902 passes and the inherited ICS timeout, with nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass. Permanent remote deletion, live internet-feed selection, native exporter collision handling, M5 and remaining M6 acceptance continue. Full-window reload also returned to an earlier search value during native verification. Investigate leaf-state persistence in M6.
 
+### Permanent deletion recovery foundation
+
+Registry v10 saves account-scoped deletion receipts before the existing UUID outbox sends Todoist's cascading delete command. The custom confirmation refreshes the root, known descendants and note links. A changed comparison requires another confirmation. Reserved task trees reject competing edits, new children and scheduling until recovery finishes. Pending-to-sent claiming is atomic with cancellation.
+
+Individual root/child readbacks persist across failure and restart. Verified absence permits local unlink journals to retain note content, interval and the ordinary calendar mapping. Surviving children keep their links. Deleted-source archives preserve the pre-unlink bytes so Undo opens recovery review before capture. Known completed descendants remain in the receipt and leave the reopen list after verified deletion. The custom pane exposes confirmation, pending recovery and deletion history.
+
+The seven-file subset has 149 passing cases. Coverage includes changed trees, missing/foreign receipts, missing individual-read capability, cancellation during preflight, lost acknowledgment, partial verification, permission failures, wrong returned IDs, snapshot publication failure, failed note writes, restart, independent child notes, surviving children, known completed ancestry, capture after Undo and custom form behavior. Full validation has 934 passes, the inherited ICS timeout, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, the separately run strict scorecard and production build pass. The full lint command exits at the inherited test failure. Isolated installation and disposable live deletion acceptance follow. The working vault continues running the calendar baseline.
+
 ## Working conventions
 
 Keep implementation in the feature worktree. Reserve the baseline checkout for hotfixes. Commit reviewable milestones and keep this progress section current. Inspect the working tree before editing after interruptions. Reuse the existing parser, note writers, calendar ownership and rendering pipeline. Expand tests only for changed contracts and demonstrated failure risks. Preserve the existing full-suite ICS failure in the evidence record.

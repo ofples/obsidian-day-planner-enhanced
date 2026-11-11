@@ -34,7 +34,12 @@ export const taskSnapshotSchema = z.object({
     id: z.string().min(1),
     name: z.string(),
     timezone: z.string(),
-    capabilities: z.object({ duration: z.boolean() }).optional(),
+    capabilities: z
+      .object({
+        duration: z.boolean().optional(),
+        delete: z.boolean().optional(),
+      })
+      .optional(),
   }),
   projects: z.array(
     z.object({

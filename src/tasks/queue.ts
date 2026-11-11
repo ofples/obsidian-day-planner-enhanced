@@ -1,8 +1,10 @@
+import { deletionTaskTree } from "./deletion-types";
 import {
   isOutstanding,
   matchesOperationResult,
   operationTaskId,
   preflightOperation,
+  sameDeletionTask,
   type TaskOperation,
 } from "./operations";
 import type { TaskRegistry } from "./registry";
@@ -20,9 +22,42 @@ export class TaskQueue {
     private readonly changed: () => void,
   ) {}
 
-  private async update(id: string, patch: Partial<TaskOperation>) {
-    await this.registry.updateOperation(id, patch);
-    this.changed();
+  private async update(
+    id: string,
+    patch: Partial<TaskOperation>,
+    expectedStatus?: TaskOperation["status"],
+  ) {
+    const updated = await this.registry.change((state) => {
+      const saved = state.operations.find((item) => item.id === id);
+      if (
+        !saved ||
+        saved.status === "cancelled" ||
+        (expectedStatus && saved.status !== expectedStatus)
+      )
+        return false;
+      Object.assign(saved, patch);
+      return true;
+    });
+    if (updated) this.changed();
+    return updated;
+  }
+
+  private deletionRecord(operation: TaskOperation) {
+    const record = this.registry.snapshot().deletions[operation.id];
+    if (
+      !record ||
+      record.id !== operation.id ||
+      record.provider !== operation.provider ||
+      record.accountId !== operation.accountId ||
+      operation.mutation.kind !== "delete" ||
+      record.taskId !== operation.mutation.taskId ||
+      record.phase === "cancelled"
+    )
+      throw new TaskWriteError(
+        "The task deletion recovery record is missing or belongs to another account. Reopen its confirmation.",
+        true,
+      );
+    return record;
   }
 
   private async verify(
@@ -32,6 +67,35 @@ export class TaskQueue {
     active: () => boolean,
   ) {
     const taskId = operationTaskId(operation);
+    if (operation.mutation.kind === "delete") {
+      const record = this.deletionRecord(operation);
+      if (!provider.get)
+        throw new TaskWriteError(
+          "Task deletion requires its saved recovery record and individual task verification.",
+          true,
+        );
+      const readback = { ...operation.deletionReadback };
+      for (const task of record.tasks) {
+        if (Object.hasOwn(readback, task.id)) continue;
+        const remote = await provider.get(task.id);
+        if (!active()) return;
+        if (remote && remote.id !== task.id)
+          throw new TaskReadError(
+            "The provider returned a different task. Retry deletion verification.",
+          );
+        readback[task.id] = remote;
+        await this.update(operation.id, { deletionReadback: { ...readback } });
+      }
+      const verified = readback[taskId] === null;
+      await this.update(operation.id, {
+        status: verified ? "verified" : "conflict",
+        error: verified
+          ? undefined
+          : "The provider acknowledged deletion but the task is still available. Review its latest details before deleting again.",
+        retryAt: undefined,
+      });
+      return;
+    }
     let task;
     if (provider.get) task = await provider.get(taskId);
     else {
@@ -95,6 +159,15 @@ export class TaskQueue {
       try {
         await this.update(operation.id, { attempts: operation.attempts + 1 });
         if (operation.status === "pending") {
+          const recovery =
+            operation.mutation.kind === "delete"
+              ? this.deletionRecord(operation)
+              : undefined;
+          if (operation.mutation.kind === "delete" && !provider.get)
+            throw new TaskWriteError(
+              "The task provider must support individual verification before deleting a task.",
+              true,
+            );
           const remote =
             operation.mutation.kind === "create"
               ? null
@@ -103,29 +176,64 @@ export class TaskQueue {
                 : (snapshot.tasks.find((task) => task.id === taskId) ?? null);
           if (!active()) return snapshot;
           const decision = preflightOperation(operation, remote);
-          if (decision === "conflict") {
-            await this.update(operation.id, {
-              status: "conflict",
-              error:
-                "This task changed in Todoist. Review the saved change before applying it.",
-            });
+          const tree =
+            remote && recovery
+              ? deletionTaskTree(
+                  snapshot,
+                  remote,
+                  recovery.tasks.filter((task) => task.completed),
+                ).filter((task) => !task.completed)
+              : [];
+          const expected =
+            recovery?.tasks.filter((task) => !task.completed) ?? [];
+          const treeChanged = Boolean(
+            recovery &&
+              (JSON.stringify(tree.map((task) => task.id).toSorted()) !==
+                JSON.stringify(expected.map((task) => task.id).toSorted()) ||
+                tree.some(
+                  (task) =>
+                    !sameDeletionTask(
+                      expected.find((item) => item.id === task.id)!,
+                      task,
+                    ),
+                )),
+          );
+          if (decision === "conflict" || treeChanged) {
+            await this.update(
+              operation.id,
+              {
+                status: "conflict",
+                error:
+                  "This task changed in Todoist. Review the saved change before applying it.",
+              },
+              "pending",
+            );
             blocked.add(taskId);
             continue;
           }
           if (decision === "already-applied") {
-            await this.update(operation.id, {
-              status: "verified",
-              remoteId: taskId,
-              readback: remote ?? undefined,
-              error: undefined,
-            });
+            await this.update(
+              operation.id,
+              {
+                status: "verified",
+                remoteId: taskId,
+                readback: remote ?? undefined,
+                error: undefined,
+              },
+              "pending",
+            );
             continue;
           }
-          await this.update(operation.id, {
-            status: "sent",
-            error: undefined,
-            retryAt: undefined,
-          });
+          const claimed = await this.update(
+            operation.id,
+            {
+              status: "sent",
+              error: undefined,
+              retryAt: undefined,
+            },
+            "pending",
+          );
+          if (!claimed) continue;
           sent = true;
         }
         if (!active()) return snapshot;

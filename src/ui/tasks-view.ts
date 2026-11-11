@@ -11,6 +11,7 @@ import type { GoogleCalendarSync } from "../google-calendar/service";
 import type { DayPlannerSettings } from "../settings";
 import { taskViewStateSchema } from "../tasks/browser";
 import type { TaskCapture } from "../tasks/capture";
+import type { TaskDeletionController } from "../tasks/deletion";
 import type { TaskReconciler } from "../tasks/reconcile";
 import type { TaskScheduler } from "../tasks/schedule";
 import type { TaskService } from "../tasks/service";
@@ -36,6 +37,7 @@ export class TasksView extends ItemView {
     private readonly reconciler?: TaskReconciler,
     private readonly settings?: Writable<DayPlannerSettings>,
     private readonly calendar?: Pick<GoogleCalendarSync, "calendars">,
+    private readonly deleter?: TaskDeletionController,
   ) {
     super(leaf);
   }
@@ -85,6 +87,9 @@ export class TasksView extends ItemView {
         captureSettings: this.captureSettings,
         settings: this.settings,
         calendar: this.calendar,
+        deleter: this.deleter,
+        openSavedNote: (path: string) =>
+          handle(this.app.workspace.openLinkText(path, "", false)),
         revealTask: (task: ProviderTask) => {
           if (this.scheduler) handle(this.scheduler.reveal(task.id));
         },

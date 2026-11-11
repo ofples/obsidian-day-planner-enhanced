@@ -133,6 +133,18 @@ An unlink inherits earlier uncertain owned calendar exports and explicit event r
 
 Removing a previously acknowledged #todoist tag pauses propagation and creates a link decision. Confirming it uses the unlink journal. Cancel, Escape, closing the form, switching forms and closing the Tasks pane restore the tag through a local repair journal. Recover the exact original placement when other bytes match. Otherwise insert it into the current first line while preserving its native block ID, comments and child bytes. Revalidate the current note and account before writing. Preserve the old common note baseline so concurrent title and time edits still reconcile. A failed repair leaves the decision actionable. Provider commands and new calendar exports are excluded from these repair journals.
 
+### Permanent provider deletion
+
+Confirm deletion through the custom task form. Refresh the task tree and linked-note inventory when opening and confirming. A changed comparison requires another confirmation. Save an account-scoped recovery record containing the root, known active/completed descendants, original task fields, note links and projections before enqueueing the command. Unknown completed descendants are included in Todoist's cascade and may have no locally available recovery details. The confirmation explains that scope.
+
+Registry v10 adds deletion records and preserves the exact v9 bytes before migration. The existing outbox sends `item_delete` with its saved command UUID. Fresh preflight compares the root and active descendant membership/fields. An atomic pending-to-sent transition prevents a stopped intent from sending after an awaited read. Reserve affected descendants against edits, scheduling, new child creation and reparenting while deletion is pending. Unrelated tasks continue normally.
+
+After acknowledgment, read each known task individually. Persist partial per-ID verification across failures and restart. Authorization errors, malformed identities and network failures retain the saved recovery state. Only an acknowledged deletion with matching individual absence readback can detach its note links. Surviving children retain their links. Snapshot publication and local note recovery can retry independently without another deletion command.
+
+Use the existing local unlink journal for verified deleted tasks. Preserve note content, time ranges, nested checklists and the ordinary Day Planner calendar mapping. Archive the original pre-unlink source with the deletion record ID. Restoring those original bytes reserves the block for recovery review before automatic capture. Known deleted children leave the actionable completion/reopen list. Deletion history retains saved details and note navigation after the active list empties.
+
+Retry recovery from the custom history form. A failed or conflicting unsent command requires a refreshed confirmation. Stop is available before a command is sent. Once sent, continue UUID acknowledgment and individual verification. Todoist's delete command has no conditional tree-version precondition, so another client can change the tree after preflight. Preserve that provider concurrency limitation in acceptance evidence. [Todoist API](https://developer.todoist.com/api/v1/)
+
 ## Calendar duplicate prevention
 
 Setup records the exact legacy Todoist calendar ID or ICS source selected by the user. Exclude that feed from Day Planner overlay while the Tasks scheduling integration owns those tasks. Apply the exclusion in this plugin, preserving Google's selected-calendar preference. Restore the recorded plugin display policy on disconnect or offer the previous selection. The exclusion applies to date refresh, manual refresh, Google and ICS overlays.

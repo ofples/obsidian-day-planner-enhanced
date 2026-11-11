@@ -258,6 +258,14 @@ Native entry opened the inline form and loaded 11 actual Google calendars. The f
 
 The corrected native form selected the exact Todoist calendar, enabled hiding and saved successfully. Live Google display readback had two Todoist events and 32 other events with that policy disabled. Enabling it produced zero Todoist events and retained the other 32. A full isolated-window reload retained the exact selected ID and the same displayed counts. The original isolated configuration was then restored byte-equivalently for the affected settings. This check changed local display settings and read existing calendars. Exact live internet-feed selection and native Todoist exporter collision handling remain pending.
 
+### Permanent deletion recovery regression
+
+The custom confirmation, original account/task receipt, stable delete UUID, individual readbacks and local unlink recovery have regression coverage. Cases stop a pending deletion during its awaited preflight read, detect changed root/child fields and membership, resume lost acknowledgments, retain partial verification through permission/read failures and restart, and complete after a failed snapshot publication without repeating deletion. Missing or foreign receipts and providers without individual reads send no command.
+
+Linked-note cases preserve timed parent/child text and calendar events, resume an interrupted note write, reserve descendants against competing edits, retain a surviving moved child's link and unlink independently scheduled children through their own notes. Known completed descendants remain in recovery and leave the reopen list. Restored original Markdown after deletion opens a saved-task review and creates no replacement task. Custom pane cases cover cancellation before confirmation, changed comparisons, pending confirmation Escape/close handling and history with an empty active list. Registry v9 bytes are backed up before v10 migration.
+
+The seven-file subset has 149 passes. Full validation has 934 passes, one inherited ICS timeout, nine skips and 17 todo cases. Required source checks, the separate strict scorecard and production build pass. Full lint exits at the inherited test failure. Disposable live provider deletion, native confirmation/history and installed v10 migration remain pending at this source checkpoint.
+
 ### Live missing-source verification
 
 The v8-to-v9 migration retained the original bytes in a matching content-addressed backup. The first desktop check exposed unloaded Markdown views without editor instances. The stability guard now uses Obsidian's isDeferred API before accessing an editor. A dedicated lifecycle regression covers deferred and loaded tabs with focus transitions.
