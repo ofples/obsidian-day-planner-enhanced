@@ -56,7 +56,7 @@ The feature worktree exposes browsing, connection, task editing, tagged Markdown
 
 ### Next reconciliation work
 
-The automatic comparison and journal handle direct timed-note edits, which also receive normal timeline move/resize writes. Both conflict controllers revalidate their latest comparison. Calendar-only retries yield to later edits after durable task acknowledgment. Keep a changed or missing source recoverable, then implement explicit unlink and remote-delete choices. Verify exact live feed selection and native exporter collision handling. Recurrence and independently scheduled children retain their M5 acceptance requirements.
+The automatic comparison and journal handle direct timed-note edits, which also receive normal timeline move/resize writes. Both conflict controllers revalidate their latest comparison. Calendar-only retries yield to later edits after durable task acknowledgment. Explicit unlink is implemented below. Complete tag-removal prompts, missing-source handling and remote-delete choices. Verify exact live feed selection and native exporter collision handling. Recurrence and independently scheduled children retain their M5 acceptance requirements.
 
 ### Custom panel implementation
 
@@ -67,6 +67,10 @@ The editor's extracted domain helpers preserve opened field baselines, recurrenc
 ### Scoped source recovery foundation
 
 Identity inspection now reports ambiguous links per note while retaining safe matches. Capture excludes unresolved candidates in that note and continues in unaffected notes. Reconciliation exposes individual source issues for the affected links and continues applying independent note edits. Original links remain intact for the upcoming unlink/repair workflow. Six new regressions cover shared matcher compatibility, multiple affected notes, capture isolation and integrated reconciliation. The focused subset has 57 passes. Full validation has 836 passing tests and the inherited ICS timeout. Strict scorecard and production build pass.
+
+### Explicit unlink
+
+The custom details surface now offers a confirmed Unlink note action. Registry v7 retains its local note intent, original acknowledged note baseline and recovery data. The coordinator removes the parent's parsed capture tag, preserves all other note bytes and nested links, and detaches the active task projection after note acknowledgment. It sends no task mutation and leaves the ordinary Day Planner calendar mapping available. Earlier uncertain exports and explicit removals remain retryable, with unlink completion blocking a new schedule until they settle. Tests cover intent failure, interrupted note writes, acknowledgment failure after a successful note write, restart, offline calendar recovery, later local edits, source stability, schema validation, parsed tag handling and confirmation/error UI. The focused subset has 68 passes. Full validation has 850 passing tests and the inherited ICS timeout. Strict scorecard and production build pass. Tag-removal prompts, missing-block unlink and identity repair remain next.
 
 ## Working conventions
 

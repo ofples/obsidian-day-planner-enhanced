@@ -57,83 +57,104 @@ export const taskProjectionSchema = z.object({
   base: taskSchema,
 });
 
-export const scheduleOperationSchema = z.object({
-  id: z.uuid(),
-  provider: z.string(),
-  accountId: z.string(),
-  task: taskSchema,
-  linkUid: z.string(),
-  googleUid: z.string(),
-  providerOperationId: z.uuid(),
-  occurrenceKey: z.string(),
-  target: z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("schedule"), interval: scheduleIntervalSchema }),
-    z.object({
-      kind: z.literal("insert"),
-      path: z.string(),
-      offset: z.number().int().nonnegative(),
-      before: z.string(),
-    }),
-    z.object({ kind: z.literal("unschedule") }),
-    z.object({
-      kind: z.literal("reconcile"),
-      interval: scheduleIntervalSchema.nullable(),
-    }),
-  ]),
-  previous: taskSourceSchema.optional(),
-  children: z.array(taskSchema),
-  previousInterval: scheduleIntervalSchema.optional(),
-  raw: z.string(),
-  generatedTaskIds: z.array(z.string()),
-  syncTaskDate: z.boolean(),
-  providerChanges: taskPatchSchema.optional(),
-  providerSteps: z
-    .array(
+export const scheduleOperationSchema = z
+  .object({
+    id: z.uuid(),
+    provider: z.string(),
+    accountId: z.string(),
+    task: taskSchema,
+    linkUid: z.string(),
+    googleUid: z.string(),
+    providerOperationId: z.uuid(),
+    occurrenceKey: z.string(),
+    target: z.discriminatedUnion("kind", [
       z.object({
-        id: z.uuid(),
-        mutation: taskMutationSchema,
-        base: taskSchema,
+        kind: z.literal("schedule"),
+        interval: scheduleIntervalSchema,
       }),
-    )
-    .optional(),
-  taskAcknowledged: z.boolean().optional(),
-  calendarBase: calendarSnapshotSchema.optional(),
-  supersededBy: z.uuid().optional(),
-  calendarRemovals: z
-    .array(
       z.object({
-        uid: z.string(),
+        kind: z.literal("insert"),
         path: z.string(),
-        snapshot: calendarSnapshotSchema,
+        offset: z.number().int().nonnegative(),
+        before: z.string(),
       }),
-    )
-    .optional(),
-  calendarPredecessors: z
-    .array(
-      projectionBlockSchema.extend({ base: calendarSnapshotSchema.optional() }),
-    )
-    .optional(),
-  phase: z.enum([
-    "pending",
-    "prepared",
-    "local-applied",
-    "provider-pending",
-    "calendar-pending",
-    "complete",
-    "conflict",
-    "cancelled",
-  ]),
-  plan: z
-    .object({
-      edits: z.array(noteEditSchema),
-      block: projectionBlockSchema.optional(),
-      links: z.array(projectionLinkSchema),
-      interval: scheduleIntervalSchema.nullable(),
-    })
-    .optional(),
-  createdAt: z.iso.datetime(),
-  error: z.string().optional(),
-});
+      z.object({ kind: z.literal("unschedule") }),
+      z.object({
+        kind: z.literal("reconcile"),
+        interval: scheduleIntervalSchema.nullable(),
+      }),
+    ]),
+    previous: taskSourceSchema.optional(),
+    children: z.array(taskSchema),
+    previousInterval: scheduleIntervalSchema.optional(),
+    raw: z.string(),
+    generatedTaskIds: z.array(z.string()),
+    syncTaskDate: z.boolean(),
+    unlink: z.boolean().optional(),
+    unlinkNoteBase: taskSourceSchema.optional(),
+    providerChanges: taskPatchSchema.optional(),
+    providerSteps: z
+      .array(
+        z.object({
+          id: z.uuid(),
+          mutation: taskMutationSchema,
+          base: taskSchema,
+        }),
+      )
+      .optional(),
+    taskAcknowledged: z.boolean().optional(),
+    calendarBase: calendarSnapshotSchema.optional(),
+    supersededBy: z.uuid().optional(),
+    calendarRemovals: z
+      .array(
+        z.object({
+          uid: z.string(),
+          path: z.string(),
+          snapshot: calendarSnapshotSchema,
+        }),
+      )
+      .optional(),
+    calendarPredecessors: z
+      .array(
+        projectionBlockSchema.extend({
+          base: calendarSnapshotSchema.optional(),
+        }),
+      )
+      .optional(),
+    phase: z.enum([
+      "pending",
+      "prepared",
+      "local-applied",
+      "provider-pending",
+      "calendar-pending",
+      "complete",
+      "conflict",
+      "cancelled",
+    ]),
+    plan: z
+      .object({
+        edits: z.array(noteEditSchema),
+        block: projectionBlockSchema.optional(),
+        links: z.array(projectionLinkSchema),
+        interval: scheduleIntervalSchema.nullable(),
+      })
+      .optional(),
+    createdAt: z.iso.datetime(),
+    error: z.string().optional(),
+  })
+  .refine(
+    (operation) =>
+      !operation.unlink ||
+      (operation.target.kind === "reconcile" &&
+        !operation.syncTaskDate &&
+        !operation.providerChanges &&
+        !operation.providerSteps?.length &&
+        !operation.plan?.block),
+    {
+      message:
+        "Unlink journals contain local note edits and calendar recovery only.",
+    },
+  );
 
 export type ScheduleInterval = z.infer<typeof scheduleIntervalSchema>;
 export type TaskProjection = z.infer<typeof taskProjectionSchema>;
@@ -143,7 +164,11 @@ export type ScheduleOperation = z.infer<typeof scheduleOperationSchema>;
 export function scheduleBlocksTask(operation: ScheduleOperation) {
   return (
     !["complete", "cancelled"].includes(operation.phase) &&
-    !(operation.phase === "calendar-pending" && operation.taskAcknowledged)
+    !(
+      operation.phase === "calendar-pending" &&
+      operation.taskAcknowledged &&
+      !operation.unlink
+    )
   );
 }
 

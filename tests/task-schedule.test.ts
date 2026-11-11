@@ -361,6 +361,296 @@ async function harness() {
 }
 
 describe("linked task scheduling", () => {
+  test("unlink keeps the timed note, children, remote task and existing calendar event", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path)!;
+    const remote = structuredClone(h.tasks.get(root.id));
+    const writes = h.apply.mock.calls.length;
+    h.setFailCalendar(true);
+    await h.reconciler.unlink(projection.linkUid);
+    expect(h.texts.get(projection.source.path)).toBe(
+      before.replace(" #todoist", ""),
+    );
+    expect(h.tasks.get(root.id)).toEqual(remote);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect([...h.events.keys()]).toEqual([projection.googleEventId]);
+    expect(h.scheduler.projection(root.id)).toBeUndefined();
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeUndefined();
+    expect(
+      Object.values(h.service.registry.snapshot().links).map(
+        (link) => link.taskId,
+      ),
+    ).toEqual([child.id]);
+    expect(h.service.registry.snapshot().schedules.at(-1)).toMatchObject({
+      unlink: true,
+      phase: "complete",
+      taskAcknowledged: true,
+    });
+    await h.reconcile();
+    expect(h.tasks.get(root.id)).toEqual(remote);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("unlink preserves untimed formatting, comments, native IDs and nested bytes", async () => {
+    const h = await harness();
+    h.file("Tasks.md");
+    h.texts.set("Tasks.md", "");
+    await h.scheduler.insert(root.id, {
+      path: "Tasks.md",
+      offset: 0,
+      before: "",
+    });
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts
+      .get("Tasks.md")!
+      .replace(
+        "Work #todoist #work",
+        "**Work** #todoist #work <!-- keep --> ^native",
+      )
+      .replace(/\n/g, "\r\n");
+    h.texts.set("Tasks.md", before);
+    await h.reconciler.unlink(projection.linkUid);
+    expect(h.texts.get("Tasks.md")).toBe(before.replace(" #todoist", ""));
+    expect(
+      h.service.registry.snapshot().schedules.at(-1)?.unlinkNoteBase?.raw,
+    ).toBe(projection.source.raw);
+    expect(h.events.size).toBe(0);
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.scheduler.projection(root.id)).toBeUndefined();
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("unlink recovers uncertain calendar ownership after restart and preserves later local edits", async () => {
+    const h = await harness();
+    h.setLoseCalendarResponse(true);
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const eventId = [...h.events.keys()][0]!;
+    await h.reconciler.unlink(projection.linkUid);
+    expect(h.service.registry.snapshot().schedules.at(-1)).toMatchObject({
+      unlink: true,
+      phase: "calendar-pending",
+      taskAcknowledged: true,
+    });
+    expect(h.scheduler.projection(root.id)).toBeUndefined();
+    const later = h.texts
+      .get(projection.source.path)!
+      .replace("Work #work", "Independent local edit #work");
+    h.texts.set(projection.source.path, later);
+    await expect(h.scheduler.schedule(root.id, interval)).rejects.toThrow(
+      "saved schedule change",
+    );
+    await h.restart();
+    h.setLoseCalendarResponse(false);
+    h.setFailCalendar(false);
+    await h.settle();
+    expect(h.texts.get(projection.source.path)).toBe(later);
+    expect([...h.events.keys()]).toEqual([eventId]);
+    expect(h.calendarState.records[projection.googleUid!]?.eventId).toBe(
+      eventId,
+    );
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeUndefined();
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("unlink carries an earlier explicit event removal through restart", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    h.setFailCalendar(true);
+    await h.scheduler.unschedule(root.id);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    await h.reconciler.unlink(projection.linkUid);
+    expect(h.events.size).toBe(1);
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "calendar-pending",
+    );
+    await h.restart();
+    h.setFailCalendar(false);
+    await h.settle();
+    expect(h.events.size).toBe(0);
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
+    expect(h.texts.get(projection.source.path)).not.toContain("#todoist");
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("a failed unlink intent write preserves the original note and link", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path);
+    h.setFailTaskWrite(true);
+    await expect(h.reconciler.unlink(projection.linkUid)).rejects.toThrow(
+      "task state offline",
+    );
+    expect(h.texts.get(projection.source.path)).toBe(before);
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeDefined();
+    expect(h.service.registry.snapshot().schedules).toHaveLength(1);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("unlink resumes an interrupted note write before dropping its link", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path)!;
+    h.setFailPath(projection.source.path);
+    await h.reconciler.unlink(projection.linkUid);
+    expect(h.texts.get(projection.source.path)).toBe(before);
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeDefined();
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "prepared",
+    );
+    h.setFailPath("");
+    await h.restart();
+    await h.settle();
+    expect(h.texts.get(projection.source.path)).toBe(
+      before.replace(" #todoist", ""),
+    );
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeUndefined();
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("unlink recovers when the note write succeeds before its link acknowledgment fails", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const before = h.texts.get(projection.source.path)!;
+    h.process.mockImplementationOnce(async (value, update) => {
+      const next = update(h.texts.get(value.path) ?? "");
+      h.texts.set(value.path, next);
+      h.setFailTaskWrite(true);
+      return next;
+    });
+    await h.reconciler.unlink(projection.linkUid);
+    expect(h.texts.get(projection.source.path)).toBe(
+      before.replace(" #todoist", ""),
+    );
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeDefined();
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "prepared",
+    );
+    h.setFailTaskWrite(false);
+    await h.restart();
+    await h.settle();
+    expect(h.texts.get(projection.source.path)).toBe(
+      before.replace(" #todoist", ""),
+    );
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeUndefined();
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
+    expect([...h.events.keys()]).toEqual([projection.googleEventId]);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("unlink defers an actively edited or ambiguous source", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    h.setStable(false);
+    await expect(h.reconciler.unlink(projection.linkUid)).rejects.toThrow(
+      "current note block",
+    );
+    h.setStable(true);
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace("Work #todoist", "Changed parent #todoist")
+        .replace("- [ ] Child", "- [ ] Changed child"),
+    );
+    await expect(h.reconciler.unlink(projection.linkUid)).rejects.toThrow(
+      "current note block",
+    );
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeDefined();
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("unlink journal validation rejects provider writes and a new schedule intent", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    await h.reconciler.unlink(projection.linkUid);
+    const before = h.service.registry.snapshot();
+    for (const patch of [
+      { syncTaskDate: true },
+      { providerChanges: { title: "Wrong update" } },
+      { target: { kind: "schedule", interval } },
+      {
+        providerSteps: [
+          {
+            id: crypto.randomUUID(),
+            base: root,
+            mutation: { kind: "complete", taskId: root.id },
+          },
+        ],
+      },
+    ]) {
+      await expect(
+        h.service.registry.change((state) => {
+          Object.assign(state.schedules.at(-1)!, patch);
+        }),
+      ).rejects.toThrow("Unlink journals");
+      expect(h.service.registry.snapshot()).toEqual(before);
+    }
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
   test("successive offline title and time rewrites retain the known task projection through calendar replacement matching", async () => {
     const h = await harness();
     h.setLoseCalendarResponse(true);

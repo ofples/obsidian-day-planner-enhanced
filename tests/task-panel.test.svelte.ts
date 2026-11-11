@@ -14,6 +14,7 @@ import { defaultSettingsForTests } from "../src/settings";
 import { taskViewStateSchema } from "../src/tasks/browser";
 import type { TaskCapture } from "../src/tasks/capture";
 import type { TaskOperation } from "../src/tasks/operations";
+import type { TaskReconciler } from "../src/tasks/reconcile";
 import type { TaskBrowserState, TaskService } from "../src/tasks/service";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
 import TasksPane from "../src/ui/components/tasks-pane.svelte";
@@ -52,7 +53,10 @@ afterEach(async () => {
   document.body.replaceChildren();
 });
 
-function render(actionValue: TaskPanelAction | null = null) {
+function render(
+  actionValue: TaskPanelAction | null = null,
+  reconciler?: TaskReconciler,
+) {
   const state = writable<TaskBrowserState>({
     snapshot,
     connected: true,
@@ -80,6 +84,7 @@ function render(actionValue: TaskPanelAction | null = null) {
         service,
         capture,
         action,
+        reconciler,
         settings: writable(defaultSettingsForTests),
         preferences: writable(taskViewStateSchema.parse({})),
         captureSettings: fallbackSettings,
@@ -108,6 +113,65 @@ function press(element: EventTarget, key: string, isComposing = false) {
 }
 
 describe("custom Tasks panel", () => {
+  test("unlink requires confirmation and keeps the decision open while it saves", async () => {
+    let finish!: () => void;
+    const unlink = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const reconciler = {
+      state: writable({ issues: [], error: "" }),
+      unlink,
+    } as unknown as TaskReconciler;
+    const h = render(
+      { kind: "unlink", title: "Shopping", linkUid: "link" },
+      reconciler,
+    );
+    expect(unlink).not.toHaveBeenCalled();
+    h.target
+      .querySelector<HTMLButtonElement>(".task-action-area .task-primary")!
+      .click();
+    flushSync();
+    expect(unlink).toHaveBeenCalledExactlyOnceWith("link");
+    expect(
+      h.target.querySelector<HTMLButtonElement>(
+        '[aria-label="Close task form"]',
+      )?.disabled,
+    ).toBe(true);
+    press(h.target.querySelector("section")!, "Escape");
+    expect(get(h.action)?.kind).toBe("unlink");
+    finish();
+    await vi.waitFor(() => expect(get(h.action)).toBeNull());
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
+  test("failed unlink retains its confirmation and actionable error", async () => {
+    const unlink = vi.fn(async () => {
+      throw new Error("The source changed. Review its current block.");
+    });
+    const reconciler = {
+      state: writable({ issues: [], error: "" }),
+      unlink,
+    } as unknown as TaskReconciler;
+    const h = render(
+      { kind: "unlink", title: "Shopping", linkUid: "link" },
+      reconciler,
+    );
+    h.target
+      .querySelector<HTMLButtonElement>(".task-action-area .task-primary")!
+      .click();
+    await vi.waitFor(() =>
+      expect(h.target.textContent).toContain("The source changed"),
+    );
+    expect(get(h.action)?.kind).toBe("unlink");
+    expect(
+      h.target.querySelector<HTMLButtonElement>(
+        ".task-action-area .task-primary",
+      )?.disabled,
+    ).toBe(false);
+  });
   test("Escape in another pane or an active composition preserves the open form", () => {
     const h = render({ kind: "create" });
     const input = h.target.querySelector<HTMLInputElement>(

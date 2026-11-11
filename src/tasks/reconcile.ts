@@ -27,7 +27,7 @@ import {
   type TaskMutation,
   type TaskPatch,
 } from "./operations";
-import { rewriteTaskNote } from "./reconcile-markdown";
+import { rewriteTaskNote, withoutTaskCaptureTag } from "./reconcile-markdown";
 import type { TaskLink, TaskReconcileIssue } from "./registry";
 import type { TaskScheduler } from "./schedule";
 import {
@@ -624,6 +624,57 @@ export class TaskReconciler {
     });
     this.publish();
     return { kind: "saved" };
+  }
+
+  async unlink(linkUid: string) {
+    await this.pending;
+    await this.capture.scan();
+    const snapshot = get(this.service.state).snapshot;
+    if (!snapshot || !this.current(snapshot))
+      throw new TaskReadError(
+        "Reconnect the original task account before unlinking.",
+      );
+    const state = this.service.registry.snapshot();
+    const link = state.links[linkUid];
+    if (
+      !link?.taskId ||
+      !link.base ||
+      link.provider !== snapshot.provider ||
+      link.accountId !== snapshot.account.id
+    )
+      throw new TaskReadError(
+        "This note link changed. Refresh before unlinking.",
+      );
+    if (
+      state.operations.some(
+        (operation) =>
+          operation.provider === link.provider &&
+          operation.accountId === link.accountId &&
+          operationTaskId(operation) === link.taskId &&
+          isOutstanding(operation),
+      )
+    )
+      throw new TaskReadError(
+        "Finish this task's saved change before unlinking.",
+      );
+    const source = this.capture
+      .candidates()
+      .find((candidate) => candidate.uid === linkUid);
+    if (!source || !(await this.capture.sourceIsCurrent(source)))
+      throw new TaskReadError(
+        "Choose the current note block before unlinking this task.",
+      );
+    await this.scheduler.reconcile({
+      linkUid,
+      task: link.base,
+      source,
+      raw: withoutTaskCaptureTag(source.raw),
+      interval: state.projections[linkUid]?.interval ?? null,
+      mutations: [],
+      expectedLink: link,
+      unlink: true,
+    });
+    this.publish();
   }
 
   private async issue(

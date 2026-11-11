@@ -823,8 +823,10 @@
   margin-top: 6px;
 }
 
-.dp-task-panel .task-remove-schedule {
-  justify-content: start;
+.dp-task-panel .task-note-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
 
   width: 100%;
   margin-top: 20px;
@@ -834,6 +836,10 @@
 
   border-top: 1px solid var(--tp-border);
   border-radius: 0;
+}
+
+.dp-task-panel .task-note-actions .task-text-button {
+  justify-content: start;
 }
 
 .dp-task-panel .task-panel-footer {

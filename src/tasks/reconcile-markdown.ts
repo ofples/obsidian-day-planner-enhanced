@@ -5,6 +5,20 @@ import type { TaskAccountSettings } from "./capture-settings";
 import { taskInlineMarkdown } from "./schedule-markdown";
 import type { ProviderTask } from "./types";
 
+/** Remove only the first task's capture opt-in, preserving its nested content. */
+export function withoutTaskCaptureTag(raw: string) {
+  const candidate = parseCaptureCandidates("", raw)[0];
+  if (!candidate)
+    throw new Error("Restore the linked checklist before unlinking.");
+  let result = raw;
+  for (const tag of candidate.tags.toReversed()) {
+    if (tag.name.toLowerCase() !== "todoist") continue;
+    const from = result[tag.from - 1] === " " ? tag.from - 1 : tag.from;
+    result = result.slice(0, from) + result.slice(tag.to);
+  }
+  return result;
+}
+
 /** Change owned first-line fields while retaining child bytes, comments and native IDs. */
 export function rewriteTaskNote(
   raw: string,

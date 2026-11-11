@@ -6,7 +6,10 @@ import {
   taskAccountKey,
 } from "../src/tasks/capture-settings";
 import { planTaskReconciliation } from "../src/tasks/reconcile";
-import { rewriteTaskNote } from "../src/tasks/reconcile-markdown";
+import {
+  rewriteTaskNote,
+  withoutTaskCaptureTag,
+} from "../src/tasks/reconcile-markdown";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
 
 const task: ProviderTask = {
@@ -59,6 +62,21 @@ function plan(before: string, after: string, remote = task) {
 }
 
 describe("linked note field reconciliation", () => {
+  test("unlink removes the parsed parent opt-in and preserves comments, code and nested tags", () => {
+    const raw =
+      "- [ ] **Task** #ToDoIsT #keep <!-- #todoist --> `#todoist` ^native\r\n  - [ ] Child #todoist";
+    expect(withoutTaskCaptureTag(raw)).toBe(raw.replace(" #ToDoIsT", ""));
+  });
+
+  test("unlink removes repeated capture tags while retaining longer project tags", () => {
+    expect(
+      withoutTaskCaptureTag("- [ ] Task #todoist #todoist/work #todoist"),
+    ).toBe("- [ ] Task #todoist/work");
+    expect(withoutTaskCaptureTag("- [ ] Task #work")).toBe("- [ ] Task #work");
+    expect(() => withoutTaskCaptureTag("Changed paragraph")).toThrow(
+      "checklist",
+    );
+  });
   test("a changed project tag uses a project move while preserving unmapped provider labels", () => {
     const result = plan(
       "- [ ] Task #todoist #work",

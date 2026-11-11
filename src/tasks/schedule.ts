@@ -13,6 +13,8 @@ import {
 import { TaskDrag } from "./drag";
 import {
   mutationFields,
+  isOutstanding,
+  operationTaskId,
   resolvedTaskOperation,
   type TaskMutation,
 } from "./operations";
@@ -147,12 +149,15 @@ export class TaskScheduler {
     googleUid?: string;
     mutations: { mutation: TaskMutation; base: ProviderTask }[];
     expectedLink?: TaskLink;
+    unlink?: boolean;
   }) {
     await this.pending;
     const browser = get(this.service.state),
       snapshot = browser.snapshot;
     if (this.stopped || !snapshot || !browser.writable)
       throw new TaskReadError("Reconnect before reconciling this task.");
+    if (input.unlink && input.mutations.length)
+      throw new TaskReadError("Unlinking requires a local-only note change.");
     const state = this.service.registry.snapshot(),
       link = state.links[input.linkUid];
     if (
@@ -192,6 +197,8 @@ export class TaskScheduler {
       raw: input.raw,
       generatedTaskIds: [input.task.id],
       syncTaskDate: false,
+      unlink: input.unlink,
+      unlinkNoteBase: input.unlink ? link.noteBase : undefined,
       providerSteps: input.mutations.map((step) => ({
         ...step,
         id: crypto.randomUUID(),
@@ -203,6 +210,14 @@ export class TaskScheduler {
       if (
         !this.current(operation) ||
         JSON.stringify(current.links[input.linkUid]) !== JSON.stringify(link) ||
+        (input.unlink &&
+          current.operations.some(
+            (item) =>
+              item.provider === operation.provider &&
+              item.accountId === operation.accountId &&
+              operationTaskId(item) === input.task.id &&
+              isOutstanding(item),
+          )) ||
         current.schedules.some(
           (item) =>
             item.provider === operation.provider &&
@@ -619,7 +634,7 @@ export class TaskScheduler {
         let googleUid = operation.googleUid;
         const interval =
           "interval" in operation.target ? operation.target.interval : null;
-        if (interval) {
+        if (interval && !operation.unlink) {
           const matching = operation.previous
             ? blocks.filter(
                 (block) =>
@@ -834,15 +849,15 @@ export class TaskScheduler {
       }
       if (!this.current(operation)) return;
       let eventId: string | undefined;
-      if (operation.plan!.interval)
+      if (operation.plan!.interval && !operation.unlink)
         eventId = await this.calendar.syncProjection(
           operation.googleUid,
           operation.plan!.block!.snapshot,
         );
       if (!this.current(operation)) return;
       await this.service.registry.change((state) => {
-        const projection = state.projections[operation.linkUid]!;
-        projection.googleEventId = eventId;
+        if (!operation.unlink)
+          state.projections[operation.linkUid]!.googleEventId = eventId;
         const saved = state.schedules.find((item) => item.id === operation.id)!;
         saved.phase = "complete";
         saved.error = undefined;
@@ -893,6 +908,11 @@ export class TaskScheduler {
         delete state.issues[operation.linkUid];
       }
       saved.taskAcknowledged = true;
+      if (operation.unlink) {
+        delete state.links[operation.linkUid];
+        delete state.projections[operation.linkUid];
+        delete state.issues[operation.linkUid];
+      }
       saved.phase = "calendar-pending";
       saved.error = undefined;
     });
@@ -1024,7 +1044,7 @@ export class TaskScheduler {
   ): Promise<NonNullable<ScheduleOperation["plan"]>> {
     const lines = operation.raw.split(/\r?\n/),
       range = getTimeRangeMatch(lines[0] ?? "");
-    if (range)
+    if (range && !operation.unlink)
       lines[0] = (
         lines[0]!.slice(0, range.startIndex).trimEnd() +
         " " +
@@ -1099,7 +1119,7 @@ export class TaskScheduler {
     return {
       edits,
       links: this.planLinks(operation, path, from, raw),
-      interval: null,
+      interval: operation.unlink ? (operation.previousInterval ?? null) : null,
     };
   }
 

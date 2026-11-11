@@ -19,6 +19,7 @@
     Search,
     Settings,
     Tag,
+    Unlink,
     X,
   } from "lucide-svelte";
   import { DateTime } from "luxon";
@@ -187,7 +188,7 @@
       paneElement?.querySelectorAll<HTMLElement>(".task-menu") ?? [],
     ))
       menu.hidePopover();
-    if (value.kind === "unschedule")
+    if (value.kind === "unschedule" || value.kind === "unlink")
       void tick().then(() => {
         if ($action === value)
           paneElement
@@ -312,6 +313,24 @@
         failure instanceof Error
           ? failure.message
           : "Could not remove this schedule. Try again.";
+    } finally {
+      busy = false;
+    }
+  }
+  async function unlinkNote() {
+    if ($action?.kind !== "unlink" || !reconciler || busy) return;
+    const openedAction = $action;
+    busy = true;
+    actionError = "";
+    try {
+      await reconciler.unlink(openedAction.linkUid);
+      finishAction(openedAction);
+    } catch (failure) {
+      if ($action !== openedAction) return;
+      actionError =
+        failure instanceof Error
+          ? failure.message
+          : "Could not unlink this note. Try again.";
     } finally {
       busy = false;
     }
@@ -473,6 +492,16 @@
                   void reconciler?.scan();
                 }}>Recheck</button
               >{/if}
+            {#if issue.source && reconciler && issue.fields.includes("task")}<button
+                class="task-text-button"
+                disabled={!$browserState.writable}
+                onclick={() =>
+                  startAction({
+                    kind: "unlink",
+                    linkUid: issue.linkUid,
+                    title: issue.source?.title ?? "Linked task",
+                  })}>Unlink</button
+              >{/if}
           </div>{/each}
         {#each $captureState.issues as issue (`${issue.candidate.path}:${issue.candidate.from}`)}<div
             class="task-review-row"
@@ -586,6 +615,29 @@
               saved={actionSaved($action)}
               {snapshot}
             />{/if}
+        {:else if $action.kind === "unlink" && reconciler}<div
+            class="task-panel-form"
+          >
+            <h3>Unlink note and Todoist?</h3>
+            <p class="task-form-context">{$action.title}</p>
+            <p>
+              Keep the note as a local task and manage the Todoist task
+              separately. Remove its #todoist capture tag.
+            </p>
+            {#if actionError}<p class="task-form-error" role="status">
+                {actionError}
+              </p>{/if}
+            <div class="task-form-actions">
+              <button class="task-primary" disabled={busy} onclick={unlinkNote}
+                >{busy ? "Unlinking…" : "Unlink note"}</button
+              >
+              <button
+                class="task-text-button"
+                disabled={busy}
+                onclick={closeAction}>Cancel</button
+              >
+            </div>
+          </div>
         {:else if $action.kind === "unschedule"}<div class="task-panel-form">
             <h3>Remove from schedule?</h3>
             <p class="task-form-context">{$action.task.title}</p>
@@ -930,12 +982,25 @@
             ><Plus size={14} />Add subtask</button
           >
         </section>
-        {#if selectedProjection?.interval}<button
-            class="task-text-button task-remove-schedule"
-            disabled={!canEditSelected}
-            onclick={() => startAction({ kind: "unschedule", task: selected })}
-            ><CalendarMinus size={17} />Remove from schedule</button
-          >{/if}
+        {#if selectedProjection}<div class="task-note-actions">
+            {#if selectedProjection.interval}<button
+                class="task-text-button"
+                disabled={!canEditSelected}
+                onclick={() =>
+                  startAction({ kind: "unschedule", task: selected })}
+                ><CalendarMinus size={17} />Remove from schedule</button
+              >{/if}
+            {#if reconciler}<button
+                class="task-text-button"
+                disabled={!canEditSelected}
+                onclick={() =>
+                  startAction({
+                    kind: "unlink",
+                    linkUid: selectedProjection.linkUid,
+                    title: selected.title,
+                  })}><Unlink size={16} />Unlink note</button
+              >{/if}
+          </div>{/if}
       </section>{/if}
   </div>
 
