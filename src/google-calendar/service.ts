@@ -38,9 +38,16 @@ const blockSchema = z.object({
   path: z.string(),
   raw: z.string(),
   snapshot: snapshotSchema,
+  from: z.number().int().optional(),
+});
+const identitySchema = z.object({
+  path: z.string(),
+  raw: z.string(),
+  snapshot: snapshotSchema,
+  from: z.number().int(),
 });
 const stateSchema = z.object({
-  version: z.literal(1),
+  version: z.union([z.literal(1), z.literal(2)]),
   namespace: z.string().regex(/^[a-f0-9]{32}$/),
   calendarId: z.string(),
   records: z.record(
@@ -52,6 +59,17 @@ const stateSchema = z.object({
       deleted: z.boolean().optional(),
     }),
   ),
+  identities: z.record(z.string(), identitySchema).optional(),
+  documents: z.record(z.string(), z.string()).optional(),
+  pendingNoteChange: z
+    .object({
+      edits: z.array(
+        z.object({ path: z.string(), before: z.string(), after: z.string() }),
+      ),
+      identities: z.record(z.string(), identitySchema),
+      documents: z.record(z.string(), z.string()),
+    })
+    .optional(),
   pendingImport: z
     .object({ uid: z.string(), eventId: z.string(), snapshot: snapshotSchema })
     .optional(),
@@ -94,7 +112,7 @@ export class GoogleCalendarSync {
       this.state = stateSchema.parse(JSON.parse(this.lastSaved));
     } else {
       this.state = {
-        version: 1,
+        version: 2,
         namespace: crypto.randomUUID().replace(/-/g, ""),
         calendarId: "",
         records: {},
@@ -105,6 +123,13 @@ export class GoogleCalendarSync {
       this.app,
       `day-planner-google-${this.state.namespace}`,
     );
+    if (
+      this.state.pendingNoteChange ||
+      this.state.pendingMove ||
+      (!this.state.identities && this.getSettings().googleCalendar.clientId)
+    ) {
+      await this.noteContext().notes.scan();
+    }
     this.plugin.addCommand({
       id: "google-calendar-connect",
       name: "Connect Google Calendar",
@@ -156,6 +181,30 @@ export class GoogleCalendarSync {
     if (serialized === this.lastSaved) return;
     await this.app.vault.adapter.write(this.statePath(), serialized);
     this.lastSaved = serialized;
+  }
+
+  private noteContext(settings = this.getSettings()) {
+    const config = settings.googleCalendar;
+    const timeMin = window
+      .moment()
+      .startOf("day")
+      .subtract(config.daysPast, "days")
+      .toISOString();
+    const timeMax = window
+      .moment()
+      .startOf("day")
+      .add(config.daysAhead + 1, "days")
+      .toISOString();
+    const notes = new ObsidianCalendarNotes(
+      this.app,
+      this.daily,
+      settings,
+      timeMin,
+      timeMax,
+      this.state,
+      () => this.save(),
+    );
+    return { notes, timeMin, timeMax };
   }
 
   async connect() {
@@ -232,25 +281,7 @@ export class GoogleCalendarSync {
         );
       this.state.calendarId = canonicalId;
       await this.save();
-      const timeMin = window
-        .moment()
-        .startOf("day")
-        .subtract(config.daysPast, "days")
-        .toISOString();
-      const timeMax = window
-        .moment()
-        .startOf("day")
-        .add(config.daysAhead + 1, "days")
-        .toISOString();
-      const notes = new ObsidianCalendarNotes(
-        this.app,
-        this.daily,
-        settings,
-        timeMin,
-        timeMax,
-        this.state,
-        () => this.save(),
-      );
+      const { notes, timeMin, timeMax } = this.noteContext(settings);
       await notes.recoverMove();
       const result = await syncCalendar({
         state: this.state,

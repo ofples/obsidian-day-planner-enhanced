@@ -42,11 +42,12 @@ With note import enabled, each recurring Google event occurrence in the import w
 ```markdown
 # Day planner
 
-- [ ] 09:00 - 10:00 Work #work <!-- dp-gcal:0123456789abcdef0123456789abcdef --> ^existing-id
+- [ ] 09:00 - 10:00 Work #work ^existing-id
     - [ ] Follow-up [[Project]]
 ```
 
-- New eligible daily-note blocks get a hidden ID comment when sync runs. **Keep the ID when editing, sorting, renaming, or moving a block.** Remove the ID from a deliberate copy that should become a new event. Duplicate IDs stop the sync before Google writes.
+- Sync identities live in the plugin's `gcal-state.json`. Daily notes stay ordinary Markdown with no generated IDs or tracking comments. Upgrading migrates existing comments into the state file and removes them from notes while retaining Google event links. User-created block IDs remain intact.
+- Whole block text, existing block IDs, title/time matches and source positions identify edits and moves. Ambiguous simultaneous rewrites or changed counts of identical duplicate blocks stop before Google writes. Apply and sync smaller edits when resolving such a conflict.
 - Only top-level timed list items under the configured planner heading are exported. Timed and untimed children remain in the parent Markdown subtree, and are not separately exported. Children, task completion status, links and block IDs stay in Obsidian.
 - When optional note import is enabled, Google events in the dedicated calendar are imported as ordinary timed daily-note blocks. The plugin creates daily notes through the existing Daily Notes / Periodic Notes integration, including its templates and date format.
 - Single-start blocks use the planner's configured duration or stretch-to-next setting. Explicit overnight ranges are supported. Timestamps use the device's local timezone and are sent to Google as absolute instants.
@@ -55,7 +56,7 @@ With note import enabled, each recurring Google event occurrence in the import w
 - Google descriptions, guests, conferencing links, locations, reminders and recurrence rules are not mirrored into the task text, and are preserved by title/time PATCH requests.
 - Checkbox completion has no equivalent on a Google Calendar event; checking a task does not delete or complete its calendar event.
 - A Google cancellation turns its note block into a visibly cancelled, untimed `- [-] Cancelled in Google Calendar: …` entry. Children and the old time range are retained as history.
-- **Local deletion propagation is off by default.** Enabling it allows removing a linked block from an existing daily note to delete its unchanged Google event. A missing/renamed note, an ID found elsewhere in the vault, a removed heading, or a conflicting edit prevents that deletion. Disabling it leaves the Google event intact and reports the removal as a conflict.
+- **Local deletion propagation is off by default.** When enabled, a clean removal from an existing daily note can delete its unchanged Google event. Stored note snapshots verify the removal. Missing notes, copies elsewhere, changes to unrelated note content, and ambiguous edits prevent deletion and report a conflict.
 - If both sides changed differently since the last successful sync, the plugin preserves both and reports a conflict. Run manual sync to see the conflict details. To resolve it, make the title and times agree on both sides and sync again. Do not remove tracking comments or reset the state file as a conflict-resolution method.
 - Optional background sync runs once per minute while Obsidian is open. Enable it on **one device at a time**. A second device changing the state file stops further saves and requires restarting Obsidian to reload the shared state. This is not a distributed locking system.
 
@@ -72,7 +73,7 @@ With note import enabled, each recurring Google event occurrence in the import w
 - OAuth uses a random state parameter, PKCE S256 and a loopback listener bound only to `127.0.0.1`. Client secret and refresh token use Obsidian SecretStorage; the access token stays in memory. They are never written to the plugin's `data.json` or sync-state file by this code.
 - Requested scopes: `calendar.events` and `calendar.calendarlist.readonly`. Writes use the configured writable calendar, whose resolved ID is pinned to its mappings. Calendar display reads events from the calendars selected in the display settings.
 - Network destinations are Google's OAuth endpoints and Calendar API, plus the local callback listener. There is no third-party proxy, hosted token service or telemetry.
-- `gcal-state.json` alongside the plugin files contains the namespace, calendar ID, mappings, last-synced title/times, cancellation tombstones and any pending move/import journal. Treat it as private calendar data and preserve it when updating the plugin. The source repository ignores it.
+- `gcal-state.json` alongside the plugin files contains the namespace, calendar ID, mappings, block identities, note snapshots, last-synced title/times, cancellation tombstones and recovery journals. Preserve this private state file when updating the plugin. Version 2 stores note identities externally. Older builds reject that version, preventing accidental duplicate exports after a downgrade. Restore a matching note/state backup when rolling back. The source repository ignores the file.
 - Create operations use deterministic Google event IDs; a retry after a timeout adopts the existing event rather than inserting another. Imported events use deterministic local IDs so an interrupted import can be recovered too.
 - Updates and deletes carry `If-Match` with Google's event ETag. A concurrent change returns a conflict instead of overwriting newer data. Listings are paginated completely before reconciliation; absence from a discovery window is followed by an ID lookup.
 - A failed operation does not advance that item's successful baseline. Cross-note moves save their intent before appending the destination, remove the unchanged original afterward, and recover the journal before a later sync. Imports save their event identity before writing the note, so recovery still works if Google subsequently moves the event out of the discovery window.
@@ -82,8 +83,8 @@ Google references: [Desktop OAuth](https://developers.google.com/identity/protoc
 
 ## Validation of this implementation
 
-- 60 new automated tests pass across reconciliation, Markdown, vault writes and recovery, display-only calendars, color mapping, HTTP transport, and a real local OAuth callback with a mocked Google token endpoint.
-- Full suite: 657 passed, 1 failed, 9 skipped and 17 todo. The failure is the existing ICS test `Last visible day is inclusive` in `tests/ical.test.ts`; it also fails on a separate, untouched checkout of upstream commit `db64375d` with the same environment and dependencies.
+- 70 new automated tests pass across reconciliation, external identity migration, Markdown, vault writes and recovery, display-only calendars, color mapping, HTTP transport, and a real local OAuth callback with a mocked Google token endpoint.
+- Full suite: 667 passed, 1 failed, 9 skipped and 17 todo. The failure is the existing ICS test `Last visible day is inclusive` in `tests/ical.test.ts`; it also fails on a separate, untouched checkout of upstream commit `db64375d` with the same environment and dependencies.
 - Prettier, ESLint, stylelint, TypeScript, Svelte diagnostics, the stricter scorecard lint and the production build pass. The aggregate `npm run lint` stops at the inherited test failure, so it is not an all-green result.
 - Windows checkout CRLF bytes in the test fixtures had to be normalized back to the repository's LF content so the recorded metadata offsets matched. No fixture or unrelated source changes are included in this branch.
 - Installed desktop acceptance verified Google consent, SecretStorage credentials, initial schedule export, Google event import, title/time edits in both directions, and Google cancellation. The expandable setup row is present in installed settings. Desktop sign-in uses a guarded CommonJS Node HTTP import because Chromium cannot resolve `import("node:http")` in Obsidian's plugin loader.

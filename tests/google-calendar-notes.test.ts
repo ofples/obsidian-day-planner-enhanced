@@ -101,7 +101,103 @@ function harness() {
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 describe("vault calendar adapter", () => {
-  test("scanning inserts IDs only in eligible planner blocks", async () => {
+  test("migration preserves IDs and only removes legacy comments", async () => {
+    const h = harness();
+    const before = h.texts.get(sourcePath)!;
+    const [block] = await h.notes.scan();
+    expect(block?.uid).toBe(uid);
+    expect(h.texts.get(sourcePath)).toBe(before.replace(` ${marker}`, ""));
+    expect(h.state.identities?.[uid]?.raw).toContain("^anchor");
+    expect((await h.notes.scan())[0]?.uid).toBe(uid);
+    expect(h.state.pendingNoteChange).toBeUndefined();
+  });
+  test("failed migration saves leave note text intact and recovery keeps identity", async () => {
+    const h = harness();
+    const before = h.texts.get(sourcePath);
+    h.save.mockRejectedValueOnce(new Error("Disk unavailable"));
+    await expect(h.notes.scan()).rejects.toThrow("Disk unavailable");
+    expect(h.texts.get(sourcePath)).toBe(before);
+    expect(h.state.pendingNoteChange).toBeDefined();
+    await h.notes.recoverMove();
+    expect((await h.notes.scan())[0]?.uid).toBe(uid);
+    expect(h.texts.get(sourcePath)).not.toContain("dp-gcal");
+  });
+  test("local edits and checkbox changes keep the sidecar identity", async () => {
+    const h = harness();
+    await h.notes.scan();
+    h.texts.set(
+      sourcePath,
+      h.texts
+        .get(sourcePath)!
+        .replace(
+          "09:00 - 10:00 Work #work",
+          "10:15 - 11:45 Different title #work",
+        )
+        .replace("- [x]", "- [ ]"),
+    );
+    const [edited] = await h.notes.scan();
+    expect(edited?.uid).toBe(uid);
+    expect(edited?.snapshot.title).toBe("Different title #work");
+    expect(h.texts.get(sourcePath)).not.toContain("dp-gcal");
+  });
+  test("plain blocks moved to another daily note keep their existing link", async () => {
+    const h = harness();
+    const [block] = await h.notes.scan();
+    h.texts.set(sourcePath, h.texts.get(sourcePath)!.replace(block!.raw, ""));
+    h.file("Daily/2026-11-12.md");
+    h.texts.set("Daily/2026-11-12.md", `# Day planner\n\n${block!.raw}\n`);
+    const [moved] = await h.notes.scan();
+    expect(moved?.uid).toBe(uid);
+    expect(moved?.path).toBe("Daily/2026-11-12.md");
+  });
+  test("new imports recover after the note write but before the metadata commit", async () => {
+    const h = harness();
+    const [block] = await h.notes.scan();
+    const snapshot = { ...block!.snapshot, title: "Imported event" };
+    const newUid = "c".repeat(32);
+    let savedJournal = "";
+    h.save
+      .mockImplementationOnce(async () => {
+        savedJournal = JSON.stringify(h.state);
+      })
+      .mockRejectedValueOnce(new Error("Interrupted commit"));
+    await expect(h.notes.write(newUid, snapshot)).rejects.toThrow(
+      "Interrupted commit",
+    );
+    // Restore exactly the persisted state, as a restart after the failed commit would.
+    for (const key of Object.keys(h.state))
+      Reflect.deleteProperty(h.state, key);
+    Object.assign(h.state, JSON.parse(savedJournal));
+    expect(h.state.pendingNoteChange).toBeDefined();
+    await h.notes.recoverMove();
+    expect(
+      (await h.notes.scan()).filter((item) => item.uid === newUid),
+    ).toHaveLength(1);
+    expect(h.texts.get(sourcePath)?.match(/Imported event/g)).toHaveLength(1);
+  });
+  test("legacy marker-based move journals recover before migration", async () => {
+    const h = harness();
+    const snapshot = {
+      title: "Work #work",
+      start: window.moment("2026-11-12T09:00").toISOString(),
+      end: window.moment("2026-11-12T10:00").toISOString(),
+    };
+    h.file("Daily/2026-11-12.md");
+    h.texts.set("Daily/2026-11-12.md", "# Day planner\n");
+    h.state.pendingMove = {
+      source: { uid, path: sourcePath, raw: original, snapshot },
+      targetPath: "Daily/2026-11-12.md",
+      raw: original,
+      snapshot,
+    };
+    await h.notes.recoverMove();
+    expect(h.state.pendingMove).toBeUndefined();
+    const [moved] = await h.notes.scan();
+    expect(moved?.uid).toBe(uid);
+    expect(moved?.path).toBe("Daily/2026-11-12.md");
+    expect(Array.from(h.texts.values()).join("\n")).not.toContain("dp-gcal");
+  });
+  test("scanning stores eligible block IDs outside the unchanged note", async () => {
     const h = harness();
     h.texts.set(
       sourcePath,
@@ -109,9 +205,10 @@ describe("vault calendar adapter", () => {
     );
     const blocks = await h.notes.scan();
     expect(blocks).toHaveLength(1);
-    expect(h.texts.get(sourcePath)?.match(/<!-- dp-gcal:/g)).toHaveLength(1);
+    expect(h.texts.get(sourcePath)).not.toContain("dp-gcal");
+    expect(Object.keys(h.state.identities!)).toHaveLength(1);
     expect(h.texts.get(sourcePath)).toContain(
-      "--> ^anchor\n    - [ ] 09:15 Child\n# Other\n- [ ] 11:00 Outside\n",
+      "Parent ^anchor\n    - [ ] 09:15 Child\n# Other\n- [ ] 11:00 Outside\n",
     );
   });
   test("Google edits preserve unrelated sections and exact child content", async () => {
@@ -156,17 +253,14 @@ describe("vault calendar adapter", () => {
     await expect(h.notes.write(uid, snapshot, block)).rejects.toThrow(
       "interrupted",
     );
-    expect(h.state.pendingMove).toBeDefined();
-    expect(h.texts.get(sourcePath)).toContain(marker);
-    expect(h.texts.get("Daily/2026-11-12.md")).toContain(marker);
+    expect(h.state.pendingNoteChange).toBeDefined();
+    expect(h.texts.get(sourcePath)).toContain("Work #work");
+    expect(h.texts.get("Daily/2026-11-12.md")).toContain("Work #work");
     h.interrupt(false);
     await h.notes.recoverMove();
-    expect(h.state.pendingMove).toBeUndefined();
-    expect(
-      Array.from(h.texts.values())
-        .join("\n")
-        .match(/<!-- dp-gcal:/g),
-    ).toHaveLength(1);
+    expect(h.state.pendingNoteChange).toBeUndefined();
+    expect((await h.notes.scan()).map((block) => block.uid)).toEqual([uid]);
+    expect(Array.from(h.texts.values()).join("\n")).not.toContain("dp-gcal");
     expect(h.texts.get("Daily/2026-11-12.md")).toContain(
       "Nested [[Other]] ^child",
     );
@@ -184,7 +278,7 @@ describe("vault calendar adapter", () => {
   test("an ID moved to an unrelated note protects the Google event from deletion", async () => {
     const h = harness();
     const [block] = await h.notes.scan();
-    h.texts.set(sourcePath, "# Day planner\n");
+    h.texts.set(sourcePath, h.texts.get(sourcePath)!.replace(block!.raw, ""));
     h.file("Projects/Moved.md");
     h.texts.set(
       "Projects/Moved.md",
@@ -200,7 +294,7 @@ describe("vault calendar adapter", () => {
   test("local deletion is disabled by default and requires the source file to exist", async () => {
     const h = harness();
     const [block] = await h.notes.scan();
-    h.texts.set(sourcePath, "# Day planner\n");
+    h.texts.set(sourcePath, h.texts.get(sourcePath)!.replace(block!.raw, ""));
     const record = {
       eventId: "event1",
       path: sourcePath,

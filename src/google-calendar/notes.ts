@@ -3,11 +3,12 @@ import { TFile, type App } from "obsidian";
 import type { PeriodicNotes } from "../service/periodic-notes";
 import type { DayPlannerSettings } from "../settings";
 
+import { resolveIdentities, type IdentityCandidate } from "./identity";
 import {
-  addMarker,
   appendToPlanner,
   parseBlocks,
   renderBlock,
+  stripSyncMarkers,
   syncMarker,
 } from "./markdown";
 import {
@@ -17,6 +18,7 @@ import {
   type CalendarSyncState,
   type LocalBlock,
   type SyncRecord,
+  type LocalIdentity,
 } from "./types";
 
 export class ObsidianCalendarNotes implements CalendarNotes {
@@ -31,49 +33,129 @@ export class ObsidianCalendarNotes implements CalendarNotes {
   ) {}
 
   async scan(): Promise<LocalBlock[]> {
-    const blocks: LocalBlock[] = [];
+    await this.recoverMove();
+    const candidates: IdentityCandidate[] = [];
+    const scannedDocuments: Record<string, string> = {};
+    const edits: Array<{ path: string; before: string; after: string }> = [];
     for (const file of Object.values(this.daily.getAllDailyNotes())) {
       const day = this.daily.getDateFromFile(file, "day");
       if (!day) continue;
       const date = day.format("YYYY-MM-DD");
-      let text = await this.app.vault.read(file);
+      const text = await this.app.vault.read(file);
       // Keep known IDs discoverable after moving a block outside the sync window.
       const inWindow =
         day.valueOf() >= Date.parse(this.timeMin) &&
         day.valueOf() < Date.parse(this.timeMax);
-      let parsed = parseBlocks(text, date, this.settings);
-      if (inWindow && parsed.some((block) => !block.uid)) {
-        await this.app.vault.process(file, (current) => {
-          const candidates = parseBlocks(current, date, this.settings)
-            .filter((block) => !block.uid)
-            .reverse();
-          let next = current;
-          for (const candidate of candidates) {
-            const firstEnd = candidate.raw.search(/\r?\n/);
-            const length = firstEnd < 0 ? candidate.raw.length : firstEnd;
-            const line = candidate.raw.slice(0, length);
-            const uid = crypto.randomUUID().replace(/-/g, "");
-            next =
-              next.slice(0, candidate.from) +
-              addMarker(line, uid) +
-              next.slice(candidate.from + length);
-          }
-          return next;
-        });
-        text = await this.app.vault.read(file);
-        parsed = parseBlocks(text, date, this.settings);
-      }
-      for (const block of parsed) {
-        if (block.uid)
-          blocks.push({
-            uid: block.uid,
-            path: file.path,
-            raw: block.raw,
-            snapshot: block.snapshot,
-          });
-      }
+      const cleaned = stripSyncMarkers(text);
+      scannedDocuments[file.path] = cleaned;
+      const legacy = parseBlocks(text, date, this.settings);
+      const parsed = parseBlocks(cleaned, date, this.settings);
+      parsed.forEach((block, index) =>
+        candidates.push({
+          uid: legacy[index]?.uid,
+          path: file.path,
+          from: block.from,
+          raw: block.raw,
+          snapshot: block.snapshot,
+          eligible: inWindow,
+        }),
+      );
+      if (text !== cleaned)
+        edits.push({ path: file.path, before: text, after: cleaned });
     }
+    const identities = { ...this.state.identities };
+    for (const [uid, record] of Object.entries(this.state.records))
+      identities[uid] ??= {
+        path: record.path,
+        raw: "",
+        snapshot: record.base,
+        from: -1,
+      };
+    // Deleted events keep their tombstones, without claiming another note block.
+    for (const [uid, record] of Object.entries(this.state.records))
+      if (record.deleted) delete identities[uid];
+    resolveIdentities(candidates, identities);
+    const blocks: LocalBlock[] = [];
+    for (const candidate of candidates) {
+      const uid =
+        candidate.uid ??
+        (candidate.eligible
+          ? crypto.randomUUID().replace(/-/g, "")
+          : undefined);
+      if (!uid) continue;
+      const { path, raw, snapshot, from } = candidate;
+      identities[uid] = { path, raw, snapshot, from };
+      blocks.push({ uid, path, raw, snapshot, from });
+    }
+    const assigned = new Set(blocks.map((block) => block.uid));
+    const missingPaths = new Set(
+      Object.entries(identities)
+        .filter(([uid]) => !assigned.has(uid))
+        .map(([, identity]) => identity.path),
+    );
+    const documents = { ...this.state.documents };
+    for (const [path, text] of Object.entries(scannedDocuments))
+      if (
+        !missingPaths.has(path) &&
+        blocks.some((block) => block.path === path)
+      )
+        documents[path] = text;
+    await this.changeNotes(edits, identities, documents);
     return blocks;
+  }
+
+  private async changeNotes(
+    edits: Array<{ path: string; before: string; after: string }>,
+    identities: Record<string, LocalIdentity>,
+    documents = {
+      ...this.state.documents,
+      ...Object.fromEntries(edits.map((edit) => [edit.path, edit.after])),
+    },
+  ) {
+    this.state.version = 2;
+    if (!edits.length) {
+      this.state.identities = identities;
+      this.state.documents = documents;
+      await this.save();
+      return;
+    }
+    this.state.pendingNoteChange = { edits, identities, documents };
+    await this.save();
+    await this.recoverNoteChange();
+  }
+
+  private async recoverNoteChange() {
+    const pending = this.state.pendingNoteChange;
+    if (!pending) return;
+    for (const edit of pending.edits) {
+      const text = await this.app.vault.read(this.file(edit.path));
+      if (text !== edit.before && text !== edit.after)
+        throw new Error(
+          `Note changed during calendar recovery: ${edit.path}. Restore the note from history before retrying.`,
+        );
+    }
+    for (const edit of pending.edits) {
+      await this.app.vault.process(this.file(edit.path), (text) => {
+        if (text === edit.after) return text;
+        if (text !== edit.before)
+          throw new Error("The note changed during sync; retry.");
+        return edit.after;
+      });
+    }
+    this.state.identities = pending.identities;
+    this.state.documents = pending.documents;
+    delete this.state.pendingNoteChange;
+    await this.save();
+  }
+
+  private locate(text: string, block: LocalBlock) {
+    if (
+      block.from !== undefined &&
+      text.slice(block.from, block.from + block.raw.length) === block.raw
+    )
+      return block.from;
+    const index = text.indexOf(block.raw);
+    return index >= 0 && text.indexOf(block.raw, index + 1) < 0 ? index : -1;
   }
 
   private file(path: string) {
@@ -87,14 +169,19 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     const file = this.app.vault.getAbstractFileByPath(block.path);
     if (!(file instanceof TFile)) return false;
     const text = await this.app.vault.read(file);
-    return text.includes(block.raw);
+    return this.locate(text, block) >= 0;
   }
 
   async canDelete(record: SyncRecord, uid: string) {
     if (!this.settings.googleCalendar.syncDeletions) return false;
     // Moving a block to an unindexed note or changing its heading is not deletion.
     for (const note of this.app.vault.getMarkdownFiles()) {
-      if ((await this.app.vault.read(note)).includes(`<!-- dp-gcal:${uid} -->`))
+      const text = await this.app.vault.read(note);
+      const identity = this.state.identities?.[uid];
+      if (
+        text.includes(`<!-- dp-gcal:${uid} -->`) ||
+        (identity && text.includes(identity.raw))
+      )
         return false;
     }
     const file = this.app.vault.getAbstractFileByPath(record.path);
@@ -113,7 +200,19 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     if (parsed.some((block) => sameSnapshot(block.snapshot, record.base)))
       return false;
     if (text.includes(record.base.title)) return false;
-    return true;
+    const identity = this.state.identities?.[uid];
+    const before = this.state.documents?.[record.path];
+    if (!identity || before === undefined || !identity.raw) return false;
+    const index = this.locate(before, { uid, ...identity });
+    if (index < 0) return false;
+    const removed =
+      before.slice(0, index) + before.slice(index + identity.raw.length);
+    const normalize = (value: string) =>
+      value
+        .replace(/\r\n/g, "\n")
+        .replace(/\n[ \t]*\n+/g, "\n\n")
+        .trim();
+    return normalize(text) === normalize(removed);
   }
 
   async write(
@@ -125,33 +224,52 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     const target = await this.daily.createDailyNoteIfNeeded(
       window.moment(snapshot.start).startOf("day"),
     );
-    if (previous && previous.path !== target.path) {
-      this.state.pendingMove = {
-        source: previous,
-        targetPath: target.path,
-        raw,
-        snapshot,
-      };
-      await this.save();
-      await this.recoverMove();
-      return { uid, path: target.path, raw, snapshot };
+    const before = await this.app.vault.read(target);
+    const edits: Array<{ path: string; before: string; after: string }> = [];
+    let after: string;
+    let from: number;
+    if (previous && previous.path === target.path) {
+      from = this.locate(before, previous);
+      if (from < 0) throw new Error("The note changed during sync; retry.");
+      after =
+        before.slice(0, from) + raw + before.slice(from + previous.raw.length);
+    } else {
+      after = appendToPlanner(before, raw, this.settings);
+      const appended = parseBlocks(
+        after,
+        window.moment(snapshot.start).format("YYYY-MM-DD"),
+        this.settings,
+      )
+        .filter((block) => block.raw === raw)
+        .at(-1);
+      if (!appended)
+        throw new Error("Could not locate the imported calendar block.");
+      from = appended.from;
     }
-    await this.app.vault.process(target, (text) => {
-      if (previous) {
-        const index = text.indexOf(previous.raw);
-        if (index < 0) throw new Error("The note changed during sync; retry.");
-        return (
-          text.slice(0, index) + raw + text.slice(index + previous.raw.length)
-        );
-      }
-      if (text.includes(`<!-- dp-gcal:${uid} -->`))
-        throw new Error("Sync ID already exists in destination note.");
-      return appendToPlanner(text, raw, this.settings);
+    edits.push({ path: target.path, before, after });
+    if (previous && previous.path !== target.path) {
+      const sourceText = await this.app.vault.read(this.file(previous.path));
+      const index = this.locate(sourceText, previous);
+      if (index < 0)
+        throw new Error("The source note changed during sync; retry.");
+      edits.push({
+        path: previous.path,
+        before: sourceText,
+        after:
+          sourceText.slice(0, index) +
+          sourceText.slice(index + previous.raw.length),
+      });
+    }
+    const identity = { path: target.path, raw, snapshot, from };
+    await this.changeNotes(edits, {
+      ...this.state.identities,
+      [uid]: identity,
     });
-    return { uid, path: target.path, raw, snapshot };
+    return { uid, ...identity };
   }
 
   async recoverMove() {
+    await this.recoverNoteChange();
     const pending = this.state.pendingMove;
     if (!pending) return;
     const { source, targetPath, raw } = pending;
@@ -198,7 +316,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
 
   async cancel(block: LocalBlock) {
     await this.app.vault.process(this.file(block.path), (text) => {
-      const index = text.indexOf(block.raw);
+      const index = this.locate(text, block);
       if (index < 0) throw new Error("The note changed during sync; retry.");
       const lines = block.raw.split(/\r?\n/);
       const first = lines[0] ?? "";
@@ -206,7 +324,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       const range = first
         .replace(syncMarker, "")
         .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?/, "");
-      lines[0] = `- [-] Cancelled in Google Calendar: ${range.trim()} <!-- dp-gcal-cancelled:${block.uid} -->`;
+      lines[0] = `- [-] Cancelled in Google Calendar: ${range.trim()}`;
       return (
         text.slice(0, index) +
         lines.join(block.raw.includes("\r\n") ? "\r\n" : "\n") +

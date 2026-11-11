@@ -9,6 +9,10 @@ import { normalizeTitle, type CalendarSnapshot } from "./types";
 export const syncMarker = /<!-- dp-gcal:([a-f0-9]{32}) -->/;
 const cancelledMarker = /<!-- dp-gcal-cancelled:[a-f0-9]{32} -->/;
 
+export function stripSyncMarkers(text: string) {
+  return text.replace(/ ?<!-- dp-gcal(?:-cancelled)?:[a-f0-9]{32} -->/g, "");
+}
+
 export interface ParsedBlock {
   uid?: string;
   from: number;
@@ -49,6 +53,7 @@ export function parseBlocks(
       const raw = text.slice(from, to);
       if (cancelledMarker.test(raw.split(/\r?\n/)[0] ?? "")) continue;
       const line = raw.split(/\r?\n/)[0] ?? "";
+      if (/^\s*[-*+] \[-\] Cancelled in Google Calendar:/.test(line)) continue;
       const range = getTimeRangeMatch(line);
       const time = getTimeFromLine({
         line,
@@ -103,7 +108,7 @@ export function addMarker(line: string, uid: string) {
 }
 
 export function renderBlock(
-  uid: string,
+  _uid: string,
   snapshot: CalendarSnapshot,
   settings: DayPlannerSettings,
   previous?: string,
@@ -131,7 +136,7 @@ export function renderBlock(
     .trim();
   const range = `${start.format(settings.timestampFormat)} - ${end.format(settings.timestampFormat)}`;
   return [
-    `${prefix}${range} ${title}${comments ? ` ${comments}` : ""} <!-- dp-gcal:${uid} -->${blockId}`,
+    `${prefix}${range} ${title}${comments ? ` ${comments}` : ""}${blockId}`,
     ...lines.slice(1),
   ].join(newline);
 }

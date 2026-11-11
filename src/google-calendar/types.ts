@@ -33,6 +33,14 @@ export interface LocalBlock {
   path: string;
   raw: string;
   snapshot: CalendarSnapshot;
+  from?: number;
+}
+
+export interface LocalIdentity {
+  path: string;
+  raw: string;
+  snapshot: CalendarSnapshot;
+  from: number;
 }
 
 export interface SyncRecord {
@@ -43,10 +51,17 @@ export interface SyncRecord {
 }
 
 export interface CalendarSyncState {
-  version: 1;
+  version: 1 | 2;
   namespace: string;
   calendarId: string;
   records: Record<string, SyncRecord>;
+  identities?: Record<string, LocalIdentity>;
+  documents?: Record<string, string>;
+  pendingNoteChange?: {
+    edits: Array<{ path: string; before: string; after: string }>;
+    identities: Record<string, LocalIdentity>;
+    documents: Record<string, string>;
+  };
   pendingImport?: { uid: string; eventId: string; snapshot: CalendarSnapshot };
   pendingMove?: {
     source: LocalBlock;
