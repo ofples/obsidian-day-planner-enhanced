@@ -1,5 +1,7 @@
 # Day Planner Enhanced
 
+This development fork adds **Google Calendar two-way sync for daily-note time blocks**. See [setup, behavior and verification status](GOOGLE-CALENDAR.md). The sync is optional and automatic synchronization is off by default. Upstream project: [jagaldol/obsidian-day-planner-enhanced](https://github.com/jagaldol/obsidian-day-planner-enhanced).
+
 **Readable nested schedules for Obsidian.**
 
 Day Planner Enhanced is an [Obsidian](https://obsidian.md/) community plugin for people who plan in nested Markdown lists. Child items stay readable inside their parent block instead of appearing again as separate Timeline or All Day entries.

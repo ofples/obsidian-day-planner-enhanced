@@ -15,6 +15,7 @@ test-vault/
 TODO.md
 .idea
 data.json
+gcal-state.json
 .env
 .claude
 

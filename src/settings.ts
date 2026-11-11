@@ -54,6 +54,7 @@ export type TimelineColumnType = "timeTracker" | "planner";
 export type TimelineColumns = Record<TimelineColumnType, boolean>;
 
 export interface DayPlannerSettings {
+  googleCalendar: import("./google-calendar/service").GoogleCalendarSettings;
   progressIndicator: "mini-timeline" | "pie" | "bar" | "none";
   showTaskNotification: boolean;
   zoomLevel: number;
@@ -98,6 +99,14 @@ export interface DayPlannerSettings {
 }
 
 export const defaultSettings: DayPlannerSettings = {
+  googleCalendar: {
+    clientId: "",
+    calendarId: "",
+    autoSync: false,
+    daysPast: 7,
+    daysAhead: 30,
+    syncDeletions: false,
+  },
   snapStepMinutes: 10,
   progressIndicator: "mini-timeline",
   showTaskNotification: false,
@@ -158,6 +167,10 @@ export function mergeStoredSettings(
   return {
     ...defaultSettings,
     ...currentSettings,
+    googleCalendar: {
+      ...defaultSettings.googleCalendar,
+      ...currentSettings.googleCalendar,
+    },
   };
 }
 

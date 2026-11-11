@@ -94,7 +94,7 @@ export default defineConfig((env) => ({
           return assetInfo.name;
         },
       },
-      external: ["obsidian", "electron"],
+      external: ["obsidian", "electron", "node:http"],
     },
   },
   test: {

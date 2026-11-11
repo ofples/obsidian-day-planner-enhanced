@@ -29,6 +29,7 @@ import {
   createTimelineTaskSelectionTarget,
   requestTimelineTaskSelection,
 } from "./global-store/timeline-task-selection";
+import { GoogleCalendarSync } from "./google-calendar/service";
 import {
   fromMarkdown,
   positionContainsPoint,
@@ -103,6 +104,7 @@ import { notifyAboutStartedTimeBlocks } from "./util/notify-about-started-time-b
 import { createBackgroundBatchScheduler } from "./util/scheduler";
 
 export default class DayPlanner extends Plugin {
+  googleCalendarSync!: GoogleCalendarSync;
   getSettings!: () => DayPlannerSettings;
   private settingsStore!: Writable<DayPlannerSettings>;
   private workspaceFacade!: WorkspaceFacade;
@@ -240,6 +242,18 @@ export default class DayPlanner extends Plugin {
     });
 
     this.initSettingsStore({ initialSettings, dispatch });
+    this.googleCalendarSync = new GoogleCalendarSync(
+      this,
+      this.periodicNotes,
+      this.getSettings,
+    );
+    try {
+      await this.googleCalendarSync.initialize();
+    } catch (error) {
+      new Notice(
+        `Google Calendar sync could not initialize: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
     this.registerHoverLinkSource(dayPlannerHoverLinkSource, {
       display: this.manifest.name,
       defaultMod: false,

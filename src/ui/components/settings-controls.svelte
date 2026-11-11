@@ -28,6 +28,27 @@
   {@attach (el: HTMLDivElement) => {
     el.empty();
 
+    new SettingGroup(el).setHeading("Google Calendar").addSetting((setting) =>
+      setting
+        .setName("Automatic sync")
+        .setDesc(
+          "Configure your Google account and target calendar in the full Day Planner settings first.",
+        )
+        .addToggle((control) =>
+          control
+            .setValue($settings.googleCalendar.autoSync)
+            .onChange((value) => {
+              $settings = {
+                ...$settings,
+                googleCalendar: {
+                  ...$settings.googleCalendar,
+                  autoSync: value,
+                },
+              };
+            }),
+        ),
+    );
+
     new SettingGroup(el)
       .addSetting((setting) =>
         setting.setName("Start hour").addDropdown((dropdown) =>

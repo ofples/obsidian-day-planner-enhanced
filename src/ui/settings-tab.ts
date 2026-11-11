@@ -10,6 +10,7 @@ import type { Writable } from "svelte/store";
 import { isNotVoid, isOneOf } from "typed-assert";
 
 import { icons } from "../constants";
+import { googleCalendarSettingDefinitions } from "../google-calendar/settings-ui";
 import type DayPlanner from "../main";
 import {
   type DayPlannerSettings,
@@ -43,6 +44,7 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
   getSettingDefinitions(): SettingDefinitionItem[] {
     const settings = this.plugin.getSettings();
     const definitions: SettingDefinitionItem[] = [
+      this.googleCalendarDefinition(),
       {
         name: "Restart Obsidian after changing settings",
         desc: "Any change to the settings requires a restart of Obsidian.",
@@ -683,6 +685,20 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
     }
 
     containerEl.empty();
+
+    const calendarDefinition = this.googleCalendarDefinition();
+    if (calendarDefinition.type === "group") {
+      const group = new SettingGroup(containerEl).setHeading(
+        "Google Calendar two-way sync",
+      );
+      for (const item of calendarDefinition.items ?? []) {
+        group.addSetting((setting) => {
+          setting.setName(item.name);
+          if (typeof item.desc === "string") setting.setDesc(item.desc);
+          if ("render" in item) item.render?.(setting, group);
+        });
+      }
+    }
 
     // @ts-expect-error
     this.warningComponent = mount(Callout, {
@@ -1468,6 +1484,20 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
 
   private updateSettings(patch: Partial<DayPlannerSettings>) {
     this.settingsStore.update((previous) => ({ ...previous, ...patch }));
+  }
+
+  private googleCalendarDefinition() {
+    return googleCalendarSettingDefinitions(
+      () => this.plugin.getSettings(),
+      (patch) =>
+        this.updateSettings({
+          googleCalendar: {
+            ...this.plugin.getSettings().googleCalendar,
+            ...patch,
+          },
+        }),
+      () => this.plugin.googleCalendarSync,
+    );
   }
 
   private refreshSettings(): void {
