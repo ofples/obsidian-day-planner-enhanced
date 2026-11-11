@@ -4,6 +4,9 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { GoogleCalendarSync } from "../src/google-calendar/service";
 import { defaultSettingsForTests } from "../src/settings";
+import { makeStore } from "../src/redux/store";
+import { taskCalendarDisplayUpdated } from "../src/redux/ical/ical-slice";
+import { taskCalendarDisplayPolicy } from "../src/tasks/calendar-display";
 import { taskAccountKey } from "../src/tasks/capture-settings";
 import type { TaskBrowserState, TaskService } from "../src/tasks/service";
 import type { TaskSnapshot } from "../src/tasks/types";
@@ -17,8 +20,10 @@ const snapshot: TaskSnapshot = {
   fetchedAt: "2026-11-11T00:00:00Z",
 };
 const mounted: ReturnType<typeof mount>[] = [];
+const subscriptions: (() => void)[] = [];
 afterEach(async () => {
   for (const component of mounted.splice(0)) await unmount(component);
+  for (const stop of subscriptions.splice(0)) stop();
   document.body.replaceChildren();
 });
 function render(calendars: GoogleCalendarSync["calendars"] = async () => []) {
@@ -53,6 +58,16 @@ function render(calendars: GoogleCalendarSync["calendars"] = async () => []) {
   });
   const saved = vi.fn(),
     cancel = vi.fn();
+  const store = makeStore({});
+  subscriptions.push(
+    settings.subscribe((config) => {
+      store.dispatch(
+        taskCalendarDisplayUpdated(
+          taskCalendarDisplayPolicy(get(state), config.taskCapture),
+        ),
+      );
+    }),
+  );
   const target = document.createElement("div");
   document.body.append(target);
   mounted.push(
@@ -69,7 +84,7 @@ function render(calendars: GoogleCalendarSync["calendars"] = async () => []) {
   );
   flushSync();
   const button = (text: string) =>
-      Array.from(target.querySelectorAll<HTMLButtonElement>("button")).find(
+    Array.from(target.querySelectorAll<HTMLButtonElement>("button")).find(
       (item) => item.textContent === text,
     )!;
   const submit = () => {

@@ -112,8 +112,8 @@
               syncScheduleToTaskDate: syncTaskDate,
               calendarDisplay: {
                 enabled,
-                googleCalendarIds: googleIds,
-                icalUrls,
+                googleCalendarIds: [...googleIds],
+                icalUrls: [...icalUrls],
               },
             },
           },
