@@ -646,7 +646,11 @@ export class TaskScheduler {
             (matching.length === 1 && !removals.has(matching[0]!.uid)
               ? matching[0]
               : undefined);
-          googleUid = adopted?.uid ?? googleUid;
+          const known =
+            this.service.registry.snapshot().projections[operation.linkUid]
+              ?.googleUid;
+          googleUid =
+            known && !removals.has(known) ? known : (adopted?.uid ?? googleUid);
           const snapshot = {
             ...interval,
             title: scheduleNoteTitle(operation.raw),
@@ -708,11 +712,9 @@ export class TaskScheduler {
             "The scheduled note changed after it was written. Review its current content before continuing.",
           );
         const alreadyApplied = await this.editsApplied(plan.edits);
-        if (!alreadyApplied) {
-          if (plan.block)
-            await notes.applyWrite({ block: plan.block, edits: plan.edits });
-          else await notes.applyEdits(plan.edits);
-        }
+        if (plan.block)
+          await notes.applyWrite({ block: plan.block, edits: plan.edits });
+        else if (!alreadyApplied) await notes.applyEdits(plan.edits);
         if (!this.current(operation)) return;
         await this.service.registry.change((state) => {
           for (const link of plan.links)

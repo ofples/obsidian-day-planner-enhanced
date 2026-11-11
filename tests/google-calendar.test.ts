@@ -25,6 +25,7 @@ import { configureTimestampRegExps } from "../src/regexp";
 import { defaultSettings, mergeStoredSettings } from "../src/settings";
 
 const uid = "a".repeat(32);
+const namespace = "b".repeat(32);
 const base: CalendarSnapshot = {
   title: "Deep work #work",
   start: "2026-11-11T04:30:00.000Z",
@@ -38,6 +39,13 @@ const event = (snapshot = base): GoogleEvent => ({
   start: { dateTime: snapshot.start },
   end: { dateTime: snapshot.end },
 });
+const ownedEvent = (blockId = uid, snapshot = base): GoogleEvent => ({
+  ...event(snapshot),
+  id: `dp${namespace}${blockId}`,
+  extendedProperties: {
+    private: { dayPlannerVault: namespace, dayPlannerBlock: blockId },
+  },
+});
 const local = (snapshot = base): LocalBlock => ({
   uid,
   path: "Daily/2026-11-11.md",
@@ -48,7 +56,7 @@ const local = (snapshot = base): LocalBlock => ({
 function harness(linked = true) {
   const state: CalendarSyncState = {
     version: 1,
-    namespace: "b".repeat(32),
+    namespace,
     calendarId: "test",
     records: linked
       ? { [uid]: { eventId: "event1", path: local().path, base: { ...base } } }
@@ -59,7 +67,9 @@ function harness(linked = true) {
   const api: CalendarApi = {
     list: vi.fn(async () => events),
     get: vi.fn(async (id) => events.find((item) => item.id === id) ?? null),
-    create: vi.fn(async (id, _uid, snapshot) => ({ ...event(snapshot), id })),
+    create: vi.fn(async (_id, blockId, snapshot) =>
+      ownedEvent(blockId, snapshot),
+    ),
     update: vi.fn(async (_event, snapshot) => event(snapshot)),
     remove: vi.fn(async () => {}),
   };
@@ -126,7 +136,9 @@ describe("calendar reconciliation", () => {
       {
         ...event(other),
         id,
-        extendedProperties: { private: { dayPlannerVault: h.state.namespace } },
+        extendedProperties: {
+          private: { dayPlannerVault: h.state.namespace, dayPlannerBlock: uid },
+        },
       },
     ]);
     await recoverCalendarProjection({
@@ -279,6 +291,11 @@ describe("calendar reconciliation", () => {
     h.setBlocks([]);
     expect((await h.run()).deleted).toBe(1);
     expect(h.api.remove).toHaveBeenCalledWith(event());
+    expect(h.notes.canDelete).toHaveBeenCalledWith(
+      h.state.records[uid],
+      uid,
+      false,
+    );
     expect(h.state.records[uid]?.deleted).toBe(true);
   });
   test("missing files and ambiguous removals never delete Google events", async () => {
@@ -340,10 +357,100 @@ describe("calendar reconciliation", () => {
   });
   test("a successful POST followed by a crash is adopted rather than duplicated", async () => {
     const h = harness(false);
-    h.setEvents([{ ...event(), id: `dp${h.state.namespace}${uid}` }]);
+    h.setEvents([ownedEvent()]);
     await h.run();
     expect(h.api.create).not.toHaveBeenCalled();
     expect(h.state.records[uid]?.eventId).toBe(`dp${h.state.namespace}${uid}`);
+  });
+  test("a lost POST response recovers the sent baseline after restart and a further local rename", async () => {
+    const h = harness(false);
+    let persisted = "";
+    h.save.mockImplementation(async () => {
+      persisted = JSON.stringify(h.state);
+    });
+    vi.mocked(h.api.create).mockImplementationOnce(async () => {
+      expect(h.state.pendingCreate).toEqual({
+        uid,
+        path: local().path,
+        snapshot: base,
+      });
+      throw new Error("POST response lost");
+    });
+    await expect(h.run()).rejects.toThrow("POST response lost");
+    const retry = harness(false);
+    Object.assign(retry.state, JSON.parse(persisted));
+    retry.setEvents([ownedEvent()]);
+    retry.setBlocks([local(other)]);
+    const result = await retry.run(false);
+    expect(result.conflicts).toEqual([]);
+    expect(retry.api.create).not.toHaveBeenCalled();
+    expect(retry.api.update).toHaveBeenCalledWith(ownedEvent(), other);
+    expect(retry.state.records[uid]?.base).toEqual(other);
+    expect(retry.state.pendingCreate).toBeUndefined();
+  });
+  test("a matching deterministic ID cannot adopt an event owned by another source", async () => {
+    const h = harness(false);
+    h.setEvents([{ ...event(), id: ownedEvent().id }]);
+    expect((await h.run(false)).conflicts).toHaveLength(1);
+    expect(h.state.records).toEqual({});
+    expect(h.api.create).not.toHaveBeenCalled();
+    expect(h.api.remove).not.toHaveBeenCalled();
+  });
+  test("a removed block cannot retire an exported ID with missing ownership metadata", async () => {
+    const h = harness();
+    h.state.records[uid]!.eventId = ownedEvent().id;
+    h.setBlocks([]);
+    h.setEvents([{ ...event(), id: ownedEvent().id }]);
+    expect((await h.run(false)).conflicts).toHaveLength(1);
+    expect(h.notes.canDelete).not.toHaveBeenCalled();
+    expect(h.api.remove).not.toHaveBeenCalled();
+  });
+  test("a lost DELETE response recovers before exporting the replacement on restart", async () => {
+    const h = harness();
+    const old = ownedEvent();
+    const replacement = { ...local(other), uid: "c".repeat(32) };
+    h.state.records[uid]!.eventId = old.id;
+    h.setBlocks([replacement]);
+    h.setEvents([old, event()]);
+    let persisted = "";
+    h.save.mockImplementation(async () => {
+      persisted = JSON.stringify(h.state);
+    });
+    vi.mocked(h.api.remove).mockRejectedValueOnce(
+      new Error("DELETE response lost"),
+    );
+    await expect(h.run(false)).rejects.toThrow("DELETE response lost");
+    expect(h.notes.canDelete).toHaveBeenCalledWith(
+      h.state.records[uid],
+      uid,
+      true,
+    );
+    expect(h.api.remove).toHaveBeenCalledExactlyOnceWith(old);
+    expect(h.state.records[uid]?.pendingDelete).toBe(true);
+    const retry = harness(false);
+    Object.assign(retry.state, JSON.parse(persisted));
+    retry.setEvents([event()]);
+    retry.setBlocks([replacement]);
+    expect(await retry.run(false)).toMatchObject({
+      pushed: 1,
+      deleted: 1,
+      conflicts: [],
+    });
+    expect(retry.api.remove).not.toHaveBeenCalled();
+    expect(retry.notes.cancel).not.toHaveBeenCalled();
+    expect(retry.state.records[uid]?.deleted).toBe(true);
+    expect(retry.state.records[uid]?.pendingDelete).toBeUndefined();
+    expect(retry.state.records[replacement.uid]?.eventId).toBe(
+      ownedEvent(replacement.uid).id,
+    );
+  });
+  test("a pending deletion is reconsidered when the block is restored", async () => {
+    const h = harness();
+    h.state.records[uid]!.pendingDelete = true;
+    expect((await h.run()).conflicts).toEqual([]);
+    expect(h.api.remove).not.toHaveBeenCalled();
+    expect(h.notes.cancel).not.toHaveBeenCalled();
+    expect(h.state.records[uid]?.pendingDelete).toBeUndefined();
   });
   test("no new exports are made outside the window", async () => {
     const h = harness(false);

@@ -59,6 +59,7 @@ const stateSchema = z.object({
       path: z.string(),
       base: snapshotSchema,
       deleted: z.boolean().optional(),
+      pendingDelete: z.boolean().optional(),
     }),
   ),
   identities: z.record(z.string(), identitySchema).optional(),
@@ -74,6 +75,9 @@ const stateSchema = z.object({
     .optional(),
   pendingImport: z
     .object({ uid: z.string(), eventId: z.string(), snapshot: snapshotSchema })
+    .optional(),
+  pendingCreate: z
+    .object({ uid: z.string(), path: z.string(), snapshot: snapshotSchema })
     .optional(),
   pendingMove: z
     .object({

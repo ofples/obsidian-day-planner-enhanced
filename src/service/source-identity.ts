@@ -26,6 +26,7 @@ export function resolveSourceIdentities<T extends SourceIdentity>(
     duplicate: string;
     ambiguous: (path: string) => string;
     matchers: ((old: T, next: T) => boolean)[];
+    allowReplacement?: boolean;
   },
 ): void {
   const assigned = new Set<string>();
@@ -48,10 +49,13 @@ export function resolveSourceIdentities<T extends SourceIdentity>(
     const newGroup = available().filter(
       (next) => next.path === identity.path && next.raw === identity.raw,
     );
-    if (oldGroup.length !== newGroup.length) continue;
+    if (!options.allowReplacement && oldGroup.length !== newGroup.length)
+      continue;
     oldGroup.sort((a, b) => a[1].from - b[1].from);
     newGroup.sort((a, b) => a.from - b.from);
-    oldGroup.forEach(([uid], index) => assign(uid, newGroup[index]!));
+    newGroup
+      .slice(0, oldGroup.length)
+      .forEach((candidate, index) => assign(oldGroup[index]![0], candidate));
   }
   const matchUnique = (matches: (old: T, next: T) => boolean) => {
     for (const [uid, identity] of missing()) {
@@ -74,6 +78,7 @@ export function resolveSourceIdentities<T extends SourceIdentity>(
   );
   matchUnique((old, next) => old.raw === next.raw);
   options.matchers.forEach(matchUnique);
+  if (options.allowReplacement) return;
   for (const path of new Set(missing().map(([, identity]) => identity.path))) {
     const old = missing().filter(([, identity]) => identity.path === path);
     const next = available().filter((candidate) => candidate.path === path);

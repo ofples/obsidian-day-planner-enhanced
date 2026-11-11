@@ -124,7 +124,7 @@ async function harness() {
   const api: CalendarApi = {
     list: async () => [...events.values()],
     get: async (id) => events.get(id) ?? null,
-    create: async (id, _uid, snapshot) => {
+    create: async (id, uid, snapshot) => {
       const event = {
         id,
         etag: "one",
@@ -132,7 +132,10 @@ async function harness() {
         start: { dateTime: snapshot.start },
         end: { dateTime: snapshot.end },
         extendedProperties: {
-          private: { dayPlannerVault: calendarState.namespace },
+          private: {
+            dayPlannerVault: calendarState.namespace,
+            dayPlannerBlock: uid,
+          },
         },
       };
       events.set(id, event);
@@ -358,6 +361,54 @@ async function harness() {
 }
 
 describe("linked task scheduling", () => {
+  test("successive offline title and time rewrites retain the known task projection through calendar replacement matching", async () => {
+    const h = await harness();
+    h.setLoseCalendarResponse(true);
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const first = h.service.registry.snapshot().schedules[0]!;
+    const eventId = [...h.events.keys()][0]!;
+    let previousTitle = "Work";
+    for (const hour of [1, 2]) {
+      const source = h.scheduler.projection(root.id)!.source;
+      const beforeRange = `${window
+        .moment(interval.start)
+        .add(hour - 1, "hour")
+        .format("HH:mm")} - ${window
+        .moment(interval.end)
+        .add(hour - 1, "hour")
+        .format("HH:mm")}`;
+      const nextRange = `${window.moment(interval.start).add(hour, "hour").format("HH:mm")} - ${window.moment(interval.end).add(hour, "hour").format("HH:mm")}`;
+      const title = `Offline edit ${hour}`;
+      h.texts.set(
+        source.path,
+        h.texts
+          .get(source.path)!
+          .replace(beforeRange, nextRange)
+          .replace(`${previousTitle} #todoist`, `${title} #todoist`),
+      );
+      await h.reconcile();
+      expect(h.scheduler.projection(root.id)?.googleUid).toBe(first.googleUid);
+      expect(h.tasks.get(root.id)?.title).toBe(title);
+      previousTitle = title;
+    }
+    await h.restart();
+    h.setLoseCalendarResponse(false);
+    h.setFailCalendar(false);
+    await h.settle();
+    expect([...h.events.keys()]).toEqual([eventId]);
+    expect(h.events.get(eventId)?.summary).toBe(
+      "Offline edit 2 #todoist #work",
+    );
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
+    expect(Object.values(h.service.registry.snapshot().issues)).toEqual([]);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
   test("source field review can resolve a conflict while a Calendar-only retry is pending", async () => {
     const h = await harness();
     h.setFailCalendar(true);

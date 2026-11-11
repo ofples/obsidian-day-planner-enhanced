@@ -7,7 +7,7 @@ export interface IdentityCandidate extends LocalIdentity {
   eligible: boolean;
 }
 
-/** Keep calendar-specific title/time matching after the shared whole-block rules. */
+/** Match stable content and unique edit evidence before allocating replacement IDs. */
 export function resolveIdentities(
   candidates: IdentityCandidate[],
   previous: Record<string, LocalIdentity>,
@@ -15,16 +15,21 @@ export function resolveIdentities(
   resolveSourceIdentities(candidates, previous, {
     duplicate:
       "Duplicate legacy calendar IDs. Restore one copy before syncing.",
-    ambiguous: (path) =>
-      `Calendar links are ambiguous in ${path}. Restore the previous titles/times and sync before making further edits.`,
+    ambiguous: (path) => `Calendar links in ${path} require review.`,
+    allowReplacement: true,
     matchers: [
       (old, next) =>
         old.path === next.path && sameSnapshot(old.snapshot, next.snapshot),
       (old, next) =>
+        old.path === next.path && old.snapshot.title === next.snapshot.title,
+      (old, next) =>
         old.path === next.path &&
-        (old.snapshot.title === next.snapshot.title ||
-          (old.snapshot.start === next.snapshot.start &&
-            old.snapshot.end === next.snapshot.end)),
+        Date.parse(old.snapshot.start) === Date.parse(next.snapshot.start) &&
+        Date.parse(old.snapshot.end) === Date.parse(next.snapshot.end),
+      (old, next) =>
+        old.path === next.path &&
+        (Date.parse(old.snapshot.start) === Date.parse(next.snapshot.start) ||
+          Date.parse(old.snapshot.end) === Date.parse(next.snapshot.end)),
     ],
   });
 }

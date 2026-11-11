@@ -5,14 +5,19 @@ import {
 } from "../src/google-calendar/identity";
 import type { LocalIdentity } from "../src/google-calendar/types";
 
-const block = (title: string, from = 0): LocalIdentity => ({
+const block = (
+  title: string,
+  from = 0,
+  start = "09:00",
+  end = "10:00",
+): LocalIdentity => ({
   path: "Daily/2026-11-11.md",
   from,
-  raw: `- [ ] 09:00 - 10:00 ${title}`,
+  raw: `- [ ] ${start} - ${end} ${title}`,
   snapshot: {
     title,
-    start: "2026-11-11T09:00:00Z",
-    end: "2026-11-11T10:00:00Z",
+    start: `2026-11-11T${start}:00Z`,
+    end: `2026-11-11T${end}:00Z`,
   },
 });
 const candidate = (value: LocalIdentity): IdentityCandidate => ({
@@ -41,13 +46,56 @@ describe("external calendar identity", () => {
     resolveIdentities([edited], previous);
     expect(edited.uid).toBe("first");
   });
-  test("a changed duplicate count stops instead of assigning the wrong event", () => {
-    const previous = { first: block("Same") };
-    const next = [candidate(block("Same")), candidate(block("Same", 80))];
-    expect(() => resolveIdentities(next, previous)).toThrow("ambiguous");
-    expect(next.every((item) => !item.uid)).toBe(true);
+  test("simultaneous renames to the same title retain IDs through time range and start", () => {
+    const previous = {
+      first: block("First", 0, "19:30", "20:00"),
+      second: block("Second", 80, "20:30", "20:45"),
+    };
+    const next = [
+      candidate(block("Renamed", 0, "19:30", "20:00")),
+      candidate(block("Renamed", 100, "20:30", "21:00")),
+    ];
+    resolveIdentities(next, previous);
+    expect(next.map((item) => item.uid)).toEqual(["first", "second"]);
   });
-  test("ambiguous simultaneous rewrites preserve all existing identities", () => {
+  test("reordering and swapping time ranges keeps each unique title linked", () => {
+    const previous = {
+      first: block("First"),
+      second: block("Second", 40, "10:00", "11:00"),
+    };
+    const next = [
+      candidate(block("Second")),
+      candidate(block("First", 60, "10:00", "11:00")),
+    ];
+    resolveIdentities(next, previous);
+    expect(next.map((item) => item.uid)).toEqual(["second", "first"]);
+  });
+  test("repeated titles use unique time evidence when one occurrence is resized", () => {
+    const previous = {
+      first: block("Same"),
+      second: block("Same", 40, "10:00", "11:00"),
+    };
+    const next = [
+      candidate(block("Same", 0, "10:30", "11:00")),
+      candidate(block("Same", 60, "09:00", "09:30")),
+    ];
+    resolveIdentities(next, previous);
+    expect(next.map((item) => item.uid)).toEqual(["second", "first"]);
+  });
+  test("identical copies keep existing IDs in order as copies are added or removed", () => {
+    const previous = { second: block("Same", 60), first: block("Same") };
+    const added = [0, 50, 100].map((from) => candidate(block("Same", from)));
+    resolveIdentities(added, previous);
+    expect(added.map((item) => item.uid)).toEqual([
+      "first",
+      "second",
+      undefined,
+    ]);
+    const removed = [candidate(block("Same"))];
+    resolveIdentities(removed, previous);
+    expect(removed[0]?.uid).toBe("first");
+  });
+  test("fully changed blocks stay unmatched even at the same position", () => {
     const previous = { first: block("First"), second: block("Second", 80) };
     const next = [
       candidate({
@@ -67,7 +115,9 @@ describe("external calendar identity", () => {
         },
       }),
     ];
-    expect(() => resolveIdentities(next, previous)).toThrow("ambiguous");
-    expect(Object.keys(previous)).toEqual(["first", "second"]);
+    resolveIdentities(next, previous);
+    expect(next.map((item) => item.uid)).toEqual([undefined, undefined]);
+    resolveIdentities(next.slice(0, 1), { first: previous.first });
+    expect(next[0]?.uid).toBeUndefined();
   });
 });
