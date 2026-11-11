@@ -69,7 +69,11 @@
       <dd>{record.before.task.due?.text}</dd>
     </div>
     {#if record.next}<div>
-        <dt>Next occurrence at completion</dt>
+        <dt>
+          {record.external
+            ? "Current occurrence when observed"
+            : "Next occurrence at completion"}
+        </dt>
         <dd>
           {record.next.completed
             ? "Series completed"
@@ -83,7 +87,17 @@
           >{child.completed ? "✓" : "○"} {child.title}</span
         >{/each}
     </fieldset>{/if}
-  {#if record.recovered}<p class="task-form-context">
+  {#if record.external}<p class="task-form-context">
+      Completed in Todoist. Saved from the linked occurrence and the provider's
+      completion counter.
+    </p>
+    {#if record.next?.completionCount !== undefined && record.next.completionCount > record.before.task.completionCount! + 1}<p
+        class="task-form-context"
+      >
+        The completion counter advanced by {record.next.completionCount -
+          record.before.task.completionCount!} between observations.
+      </p>{/if}
+  {:else if record.recovered}<p class="task-form-context">
       Recovered from the saved command and available note identities.
     </p>{/if}
   {#if record.phase === "freezing" || record.phase === "pending"}<p

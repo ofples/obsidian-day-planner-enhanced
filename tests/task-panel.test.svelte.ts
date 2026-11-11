@@ -204,6 +204,28 @@ describe("custom Tasks panel", () => {
     expect(h.mutate).not.toHaveBeenCalled();
   });
 
+  test("external history identifies the current task as observed after completion", () => {
+    const record = taskOccurrenceSchema.parse({
+      ...occurrence(),
+      external: true,
+      recovered: true,
+      next: { ...occurrence().next!, completionCount: 3 },
+    });
+    const h = render({ kind: "occurrence", id: record.id });
+    h.state.update((state) => ({ ...state, occurrences: [record] }));
+    flushSync();
+    const history = h.target.querySelector(
+      '[aria-label="Recurring occurrence history"]',
+    )!;
+    expect(history.textContent).toContain("Current occurrence when observed");
+    expect(history.textContent).toContain("Completed in Todoist");
+    expect(history.textContent).toContain("advanced by 3 between observations");
+    expect(history.textContent).not.toContain(
+      "Recovered from the saved command",
+    );
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
   test("multiple completed occurrences retain distinct rows for the same remote task", () => {
     const first = occurrence();
     const second = {

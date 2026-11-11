@@ -7,6 +7,7 @@ import {
   taskAccountSettings,
   type TaskCaptureSettings,
 } from "./capture-settings";
+import { occurrenceCompletionVerified } from "./occurrence-types";
 import { resolvedTaskOperation } from "./operations";
 import { rewriteTaskNote } from "./reconcile-markdown";
 import type { TaskScheduler } from "./schedule";
@@ -33,10 +34,7 @@ export async function freezeTaskOccurrences(
     if (!active()) return;
     try {
       const state = service.registry.snapshot();
-      const completion = state.operations.find(
-        (operation) => operation.id === record.id,
-      );
-      if (completion?.status !== "complete") continue;
+      if (!occurrenceCompletionVerified(state, record)) continue;
       const pending = state.schedules.filter((operation) => {
         if (["complete", "cancelled"].includes(operation.phase)) return false;
         if (operation.occurrenceId === record.id) return true;

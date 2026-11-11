@@ -1,9 +1,24 @@
 import { getTimeRangeMatch } from "../parser/parser";
 
-import { parseCaptureCandidates } from "./capture-parser";
+import {
+  parseCaptureCandidates,
+  type CaptureCandidate,
+} from "./capture-parser";
 import type { TaskAccountSettings } from "./capture-settings";
 import { taskInlineMarkdown } from "./schedule-markdown";
 import type { ProviderTask } from "./types";
+
+export function taskCaptureTagRemoved(
+  previousRaw: string,
+  candidate: CaptureCandidate,
+) {
+  return (
+    parseCaptureCandidates("", previousRaw)[0]?.tags.some(
+      (tag) => tag.name.toLowerCase() === "todoist",
+    ) === true &&
+    !candidate.tags.some((tag) => tag.name.toLowerCase() === "todoist")
+  );
+}
 
 /** Remove only the first task's capture opt-in, preserving its nested content. */
 export function withoutTaskCaptureTag(raw: string) {

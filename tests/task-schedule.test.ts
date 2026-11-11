@@ -22,6 +22,8 @@ import { TaskCapture } from "../src/tasks/capture";
 import { TaskDeletionController } from "../src/tasks/deletion";
 import { taskSubtree } from "../src/tasks/browser";
 import { TaskReconciler } from "../src/tasks/reconcile";
+import { recordExternalTaskOccurrence, taskOccurrenceSchema } from "../src/tasks/occurrence-types";
+import { observeExternalTaskOccurrences } from "../src/tasks/occurrence-observe";
 import { mutationFields } from "../src/tasks/operations";
 import { taskCaptureSettingsSchema } from "../src/tasks/capture-settings";
 import type { TaskOperation } from "../src/tasks/operations";
@@ -442,6 +444,361 @@ describe("recurring occurrence freezing", () => {
     const projection = h.scheduler.projection(root.id)!;
     return { h, projection, source: h.texts.get(projection.source.path)! };
   }
+
+  test.each([1, 3])(
+    "an external counter advance of %i freezes the linked occurrence without a provider command",
+    async (advance) => {
+      const { h, projection, source } = await scheduled();
+      const before = h.tasks.get(root.id)!;
+      h.tasks.set(root.id, {
+        ...before,
+        completionCount: advance,
+        due: { ...before.due!, date: "2026-11-15T09:00:00Z" },
+      });
+      const commands = h.apply.mock.calls.length;
+      await h.service.refresh();
+      await h.reconcile();
+      const record = Object.values(
+        h.service.registry.snapshot().occurrences,
+      )[0]!;
+      expect(record).toMatchObject({
+        external: true,
+        phase: "complete",
+        recovered: true,
+        before: { task: { id: root.id, completionCount: 0 } },
+        next: { id: root.id, completionCount: advance },
+      });
+      expect(record.before.children[0]?.id).toBe(child.id);
+      expect(h.texts.get(projection.source.path)).toBe(
+        source.replace("- [ ]", "- [x]"),
+      );
+      expect(record.projections[projection.linkUid]?.googleEventId).toBe(
+        projection.googleEventId,
+      );
+      expect(
+        Date.parse(h.events.get(projection.googleEventId!)!.start!.dateTime!),
+      ).toBe(Date.parse(interval.start));
+      expect(h.scheduler.projection(root.id)).toBeUndefined();
+      expect(h.apply).toHaveBeenCalledTimes(commands);
+      expect(
+        h.service.registry
+          .snapshot()
+          .operations.some((operation) => operation.id === record.id),
+      ).toBe(false);
+      const saved = structuredClone(record);
+      await h.restart();
+      await h.service.refresh();
+      await h.reconcile();
+      expect(Object.values(h.service.registry.snapshot().occurrences)).toEqual([
+        saved,
+      ]);
+      expect(h.apply).toHaveBeenCalledTimes(commands);
+      await h.scheduler.schedule(root.id, {
+        start: "2026-11-15T10:00:00Z",
+        end: "2026-11-15T10:30:00Z",
+      });
+      await h.settle();
+      expect(h.scheduler.projection(root.id)?.occurrenceKey).toBe(
+        `recurring:${advance}`,
+      );
+      expect(h.scheduler.projection(root.id)?.googleEventId).not.toBe(
+        projection.googleEventId,
+      );
+      expect(h.events.size).toBe(2);
+      h.service.stop();
+    },
+  );
+
+  test("an external observation survives an interrupted note write and calendar outage across restart", async () => {
+    const { h, projection } = await scheduled();
+    const before = h.tasks.get(root.id)!;
+    h.tasks.set(root.id, {
+      ...before,
+      completionCount: 1,
+      due: { ...before.due!, date: "2026-11-12T09:00:00Z" },
+    });
+    const commands = h.apply.mock.calls.length;
+    await h.service.refresh();
+    h.setFailPath(projection.source.path);
+    await h.reconcile();
+    const record = Object.values(h.service.registry.snapshot().occurrences)[0]!;
+    expect(record).toMatchObject({ external: true, phase: "freezing" });
+    expect(record.error).toContain("note write");
+    await h.restart();
+    h.setFailPath("");
+    h.setFailCalendar(true);
+    await h.reconciler.retryOccurrence(record.id);
+    expect(h.service.registry.snapshot().occurrences[record.id]?.phase).toBe(
+      "complete",
+    );
+    expect(
+      h.service.registry
+        .snapshot()
+        .schedules.find((operation) => operation.occurrenceId === record.id)
+        ?.phase,
+    ).toBe("calendar-pending");
+    await h.restart();
+    h.setFailCalendar(false);
+    await h.reconcile();
+    expect(
+      h.service.registry
+        .snapshot()
+        .schedules.find((operation) => operation.occurrenceId === record.id)
+        ?.phase,
+    ).toBe("complete");
+    expect(h.apply).toHaveBeenCalledTimes(commands);
+    expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    h.service.stop();
+  });
+
+  test("external observation records its baseline while focused edits defer historical freezing", async () => {
+    const { h, projection } = await scheduled();
+    const before = h.tasks.get(root.id)!;
+    h.tasks.set(root.id, {
+      ...before,
+      completionCount: 1,
+      due: { ...before.due!, date: "2026-11-12T09:00:00Z" },
+    });
+    await h.service.refresh();
+    h.setStable(false);
+    h.texts.set(
+      projection.source.path,
+      h.texts
+        .get(projection.source.path)!
+        .replace("Work #todoist", "Edited history #todoist"),
+    );
+    await h.reconcile();
+    const record = Object.values(h.service.registry.snapshot().occurrences)[0]!;
+    expect(record.phase).toBe("freezing");
+    expect(record.before.task.title).toBe(root.title);
+    h.setStable(true);
+    await h.reconcile();
+    expect(h.service.registry.snapshot().occurrences[record.id]?.phase).toBe(
+      "complete",
+    );
+    expect(h.texts.get(projection.source.path)).toContain("Edited history");
+    expect(h.tasks.get(root.id)?.title).toBe(root.title);
+    h.service.stop();
+  });
+
+  test("failed observation persistence preserves the original source and retries one history record", async () => {
+    const { h, projection, source } = await scheduled();
+    const before = h.tasks.get(root.id)!;
+    h.tasks.set(root.id, {
+      ...before,
+      completionCount: 1,
+      due: { ...before.due!, date: "2026-11-12T09:00:00Z" },
+    });
+    await h.service.refresh();
+    h.setFailTaskWrite(true);
+    await h.reconcile();
+    expect(h.service.registry.snapshot().occurrences).toEqual({});
+    expect(h.texts.get(projection.source.path)).toBe(source);
+    h.setFailTaskWrite(false);
+    await h.restart();
+    await h.reconcile();
+    expect(
+      Object.values(h.service.registry.snapshot().occurrences),
+    ).toHaveLength(1);
+    expect(h.texts.get(projection.source.path)).toBe(
+      source.replace("- [ ]", "- [x]"),
+    );
+    h.service.stop();
+  });
+
+  test("external completion waits for a removed capture tag's link decision", async () => {
+    const { h, projection } = await scheduled();
+    const before = h.tasks.get(root.id)!;
+    h.tasks.set(root.id, {
+      ...before,
+      completionCount: 1,
+      due: { ...before.due!, date: "2026-11-12T09:00:00Z" },
+    });
+    h.texts.set(
+      projection.source.path,
+      h.texts.get(projection.source.path)!.replace(" #todoist", ""),
+    );
+    await h.service.refresh();
+    await h.reconcile();
+    expect(h.service.registry.snapshot().occurrences).toEqual({});
+    expect(
+      h.service.registry.snapshot().issues[projection.linkUid]?.fields,
+    ).toEqual(["unlink"]);
+    expect(h.texts.get(projection.source.path)).not.toContain("- [x]");
+    await h.reconciler.keepLinked(projection.linkUid);
+    await h.reconcile();
+    expect(
+      Object.values(h.service.registry.snapshot().occurrences)[0],
+    ).toMatchObject({
+      external: true,
+      phase: "complete",
+      before: { task: { completionCount: 0 } },
+    });
+    expect(h.texts.get(projection.source.path)).toContain("- [x]");
+    h.service.stop();
+  });
+
+  test("unchanged recurring counters avoid another identity scan, provider read or registry transaction", async () => {
+    const { h } = await scheduled();
+    const changes = vi.spyOn(h.service.registry, "change");
+    const candidates = vi.spyOn(h.capture, "candidates");
+    h.readTask.mockClear();
+    await observeExternalTaskOccurrences(
+      h.service,
+      h.capture,
+      get(h.service.state).snapshot!,
+      () => true,
+    );
+    expect(changes).not.toHaveBeenCalled();
+    expect(candidates).not.toHaveBeenCalled();
+    expect(h.readTask).not.toHaveBeenCalled();
+    h.service.stop();
+  });
+
+  test("a date move without a completion counter advance never creates external history", async () => {
+    const { h } = await scheduled();
+    const before = h.tasks.get(root.id)!;
+    h.tasks.set(root.id, {
+      ...before,
+      due: { ...before.due!, date: "2026-11-12T09:00:00Z" },
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    expect(h.service.registry.snapshot().occurrences).toEqual({});
+    expect(h.scheduler.projection(root.id)?.occurrenceKey).toBe("recurring:0");
+    expect(h.tasks.get(root.id)?.completionCount).toBe(0);
+    h.service.stop();
+  });
+
+  test("a completed final external occurrence is read individually when absent from active tasks", async () => {
+    const { h, projection } = await scheduled();
+    const before = h.tasks.get(root.id)!;
+    h.tasks.set(root.id, { ...before, completed: true, completionCount: 1 });
+    await h.service.refresh();
+    expect(
+      get(h.service.state).snapshot?.tasks.some((task) => task.id === root.id),
+    ).toBe(false);
+    await h.reconcile();
+    expect(h.readTask).toHaveBeenCalledWith(root.id);
+    const record = Object.values(h.service.registry.snapshot().occurrences)[0]!;
+    expect(record).toMatchObject({
+      external: true,
+      phase: "complete",
+      next: { completed: true },
+    });
+    expect(h.texts.get(projection.source.path)).toContain("- [x]");
+    h.service.stop();
+  });
+
+  test("disconnect during an external task read retains the original unchecked note", async () => {
+    const { h, projection, source } = await scheduled();
+    const before = h.tasks.get(root.id)!;
+    h.tasks.set(root.id, { ...before, completed: true, completionCount: 1 });
+    await h.service.refresh();
+    h.readTask.mockImplementationOnce(async () => {
+      h.service.disconnect();
+      return h.tasks.get(root.id)!;
+    });
+    await h.reconcile();
+    expect(h.service.registry.snapshot().occurrences).toEqual({});
+    expect(h.texts.get(projection.source.path)).toBe(source);
+    h.service.stop();
+  });
+
+  test.each([
+    "pending-child-command",
+    "pending-schedule",
+    "deletion",
+    "foreign-account",
+    "foreign-task",
+    "missing-counter",
+  ])("external observation preserves %s boundaries", async (mode) => {
+    const { h, projection } = await scheduled();
+    const state = structuredClone(h.service.registry.snapshot());
+    const snapshot = get(h.service.state).snapshot!;
+    const next = { ...h.tasks.get(root.id)!, completionCount: 1 };
+    if (mode === "pending-child-command")
+      state.operations.push({
+        id: crypto.randomUUID(),
+        tempId: crypto.randomUUID(),
+        provider: snapshot.provider,
+        accountId: snapshot.account.id,
+        mutation: {
+          kind: "update",
+          taskId: child.id,
+          changes: { title: "Saved child edit" },
+        },
+        base: child,
+        status: "pending",
+        createdAt: snapshot.fetchedAt,
+        attempts: 0,
+      });
+    if (mode === "pending-schedule")
+      state.schedules[0]!.phase = "provider-pending";
+    if (mode === "deletion") {
+      const id = crypto.randomUUID();
+      state.deletions[id] = {
+        id,
+        provider: snapshot.provider,
+        accountId: snapshot.account.id,
+        taskId: root.id,
+        tasks: [h.tasks.get(root.id)!, child],
+        links: state.links,
+        projections: state.projections,
+        phase: "pending",
+        createdAt: snapshot.fetchedAt,
+      };
+    }
+    if (mode === "foreign-account")
+      state.links[projection.linkUid]!.accountId = "other";
+    if (mode === "foreign-task") next.id = "other";
+    if (mode === "missing-counter")
+      delete (next as ProviderTask).completionCount;
+    const original = structuredClone(state);
+    expect(
+      recordExternalTaskOccurrence(state, snapshot, projection.linkUid, next),
+    ).toBe(false);
+    expect(state).toEqual(original);
+    h.service.stop();
+  });
+
+  test("external history validation retains positive counter evidence and its observed task", async () => {
+    const { h, projection } = await scheduled();
+    const state = structuredClone(h.service.registry.snapshot());
+    const snapshot = get(h.service.state).snapshot!;
+    expect(
+      recordExternalTaskOccurrence(state, snapshot, projection.linkUid, {
+        ...h.tasks.get(root.id)!,
+        completionCount: 3,
+      }),
+    ).toBe(true);
+    const record = Object.values(state.occurrences)[0]!;
+    expect(taskOccurrenceSchema.safeParse(record).success).toBe(true);
+    expect(
+      taskOccurrenceSchema.safeParse({ ...record, external: undefined })
+        .success,
+    ).toBe(false);
+    expect(
+      taskOccurrenceSchema.safeParse({ ...record, verifiedAt: undefined })
+        .success,
+    ).toBe(false);
+    expect(
+      taskOccurrenceSchema.safeParse({ ...record, phase: "pending" }).success,
+    ).toBe(false);
+    expect(
+      taskOccurrenceSchema.safeParse({
+        ...record,
+        next: { ...record.next!, completionCount: 0 },
+      }).success,
+    ).toBe(false);
+    expect(
+      taskOccurrenceSchema.safeParse({
+        ...record,
+        next: { ...record.next!, id: "other" },
+      }).success,
+    ).toBe(false);
+    h.service.stop();
+  });
 
   test("checking the Markdown source completes and archives the same occurrence without a second freeze journal", async () => {
     const { h, projection } = await scheduled();

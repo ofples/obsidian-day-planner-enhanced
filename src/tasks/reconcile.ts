@@ -21,6 +21,7 @@ import type {
 } from "./conflict";
 import { pendingTaskDeletion } from "./deletion-types";
 import { freezeTaskOccurrences } from "./occurrence-freeze";
+import { observeExternalTaskOccurrences } from "./occurrence-observe";
 import { pendingTaskOccurrence } from "./occurrence-types";
 import {
   isOutstanding,
@@ -32,6 +33,7 @@ import {
 } from "./operations";
 import {
   rewriteTaskNote,
+  taskCaptureTagRemoved,
   withoutTaskCaptureTag,
   withTaskCaptureTag,
 } from "./reconcile-markdown";
@@ -809,6 +811,13 @@ export class TaskReconciler {
     if (!this.current(snapshot)) return;
     if (get(this.capture.state).error)
       throw new TaskReadError(get(this.capture.state).error);
+    await observeExternalTaskOccurrences(
+      this.service,
+      this.capture,
+      snapshot,
+      () => this.current(snapshot),
+    );
+    if (!this.current(snapshot)) return;
     await freezeTaskOccurrences(
       this.service,
       this.capture,
@@ -888,15 +897,8 @@ export class TaskReconciler {
         continue;
       }
       if (!(await this.capture.sourceIsCurrent(candidate))) continue;
-      const acknowledged = parseCaptureCandidates(
-        "",
-        (link.noteBase ?? link.source).raw,
-      )[0];
       if (
-        acknowledged?.tags.some(
-          (tag) => tag.name.toLowerCase() === "todoist",
-        ) &&
-        !candidate.tags.some((tag) => tag.name.toLowerCase() === "todoist")
+        taskCaptureTagRemoved((link.noteBase ?? link.source).raw, candidate)
       ) {
         await this.issue(
           uid,

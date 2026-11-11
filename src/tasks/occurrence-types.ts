@@ -1,11 +1,15 @@
 import { z } from "zod";
 
 import { deletionTaskTree } from "./deletion-types";
-import type { TaskOperation } from "./operations";
+import {
+  isOutstanding,
+  operationTaskId,
+  type TaskOperation,
+} from "./operations";
 import type { TaskRegistryState } from "./registry";
-import { taskProjectionSchema } from "./schedule-types";
+import { scheduleBlocksTask, taskProjectionSchema } from "./schedule-types";
 import { taskLinkSchema } from "./source";
-import { taskSchema, type TaskSnapshot } from "./types";
+import { taskSchema, type ProviderTask, type TaskSnapshot } from "./types";
 
 const occurrenceSourcesSchema = z.object({
   links: z.record(z.string(), taskLinkSchema),
@@ -25,6 +29,7 @@ export const taskOccurrenceSchema = z
     projections: z.record(z.string(), taskProjectionSchema),
     phase: z.enum(["pending", "freezing", "complete", "cancelled", "undone"]),
     recovered: z.boolean(),
+    external: z.literal(true).optional(),
     requestedAt: z.iso.datetime(),
     verifiedAt: z.iso.datetime().optional(),
     error: z.string().optional(),
@@ -43,7 +48,13 @@ export const taskOccurrenceSchema = z
         task.completionCount !== undefined &&
         (!record.next ||
           (record.next.id === task.id &&
-            record.next.completionCount === task.completionCount + 1)) &&
+            (record.external
+              ? record.next.completionCount !== undefined &&
+                record.next.completionCount > task.completionCount
+              : record.next.completionCount === task.completionCount + 1))) &&
+        (!record.external ||
+          (record.phase !== "pending" &&
+            Boolean(record.next && record.verifiedAt))) &&
         (!["freezing", "complete"].includes(record.phase) ||
           Boolean(record.next && record.verifiedAt)) &&
         sources.every(
@@ -73,6 +84,21 @@ export const taskOccurrenceSchema = z
   );
 export type TaskOccurrenceRecord = z.infer<typeof taskOccurrenceSchema>;
 
+export function occurrenceCompletionVerified(
+  state: Pick<TaskRegistryState, "operations">,
+  record: TaskOccurrenceRecord,
+) {
+  return (
+    ["freezing", "complete"].includes(record.phase) &&
+    Boolean(record.next && record.verifiedAt) &&
+    (record.external === true ||
+      state.operations.some(
+        (operation) =>
+          operation.id === record.id && operation.status === "complete",
+      ))
+  );
+}
+
 /** Save the pre-command task and note identities in the same transaction as its UUID. */
 export function recordTaskOccurrence(
   state: TaskRegistryState,
@@ -84,35 +110,54 @@ export function recordTaskOccurrence(
   const task = operation.base;
   if (
     operation.mutation.kind !== "complete" ||
+    operation.provider !== snapshot.provider ||
+    operation.accountId !== snapshot.account.id ||
     !task?.due?.recurring ||
     task.completionCount === undefined
   )
     return;
   if (state.occurrences[operation.id]) return;
+  state.occurrences[operation.id] = captureTaskOccurrence(
+    state,
+    snapshot,
+    task,
+    completed,
+    { id: operation.id, requestedAt: operation.createdAt, recovered },
+  );
+}
+
+function captureTaskOccurrence(
+  state: TaskRegistryState,
+  snapshot: TaskSnapshot,
+  task: ProviderTask,
+  completed: ProviderTask[],
+  origin: Pick<TaskOccurrenceRecord, "id" | "requestedAt" | "recovered">,
+): TaskOccurrenceRecord {
   const known = Object.values(state.links).flatMap((link) =>
-    link.provider === operation.provider &&
-    link.accountId === operation.accountId &&
+    link.provider === snapshot.provider &&
+    link.accountId === snapshot.account.id &&
     link.base
       ? [link.base]
       : [],
   );
   const tree = deletionTaskTree(
-    recovered ? { ...snapshot, tasks: known } : snapshot,
+    origin.recovered ? { ...snapshot, tasks: known } : snapshot,
     task,
-    recovered ? [] : completed,
+    origin.recovered ? [] : completed,
   );
   const ids = new Set(tree.map((item) => item.id));
   const owned = Object.entries(state.links).filter(
     ([, link]) =>
-      link.provider === operation.provider &&
-      link.accountId === operation.accountId &&
+      link.provider === snapshot.provider &&
+      link.accountId === snapshot.account.id &&
       link.taskId !== null &&
       ids.has(link.taskId),
   );
   const roots = owned.filter(
     ([, link]) =>
       link.taskId === task.id &&
-      (!recovered || link.base?.completionCount === task.completionCount),
+      (!origin.recovered ||
+        link.base?.completionCount === task.completionCount),
   );
   const links = Object.fromEntries(
     owned.filter(([uid, link]) =>
@@ -126,10 +171,10 @@ export function recordTaskOccurrence(
       ),
     ),
   );
-  state.occurrences[operation.id] = {
-    id: operation.id,
-    provider: operation.provider,
-    accountId: operation.accountId,
+  return {
+    ...origin,
+    provider: snapshot.provider,
+    accountId: snapshot.account.id,
     before: {
       task,
       children: tree.slice(1),
@@ -141,9 +186,80 @@ export function recordTaskOccurrence(
     links: {},
     projections: {},
     phase: "pending",
-    recovered,
-    requestedAt: operation.createdAt,
   };
+}
+
+/** A provider counter advance observes a past occurrence without issuing a command. */
+export function recordExternalTaskOccurrence(
+  state: TaskRegistryState,
+  snapshot: TaskSnapshot,
+  uid: string,
+  next: ProviderTask,
+) {
+  const link = state.links[uid],
+    task = link?.base;
+  if (
+    !link ||
+    !task?.due?.recurring ||
+    task.completionCount === undefined ||
+    link.provider !== snapshot.provider ||
+    link.accountId !== snapshot.account.id ||
+    link.taskId !== next.id ||
+    task.id !== next.id ||
+    next.completionCount === undefined ||
+    next.completionCount <= task.completionCount ||
+    Object.values(state.occurrences).some(
+      (record) =>
+        record.provider === link.provider &&
+        record.accountId === link.accountId &&
+        record.before.task.id === task.id &&
+        record.before.task.completionCount === task.completionCount &&
+        !["cancelled", "undone"].includes(record.phase),
+    )
+  )
+    return false;
+  const record = captureTaskOccurrence(state, snapshot, task, [], {
+    id: crypto.randomUUID(),
+    requestedAt: snapshot.fetchedAt,
+    recovered: true,
+  });
+  const ids = new Set([
+    task.id,
+    ...record.before.children.map((child) => child.id),
+  ]);
+  const owned = { provider: snapshot.provider, accountId: snapshot.account.id };
+  if (
+    state.operations.some(
+      (operation) =>
+        operation.provider === owned.provider &&
+        operation.accountId === owned.accountId &&
+        ids.has(operationTaskId(operation)) &&
+        isOutstanding(operation),
+    ) ||
+    state.schedules.some(
+      (operation) =>
+        operation.provider === owned.provider &&
+        operation.accountId === owned.accountId &&
+        ids.has(operation.task.id) &&
+        scheduleBlocksTask(operation),
+    ) ||
+    Object.values(state.deletions).some(
+      (deletion) =>
+        deletion.provider === owned.provider &&
+        deletion.accountId === owned.accountId &&
+        !["complete", "cancelled"].includes(deletion.phase) &&
+        deletion.tasks.some((item) => ids.has(item.id)),
+    )
+  )
+    return false;
+  record.external = true;
+  record.next = next;
+  record.verifiedAt = snapshot.fetchedAt;
+  record.phase = Object.keys(record.before.links).length
+    ? "freezing"
+    : "complete";
+  state.occurrences[record.id] = record;
+  return true;
 }
 
 export function pendingTaskOccurrence(

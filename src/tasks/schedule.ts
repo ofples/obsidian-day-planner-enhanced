@@ -12,7 +12,10 @@ import {
 } from "./capture-settings";
 import { pendingTaskDeletion } from "./deletion-types";
 import { TaskDrag } from "./drag";
-import { pendingTaskOccurrence } from "./occurrence-types";
+import {
+  occurrenceCompletionVerified,
+  pendingTaskOccurrence,
+} from "./occurrence-types";
 import {
   mutationFields,
   sameTaskField,
@@ -192,13 +195,10 @@ export class TaskScheduler {
       );
     if (input.occurrenceId) {
       const record = state.occurrences[input.occurrenceId];
-      const completion = state.operations.find(
-        (item) => item.id === input.occurrenceId,
-      );
       if (
         !record ||
         record.phase !== "freezing" ||
-        completion?.status !== "complete" ||
+        !occurrenceCompletionVerified(state, record) ||
         record.provider !== owner.provider ||
         record.accountId !== owner.accountId ||
         record.before.task.id !== input.task.id ||
@@ -1066,8 +1066,7 @@ export class TaskScheduler {
           occurrence.provider !== operation.provider ||
           occurrence.accountId !== operation.accountId ||
           occurrence.before.task.id !== operation.task.id ||
-          state.operations.find((item) => item.id === occurrence.id)?.status !==
-            "complete")
+          !occurrenceCompletionVerified(state, occurrence))
       )
         throw new TaskProjectionConflict(
           "Verify this occurrence's completion before acknowledging its historical note.",

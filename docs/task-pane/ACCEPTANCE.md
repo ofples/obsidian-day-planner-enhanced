@@ -310,6 +310,14 @@ Native source-checkbox input completed the active child. Authoritative readback 
 
 Product deletion removed the root and its known completed child. Cleanup restored the original note bytes or file absence, removed both managed events and restored pane/calendar settings. Final refreshed/reloaded checks found fixture tasks/events absent or cancelled, zero native echoes, preserved recovery/history and no task-service error. The block move used the vault API. Checkbox and focus input used the native desktop. Full validation remains at 1,010 passes and the inherited ICS timeout. External recurrence, exact undo, complete copy/link repair and remaining M6 acceptance continue.
 
+### External recurring completion regression
+
+Counter evidence from the complete task snapshot or individual final-task read saves a durable external observation before historical note writes. Tests verify one advance, several advances, the original task/child/source baseline, preserved past event identity/time, fresh next-occurrence identities and no provider completion command. Repeated refresh/restart retains one observation. Focused edits, failed observation persistence, interrupted note writes and calendar failures recover through the existing journals.
+
+Account disconnection, foreign identities, missing counters, pending child commands, blocking schedules and deletion recovery preserve their ownership/reservation boundaries. A removed capture tag retains its link decision, and keeping the link then allows historical freezing. A same-counter date move creates no completion history. Normal unchanged recurring tasks require no extra identity scan, provider read or registry transaction. Migration preserves exact original v13 bytes. Component checks distinguish external provenance, current-task observation timing and multiple counter advances.
+
+The three-file subset has 153 passes. Full validation has 1,029 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. Required source checks, the separate strict scorecard and production build pass. Installed external-completion acceptance remains pending at this source checkpoint. Exact undo and remaining M5/M6 acceptance continue.
+
 ### Missing-source recovery foundation
 
 Regression checks cover deleted timed parent/child blocks, a deleted note file, exact Undo after restart, provider edits while detached and a fresh export identity after ordinary calendar deletion. Missing-source intents issue no note or provider write. Tests interrupt intent, local acknowledgment and archive acknowledgment writes, then restart and restore the same Todoist link. An uncertain calendar create carries its original event identity through deletion, restart and restoration. An already restored document cancels a stale detachment intent.
