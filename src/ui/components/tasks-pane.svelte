@@ -15,9 +15,10 @@
   import { operationTaskId } from "../../tasks/operations";
   import type { TaskReconciler } from "../../tasks/reconcile";
   import type { TaskScheduler } from "../../tasks/schedule";
-  import type {
-    ScheduleOperation,
-    TaskProjection,
+  import {
+    scheduleBlocksTask,
+    type ScheduleOperation,
+    type TaskProjection,
   } from "../../tasks/schedule-types";
   import type { TaskBrowserState, TaskService } from "../../tasks/service";
   import type { ProviderTask } from "../../tasks/types";
@@ -197,7 +198,9 @@
               disabled={!$browserState.writable ||
                 $browserState.loading ||
                 $scheduleState.operations.some(
-                  (operation) => operation.linkUid === issue.linkUid,
+                  (operation) =>
+                    operation.linkUid === issue.linkUid &&
+                    scheduleBlocksTask(operation),
                 )}
               onclick={() => reviewNoteConflict(issue.id)}>Review fields</button
             >{/if}

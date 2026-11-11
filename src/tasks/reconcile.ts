@@ -33,6 +33,7 @@ import type { TaskScheduler } from "./schedule";
 import {
   intervalForTaskDate,
   scheduleIntervalSchema,
+  scheduleBlocksTask,
   taskOccurrenceKey,
   type ScheduleInterval,
   type TaskProjection,
@@ -469,8 +470,7 @@ export class TaskReconciler {
     if (
       state.schedules.some(
         (operation) =>
-          operation.linkUid === issue.linkUid &&
-          !["complete", "cancelled"].includes(operation.phase),
+          operation.linkUid === issue.linkUid && scheduleBlocksTask(operation),
       ) ||
       state.operations.some(
         (operation) =>
@@ -687,7 +687,7 @@ export class TaskReconciler {
             operation.provider === link.provider &&
             operation.accountId === link.accountId &&
             operation.task.id === link.taskId &&
-            !["complete", "cancelled"].includes(operation.phase),
+            scheduleBlocksTask(operation),
         ) ||
         state.operations.some(
           (operation) =>

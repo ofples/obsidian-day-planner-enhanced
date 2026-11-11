@@ -2,6 +2,7 @@ import {
   sameSnapshot,
   snapshotOf,
   type CalendarApi,
+  type CalendarSnapshot,
   type CalendarNotes,
   type CalendarSyncState,
   type GoogleEvent,
@@ -13,6 +14,51 @@ export interface SyncResult {
   pulled: number;
   deleted: number;
   conflicts: string[];
+}
+
+/** Recover an owned write's baseline before a newer projection supersedes it. */
+export async function recoverCalendarProjection({
+  state,
+  api,
+  save,
+  uid,
+  path,
+  snapshot,
+  base,
+}: {
+  state: CalendarSyncState;
+  api: CalendarApi;
+  save: () => Promise<void>;
+  uid: string;
+  path: string;
+  snapshot: CalendarSnapshot;
+  base?: CalendarSnapshot;
+}) {
+  const record = state.records[uid];
+  if (record?.deleted) return;
+  const eventId = record?.eventId ?? `dp${state.namespace}${uid}`;
+  const event = await api.get(eventId);
+  if (!event) return;
+  if (
+    !record &&
+    event.extendedProperties?.private?.["dayPlannerVault"] !== state.namespace
+  )
+    throw new Error(
+      "Review this event's calendar ownership before recovering its export.",
+    );
+  const current = snapshotOf(event);
+  if (
+    record &&
+    (!current ||
+      !sameSnapshot(current, snapshot) ||
+      (!sameSnapshot(record.base, snapshot) &&
+        (!base || !sameSnapshot(record.base, base))))
+  )
+    return;
+  if (!record && !current && event.status !== "cancelled")
+    throw new Error("Review this event's times before recovering its export.");
+  state.records[uid] = { eventId, path, base: snapshot };
+  await save();
 }
 
 async function importUid(namespace: string, eventId: string) {

@@ -125,7 +125,7 @@ export class TaskCapture {
       ),
     );
     for (const operation of this.service.registry.snapshot().schedules) {
-      if (["complete", "cancelled"].includes(operation.phase)) continue;
+      if (!["pending", "prepared"].includes(operation.phase)) continue;
       for (const link of operation.plan?.links ?? []) {
         if (
           Object.values(previous).some(

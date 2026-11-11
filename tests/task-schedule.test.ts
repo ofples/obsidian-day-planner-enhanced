@@ -2,7 +2,11 @@ import { TFile, type App } from "obsidian";
 import { get } from "svelte/store";
 import { describe, expect, test, vi } from "vitest";
 
-import { syncCalendar } from "../src/google-calendar/engine";
+import {
+  recoverCalendarProjection,
+  syncCalendar,
+} from "../src/google-calendar/engine";
+import { sameSnapshot } from "../src/google-calendar/types";
 import { ObsidianCalendarNotes } from "../src/google-calendar/notes";
 import type {
   CalendarApi,
@@ -49,7 +53,8 @@ async function harness() {
     secret = "";
   let failTaskWrite = false,
     failPath = "",
-    failCalendar = false;
+    failCalendar = false,
+    loseCalendarResponse = false;
   let stable = true;
   let calendarState: CalendarSyncState = {
     version: 2,
@@ -126,8 +131,15 @@ async function harness() {
         summary: snapshot.title,
         start: { dateTime: snapshot.start },
         end: { dateTime: snapshot.end },
+        extendedProperties: {
+          private: { dayPlannerVault: calendarState.namespace },
+        },
       };
       events.set(id, event);
+      if (loseCalendarResponse) {
+        failCalendar = true;
+        throw new Error("calendar response lost");
+      }
       return event;
     },
     update: async (event, snapshot) => {
@@ -139,6 +151,10 @@ async function harness() {
         end: { dateTime: snapshot.end },
       };
       events.set(event.id, updated);
+      if (loseCalendarResponse) {
+        failCalendar = true;
+        throw new Error("calendar response lost");
+      }
       return updated;
     },
     remove: async (event) => {
@@ -147,10 +163,24 @@ async function harness() {
   };
   const calendar: Pick<
     GoogleCalendarSync,
-    "editNotes" | "syncProjection" | "removeProjection"
+    "editNotes" | "syncProjection" | "recoverProjection" | "removeProjection"
   > = {
     editNotes: async (edit) => edit(notes, await notes.scan()),
-    syncProjection: async (uid) => {
+    recoverProjection: async (uid, snapshot, path, base) => {
+      if (failCalendar) throw new Error("calendar offline");
+      await recoverCalendarProjection({
+        uid,
+        snapshot,
+        path,
+        base,
+        state: calendarState,
+        api,
+        save: async () => {
+          calendarDisk = JSON.stringify(calendarState);
+        },
+      });
+    },
+    syncProjection: async (uid, expected) => {
       if (failCalendar) throw new Error("calendar offline");
       await syncCalendar({
         state: calendarState,
@@ -163,9 +193,13 @@ async function harness() {
         timeMax: "2026-12-01T00:00:00Z",
         importEvents: false,
       });
-      return calendarState.records[uid]!.eventId;
+      const record = calendarState.records[uid];
+      if (!record || record.deleted || !sameSnapshot(record.base, expected))
+        throw new Error("calendar projection not verified");
+      return record.eventId;
     },
     removeProjection: async (uid) => {
+      if (failCalendar) throw new Error("calendar offline");
       const record = calendarState.records[uid];
       if (record) {
         events.delete(record.eventId);
@@ -281,6 +315,9 @@ async function harness() {
     setFailCalendar(value: boolean) {
       failCalendar = value;
     },
+    setLoseCalendarResponse(value: boolean) {
+      loseCalendarResponse = value;
+    },
     setStable(value: boolean) {
       stable = value;
     },
@@ -295,6 +332,9 @@ async function harness() {
       await vi.waitUntil(() => !get(service.state).loading);
       await reconciler.scan();
       await scheduler.resume();
+    },
+    async indexNotes() {
+      await capture.scan();
     },
     async restart() {
       scheduler.stop();
@@ -318,6 +358,231 @@ async function harness() {
 }
 
 describe("linked task scheduling", () => {
+  test("source field review can resolve a conflict while a Calendar-only retry is pending", async () => {
+    const h = await harness();
+    h.setFailCalendar(true);
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const first = h.service.registry.snapshot().schedules[0]!;
+    const source = h.scheduler.projection(root.id)!.source;
+    h.texts.set(
+      source.path,
+      h.texts.get(source.path)!.replace("Work #todoist", "Local #todoist"),
+    );
+    h.tasks.set(root.id, { ...h.tasks.get(root.id)!, title: "Remote" });
+    await h.service.refresh();
+    await h.reconcile();
+    const issue = Object.values(h.service.registry.snapshot().issues)[0]!;
+    const review = await h.reconciler.inspectConflict(issue.id);
+    await h.reconciler.resolveConflict(review, { title: "local" });
+    await h.settle();
+    expect(h.tasks.get(root.id)?.title).toBe("Local");
+    expect(
+      h.service.registry.snapshot().schedules[0]?.supersededBy,
+    ).toBeDefined();
+    expect(Object.values(h.service.registry.snapshot().issues)).toEqual([]);
+    h.setFailCalendar(false);
+    await h.settle();
+    expect(h.scheduler.projection(root.id)?.googleUid).toBe(first.googleUid);
+    expect([...h.events.values()].map((event) => event.summary)).toEqual([
+      "Local #todoist #work",
+    ]);
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test.each(["note", "provider"])(
+    "a schedule move preserves an unreconciled %s title edit",
+    async (origin) => {
+      const h = await harness();
+      await h.scheduler.schedule(root.id, interval);
+      await h.settle();
+      const path = h.scheduler.projection(root.id)!.source.path;
+      if (origin === "note") {
+        h.texts.set(
+          path,
+          h.texts.get(path)!.replace("Work #todoist", "Edited #todoist"),
+        );
+        await h.indexNotes();
+      } else {
+        h.tasks.set(root.id, { ...h.tasks.get(root.id)!, title: "Edited" });
+        await h.service.refresh();
+      }
+      await h.scheduler.schedule(root.id, {
+        start: "2026-11-12T10:00:00Z",
+        end: "2026-11-12T10:30:00Z",
+      });
+      await h.settle();
+      await h.reconcile();
+      expect(h.tasks.get(root.id)?.title).toBe("Edited");
+      expect(h.texts.get("Daily/2026-11-12.md")).toContain("Edited #todoist");
+      expect(Object.values(h.service.registry.snapshot().issues)).toEqual([]);
+      h.scheduler.stop();
+      h.reconciler.stop();
+      h.service.stop();
+    },
+  );
+
+  test.each(["create", "update"])(
+    "a lost Calendar %s response survives supersession and restart with one event",
+    async (kind) => {
+      const h = await harness();
+      if (kind === "update") {
+        await h.scheduler.schedule(root.id, interval);
+        await h.settle();
+      }
+      h.setLoseCalendarResponse(true);
+      await h.scheduler.schedule(root.id, {
+        start: "2026-11-12T09:00:00Z",
+        end: "2026-11-12T09:30:00Z",
+      });
+      await h.settle();
+      const previous = h.service.registry.snapshot().schedules.at(-1)!;
+      expect(previous.phase).toBe("calendar-pending");
+      const eventId = [...h.events.keys()][0]!;
+      const source =
+        h.service.registry.snapshot().links[previous.linkUid]!.source;
+      h.texts.set(
+        source.path,
+        h.texts.get(source.path)!.replace("Work #todoist", "Latest #todoist"),
+      );
+      await h.reconcile();
+      expect(h.tasks.get(root.id)?.title).toBe("Latest");
+      await h.restart();
+      h.setLoseCalendarResponse(false);
+      h.setFailCalendar(false);
+      await h.settle();
+      expect([...h.events.keys()]).toEqual([eventId]);
+      expect(h.events.get(eventId)?.summary).toBe("Latest #todoist #work");
+      expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+        "complete",
+      );
+      expect(h.apply).toHaveBeenCalledTimes(kind === "update" ? 3 : 2);
+      h.scheduler.stop();
+      h.reconciler.stop();
+      h.service.stop();
+    },
+  );
+
+  test("offline unschedule, note edit and reschedule retain the pending event removal", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const oldId = h.scheduler.projection(root.id)!.googleEventId!;
+    h.setFailCalendar(true);
+    await h.scheduler.unschedule(root.id);
+    await h.settle();
+    const source = h.scheduler.projection(root.id)!.source;
+    h.texts.set(
+      source.path,
+      h.texts.get(source.path)!.replace("Work #todoist", "Later #todoist"),
+    );
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.title).toBe("Later");
+    await h.scheduler.schedule(root.id, {
+      start: "2026-11-12T10:00:00Z",
+      end: "2026-11-12T10:30:00Z",
+    });
+    await h.settle();
+    expect(h.events.has(oldId)).toBe(true);
+    expect(
+      h.service.registry.snapshot().schedules.at(-1)?.calendarRemovals,
+    ).toHaveLength(1);
+    await h.restart();
+    h.setFailCalendar(false);
+    await h.settle();
+    expect(h.events.has(oldId)).toBe(false);
+    expect(h.events.size).toBe(1);
+    expect(h.scheduler.projection(root.id)?.googleEventId).not.toBe(oldId);
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("an uncertain create can be unscheduled while offline without leaking its event", async () => {
+    const h = await harness();
+    h.setLoseCalendarResponse(true);
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    expect(h.events.size).toBe(1);
+    expect(Object.keys(h.calendarState.records)).toHaveLength(0);
+    await h.scheduler.unschedule(root.id);
+    await h.settle();
+    h.setLoseCalendarResponse(false);
+    h.setFailCalendar(false);
+    await h.restart();
+    await h.settle();
+    expect(h.events.size).toBe(0);
+    expect(h.scheduler.projection(root.id)?.interval).toBeNull();
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("a failed supersession save keeps its original calendar intent recoverable", async () => {
+    const h = await harness();
+    h.setFailCalendar(true);
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const before = h.service.registry.snapshot();
+    h.setFailTaskWrite(true);
+    await expect(
+      h.scheduler.schedule(root.id, {
+        start: "2026-11-12T10:00:00Z",
+        end: "2026-11-12T10:30:00Z",
+      }),
+    ).rejects.toThrow("task state offline");
+    expect(h.service.registry.snapshot()).toEqual(before);
+    h.setFailTaskWrite(false);
+    h.setFailCalendar(false);
+    await h.settle();
+    expect(h.events.size).toBe(1);
+    expect(h.service.registry.snapshot().schedules[0]?.phase).toBe("complete");
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
+  test("acknowledges task and note fields while Calendar is offline and converges later edits", async () => {
+    const h = await harness();
+    h.setFailCalendar(true);
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const first = h.service.registry.snapshot().schedules[0]!;
+    const link = h.service.registry.snapshot().links[first.linkUid]!;
+    expect(link.base?.due?.date).toBe(interval.start);
+    expect(link.noteBase).toEqual(first.plan!.links[0]!.source);
+    const path = link.source.path;
+    h.texts.set(
+      path,
+      h.texts.get(path)!.replace("Work #todoist", "Edited #todoist"),
+    );
+    await h.reconcile();
+    expect(h.tasks.get(root.id)?.title).toBe("Edited");
+    expect(Object.values(h.service.registry.snapshot().issues)).toEqual([]);
+    expect(h.service.registry.snapshot().schedules[0]?.phase).toBe("cancelled");
+    await h.restart();
+    h.setFailCalendar(false);
+    await h.settle();
+    expect([...h.events.values()].map((event) => event.summary)).toEqual([
+      "Edited #todoist #work",
+    ]);
+    expect(h.scheduler.projection(root.id)?.googleUid).toBe(first.googleUid);
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
+    h.scheduler.stop();
+    h.reconciler.stop();
+    h.service.stop();
+  });
+
   test("a cleared provider date conflicts with a simultaneous note move and stays cleared when chosen", async () => {
     const h = await harness();
     await h.scheduler.schedule(root.id, interval);

@@ -96,6 +96,23 @@ export const scheduleOperationSchema = z.object({
       }),
     )
     .optional(),
+  taskAcknowledged: z.boolean().optional(),
+  calendarBase: calendarSnapshotSchema.optional(),
+  supersededBy: z.uuid().optional(),
+  calendarRemovals: z
+    .array(
+      z.object({
+        uid: z.string(),
+        path: z.string(),
+        snapshot: calendarSnapshotSchema,
+      }),
+    )
+    .optional(),
+  calendarPredecessors: z
+    .array(
+      projectionBlockSchema.extend({ base: calendarSnapshotSchema.optional() }),
+    )
+    .optional(),
   phase: z.enum([
     "pending",
     "prepared",
@@ -121,6 +138,14 @@ export const scheduleOperationSchema = z.object({
 export type ScheduleInterval = z.infer<typeof scheduleIntervalSchema>;
 export type TaskProjection = z.infer<typeof taskProjectionSchema>;
 export type ScheduleOperation = z.infer<typeof scheduleOperationSchema>;
+
+/** Calendar-only retries can yield to a later task edit after both task sides agree. */
+export function scheduleBlocksTask(operation: ScheduleOperation) {
+  return (
+    !["complete", "cancelled"].includes(operation.phase) &&
+    !(operation.phase === "calendar-pending" && operation.taskAcknowledged)
+  );
+}
 
 export function taskOccurrenceKey(task: ProviderTask) {
   return task.due?.recurring

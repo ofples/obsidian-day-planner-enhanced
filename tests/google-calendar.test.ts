@@ -1,7 +1,10 @@
 import { webcrypto } from "node:crypto";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
-import { syncCalendar } from "../src/google-calendar/engine";
+import {
+  recoverCalendarProjection,
+  syncCalendar,
+} from "../src/google-calendar/engine";
 import {
   addMarker,
   appendToPlanner,
@@ -10,6 +13,7 @@ import {
 } from "../src/google-calendar/markdown";
 import {
   snapshotOf,
+  sameSnapshot,
   type CalendarApi,
   type CalendarNotes,
   type CalendarSnapshot,
@@ -100,6 +104,82 @@ beforeEach(() => {
 });
 
 describe("calendar reconciliation", () => {
+  test("projection verification compares equivalent ISO timestamp representations", () => {
+    expect(
+      sameSnapshot(base, {
+        ...base,
+        start: "2026-11-11T10:00:00+05:30",
+        end: "2026-11-11T05:30:00Z",
+      }),
+    ).toBe(true);
+    expect(sameSnapshot(base, { ...base, start: "invalid" })).toBe(false);
+    expect(sameSnapshot(base, { ...base, end: "2026-11-11T06:30:00Z" })).toBe(
+      false,
+    );
+  });
+
+  test("an uncertain owned create recovers its intended baseline while retaining a later Google edit", async () => {
+    const h = harness(false);
+    h.setBlocks([local({ ...base, title: "Latest note" })]);
+    const id = `dp${h.state.namespace}${uid}`;
+    h.setEvents([
+      {
+        ...event(other),
+        id,
+        extendedProperties: { private: { dayPlannerVault: h.state.namespace } },
+      },
+    ]);
+    await recoverCalendarProjection({
+      ...h,
+      uid,
+      path: local().path,
+      snapshot: base,
+    });
+    expect(h.state.records[uid]?.base).toEqual(base);
+    expect((await h.run(false)).conflicts).toHaveLength(1);
+    expect(h.api.update).not.toHaveBeenCalled();
+    expect(h.api.create).not.toHaveBeenCalled();
+    expect(h.notes.write).not.toHaveBeenCalled();
+  });
+
+  test("an unknown deterministic ID cannot adopt another vault's event", async () => {
+    const h = harness(false);
+    h.setEvents([
+      {
+        ...event(),
+        id: `dp${h.state.namespace}${uid}`,
+        extendedProperties: { private: { dayPlannerVault: "other" } },
+      },
+    ]);
+    await expect(
+      recoverCalendarProjection({
+        ...h,
+        uid,
+        path: local().path,
+        snapshot: base,
+      }),
+    ).rejects.toThrow("ownership");
+    expect(h.state.records).toEqual({});
+    expect(h.save).not.toHaveBeenCalled();
+  });
+
+  test("an older predecessor cannot overwrite a newer acknowledged calendar baseline", async () => {
+    const h = harness();
+    const newer = { ...base, title: "Newer acknowledged title" };
+    h.state.records[uid]!.base = newer;
+    // Google was subsequently edited back to the original title.
+    await recoverCalendarProjection({
+      ...h,
+      uid,
+      path: local().path,
+      snapshot: base,
+    });
+    expect(h.state.records[uid]?.base).toEqual(newer);
+    h.setBlocks([local({ ...base, title: "Newest note" })]);
+    expect((await h.run(false)).conflicts).toHaveLength(1);
+    expect(h.api.update).not.toHaveBeenCalled();
+  });
+
   test("subtask-only edits backfill descriptions using the latest color version without note writes", async () => {
     const h = harness();
     const block = { ...local(), raw: "- [ ] Work\n  - [x] Completed child" };

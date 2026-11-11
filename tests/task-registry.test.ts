@@ -11,6 +11,33 @@ const legacy = JSON.stringify({
 });
 
 describe("task registry migration", () => {
+  test("v5 migration backs up the registry and keeps its note baselines", async () => {
+    let disk = JSON.stringify({
+      version: 5,
+      namespace,
+      operations: [],
+      links: {},
+      schedules: [],
+      projections: {},
+      issues: {},
+    });
+    const original = disk;
+    const backupState = vi.fn(async () => {});
+    const registry = new TaskRegistry(
+      {
+        readState: async () => disk,
+        writeState: async (text) => {
+          disk = text;
+        },
+        backupState,
+      },
+      namespace,
+    );
+    await registry.initialize();
+    expect(backupState).toHaveBeenCalledWith(original, 5);
+    expect(registry.snapshot().version).toBe(6);
+  });
+
   test("v4 migration retains the acknowledged projection instead of accepting an unmerged note edit", async () => {
     const base = {
       id: "task",
@@ -118,8 +145,8 @@ describe("task registry migration", () => {
     const registry = new TaskRegistry(storage, namespace);
     await registry.initialize();
     expect(events).toEqual(["backup", "write"]);
-    expect(registry.snapshot().version).toBe(5);
-    expect(JSON.parse(disk).version).toBe(5);
+    expect(registry.snapshot().version).toBe(6);
+    expect(JSON.parse(disk).version).toBe(6);
   });
 
   test("failed backup preserves the original registry", async () => {

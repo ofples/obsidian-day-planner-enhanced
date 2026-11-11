@@ -9,7 +9,7 @@ import type { DayPlannerSettings } from "../settings";
 
 import { GoogleCalendarApi } from "./api";
 import { GoogleCalendarAuth } from "./auth";
-import { syncCalendar } from "./engine";
+import { recoverCalendarProjection, syncCalendar } from "./engine";
 import { ObsidianCalendarNotes } from "./notes";
 import type { CalendarSyncState } from "./types";
 import type { LocalBlock } from "./types";
@@ -246,6 +246,41 @@ export class GoogleCalendarSync {
         "The schedule is saved. Connect Google Calendar or resolve its sync conflict to finish exporting it.",
       );
     return record.eventId;
+  }
+
+  async recoverProjection(
+    uid: string,
+    snapshot: CalendarSnapshot,
+    path: string,
+    base?: CalendarSnapshot,
+  ) {
+    if (this.busy || this.stopped)
+      throw new Error(
+        "Calendar sync is busy. Recovering this export is saved for retry.",
+      );
+    this.busy = true;
+    try {
+      const api = this.api();
+      const calendarId = await api.validateCalendar();
+      if (this.state.calendarId && this.state.calendarId !== calendarId)
+        throw new Error(
+          "Choose the original managed calendar before recovering this export.",
+        );
+      await recoverCalendarProjection({
+        state: this.state,
+        api,
+        save: async () => {
+          this.state.calendarId = calendarId;
+          await this.save();
+        },
+        uid,
+        snapshot,
+        path,
+        base,
+      });
+    } finally {
+      this.busy = false;
+    }
   }
 
   async removeProjection(

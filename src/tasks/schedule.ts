@@ -16,7 +16,7 @@ import {
   type TaskMutation,
 } from "./operations";
 import { rewriteTaskNote } from "./reconcile-markdown";
-import type { TaskLink } from "./registry";
+import type { TaskLink, TaskRegistryState } from "./registry";
 import {
   newTaskMarkdown,
   scheduleNoteTitle,
@@ -27,6 +27,7 @@ import {
   intervalForTaskDate,
   taskOccurrenceKey,
   scheduleOperationSchema,
+  scheduleBlocksTask,
   type ScheduleInterval,
   type ScheduleOperation,
   type TaskProjection,
@@ -52,7 +53,7 @@ export class TaskScheduler {
     private readonly service: TaskService,
     private readonly calendar: Pick<
       GoogleCalendarSync,
-      "editNotes" | "syncProjection" | "removeProjection"
+      "editNotes" | "syncProjection" | "recoverProjection" | "removeProjection"
     >,
     private readonly host: {
       read(path: string): Promise<string | null>;
@@ -150,6 +151,7 @@ export class TaskScheduler {
     mutations: { mutation: TaskMutation; base: ProviderTask }[];
     expectedLink?: TaskLink;
   }) {
+    await this.pending;
     const browser = get(this.service.state),
       snapshot = browser.snapshot;
     if (this.stopped || !snapshot || !browser.writable)
@@ -183,6 +185,12 @@ export class TaskScheduler {
       target: { kind: "reconcile", interval: input.interval },
       previous: input.source,
       previousInterval: projection?.interval ?? undefined,
+      calendarBase: projection?.interval
+        ? {
+            ...projection.interval,
+            title: scheduleNoteTitle(projection.source.raw),
+          }
+        : undefined,
       children: [],
       raw: input.raw,
       generatedTaskIds: [input.task.id],
@@ -203,13 +211,13 @@ export class TaskScheduler {
             item.provider === operation.provider &&
             item.accountId === operation.accountId &&
             item.task.id === input.task.id &&
-            !["complete", "cancelled"].includes(item.phase),
+            scheduleBlocksTask(item),
         )
       )
         throw new TaskReadError(
           "Finish this task's saved projection change before reconciling another edit.",
         );
-      current.schedules.push(operation);
+      this.saveIntent(current, operation);
     });
     this.publish();
     await this.resume();
@@ -221,6 +229,7 @@ export class TaskScheduler {
     target: ScheduleOperation["target"],
     id: string,
   ) {
+    await this.pending;
     const browser = get(this.service.state),
       snapshot = browser.snapshot;
     if (this.stopped || !browser.writable || !snapshot)
@@ -252,7 +261,7 @@ export class TaskScheduler {
           operation.provider === snapshot.provider &&
           operation.accountId === snapshot.account.id &&
           operation.task.id === taskId &&
-          !["complete", "cancelled"].includes(operation.phase),
+          scheduleBlocksTask(operation),
       )
     )
       throw new TaskReadError(
@@ -310,6 +319,12 @@ export class TaskScheduler {
       target,
       previous,
       previousInterval: projection?.interval ?? undefined,
+      calendarBase: projection?.interval
+        ? {
+            ...projection.interval,
+            title: scheduleNoteTitle(projection.source.raw),
+          }
+        : undefined,
       children: children.map((child) => child.task),
       raw:
         previous?.raw ??
@@ -363,13 +378,13 @@ export class TaskScheduler {
             item.provider === operation.provider &&
             item.accountId === operation.accountId &&
             item.task.id === taskId &&
-            !["complete", "cancelled"].includes(item.phase),
+            scheduleBlocksTask(item),
         )
       )
         throw new TaskReadError(
           "This task already has a saved schedule change.",
         );
-      current.schedules.push(operation);
+      this.saveIntent(current, operation);
       return operation;
     });
     this.publish();
@@ -379,12 +394,61 @@ export class TaskScheduler {
 
   private current(operation: ScheduleOperation) {
     const browser = get(this.service.state);
+    const saved = this.service.registry
+      .snapshot()
+      .schedules.find((item) => item.id === operation.id);
     return (
       !this.stopped &&
+      !["complete", "cancelled"].includes(saved?.phase ?? "pending") &&
       browser.writable &&
       browser.snapshot?.provider === operation.provider &&
       browser.snapshot.account.id === operation.accountId
     );
+  }
+
+  private calendarRemovals(operation: ScheduleOperation) {
+    const removals = [...(operation.calendarRemovals ?? [])];
+    if (
+      operation.plan &&
+      !operation.plan.interval &&
+      operation.previousInterval &&
+      operation.previous
+    )
+      removals.push({
+        uid: operation.googleUid,
+        path: operation.previous.path,
+        snapshot: {
+          ...operation.previousInterval,
+          title: scheduleNoteTitle(operation.previous.raw),
+        },
+      });
+    return [...new Map(removals.map((item) => [item.uid, item])).values()];
+  }
+
+  private saveIntent(state: TaskRegistryState, operation: ScheduleOperation) {
+    const previous = state.schedules.filter(
+      (item) =>
+        item.provider === operation.provider &&
+        item.accountId === operation.accountId &&
+        item.task.id === operation.task.id &&
+        item.phase === "calendar-pending" &&
+        item.taskAcknowledged,
+    );
+    operation.calendarRemovals = previous.flatMap((item) =>
+      this.calendarRemovals(item),
+    );
+    operation.calendarPredecessors = previous.flatMap((item) => [
+      ...(item.calendarPredecessors ?? []),
+      ...(item.plan?.block
+        ? [{ ...item.plan.block, base: item.calendarBase }]
+        : []),
+    ]);
+    for (const saved of previous) {
+      saved.phase = "cancelled";
+      saved.supersededBy = operation.id;
+      saved.error = undefined;
+    }
+    state.schedules.push(operation);
   }
 
   private saved(id: string) {
@@ -566,10 +630,22 @@ export class TaskScheduler {
                   block.raw === operation.previous!.raw,
               )
             : [];
+          const removals = new Set(
+            this.calendarRemovals(operation).map((item) => item.uid),
+          );
           const adopted =
-            matching.find((block) => block.uid === operation.googleUid) ??
-            matching.find((block) => block.from === operation.previous!.from) ??
-            (matching.length === 1 ? matching[0] : undefined);
+            matching.find(
+              (block) =>
+                block.uid === operation.googleUid && !removals.has(block.uid),
+            ) ??
+            matching.find(
+              (block) =>
+                block.from === operation.previous!.from &&
+                !removals.has(block.uid),
+            ) ??
+            (matching.length === 1 && !removals.has(matching[0]!.uid)
+              ? matching[0]
+              : undefined);
           googleUid = adopted?.uid ?? googleUid;
           const snapshot = {
             ...interval,
@@ -657,6 +733,7 @@ export class TaskScheduler {
             taskId: operation.task.id,
             linkUid: operation.linkUid,
             googleUid: plan.interval ? operation.googleUid : undefined,
+            googleEventId: state.projections[operation.linkUid]?.googleEventId,
             occurrenceKey: operation.occurrenceKey,
             source: plan.links[0]!.source,
             interval: plan.interval,
@@ -671,12 +748,9 @@ export class TaskScheduler {
     }
     if (!this.current(operation)) return;
     if (operation.phase === "local-applied") {
-      await this.update(operation.id, {
-        phase:
-          operation.syncTaskDate || operation.providerSteps?.length
-            ? "provider-pending"
-            : "calendar-pending",
-      });
+      if (operation.syncTaskDate || operation.providerSteps?.length)
+        await this.update(operation.id, { phase: "provider-pending" });
+      else await this.acknowledgeTask(operation);
       operation = this.saved(operation.id);
     }
     if (operation.phase === "provider-pending") {
@@ -729,49 +803,101 @@ export class TaskScheduler {
         await this.replaceResolvedProjection(operation);
         return;
       }
-      await this.update(operation.id, {
-        phase: "calendar-pending",
-        error: undefined,
-      });
+      await this.acknowledgeTask(operation);
       operation = this.saved(operation.id);
     }
     if (operation.phase === "calendar-pending" && this.current(operation)) {
+      if (!operation.taskAcknowledged) {
+        await this.acknowledgeTask(operation);
+        operation = this.saved(operation.id);
+      }
+      for (const predecessor of operation.calendarPredecessors ?? []) {
+        if (!this.current(operation)) return;
+        await this.calendar.recoverProjection(
+          predecessor.uid,
+          predecessor.snapshot,
+          predecessor.path,
+          predecessor.base,
+        );
+      }
+      for (const removal of this.calendarRemovals(operation)) {
+        if (!this.current(operation)) return;
+        await this.calendar.recoverProjection(
+          removal.uid,
+          removal.snapshot,
+          removal.path,
+        );
+        await this.calendar.removeProjection(
+          removal.uid,
+          removal.snapshot,
+          removal.path,
+        );
+      }
+      if (!this.current(operation)) return;
       let eventId: string | undefined;
       if (operation.plan!.interval)
         eventId = await this.calendar.syncProjection(
           operation.googleUid,
           operation.plan!.block!.snapshot,
         );
-      else if (operation.previousInterval && operation.previous)
-        await this.calendar.removeProjection(
-          operation.googleUid,
-          {
-            ...operation.previousInterval,
-            title: scheduleNoteTitle(operation.previous.raw),
-          },
-          operation.previous.path,
-        );
       if (!this.current(operation)) return;
       await this.service.registry.change((state) => {
         const projection = state.projections[operation.linkUid]!;
         projection.googleEventId = eventId;
-        const finalId =
-          operation.providerSteps?.at(-1)?.id ?? operation.providerOperationId;
-        const result = resolvedTaskOperation(state.operations, finalId);
-        projection.base =
-          result.status === "complete" && result.task
-            ? result.task
-            : operation.task;
-        state.links[operation.linkUid]!.base = projection.base;
-        state.links[operation.linkUid]!.noteBase =
-          operation.plan!.links[0]!.source;
-        delete state.issues[operation.linkUid];
         const saved = state.schedules.find((item) => item.id === operation.id)!;
         saved.phase = "complete";
         saved.error = undefined;
       });
       this.publish();
     }
+  }
+
+  private async acknowledgeTask(operation: ScheduleOperation) {
+    await this.service.registry.change((state) => {
+      if (!this.current(operation)) return;
+      const saved = state.schedules.find((item) => item.id === operation.id)!;
+      const finalId =
+        operation.providerSteps?.at(-1)?.id ?? operation.providerOperationId;
+      const result = resolvedTaskOperation(state.operations, finalId);
+      if (
+        (operation.syncTaskDate || operation.providerSteps?.length) &&
+        (result.status !== "complete" || !result.task)
+      )
+        throw new TaskProjectionConflict(
+          "Verify the saved provider commands before acknowledging this note.",
+        );
+      const task =
+        result.status === "complete" && result.task
+          ? result.task
+          : operation.task;
+      const link = state.links[operation.linkUid]!;
+      const fields =
+        operation.providerSteps?.flatMap((step) =>
+          Object.keys(mutationFields(step.mutation)),
+        ) ?? Object.keys(operation.providerChanges ?? {});
+      const base =
+        operation.target.kind === "reconcile"
+          ? task
+          : {
+              ...(link.base ?? operation.task),
+              ...Object.fromEntries(
+                fields.map((field) => [
+                  field,
+                  task[field as keyof ProviderTask],
+                ]),
+              ),
+            };
+      state.projections[operation.linkUid]!.base = base;
+      link.base = base;
+      if (operation.target.kind === "reconcile") {
+        link.noteBase = operation.plan!.links[0]!.source;
+        delete state.issues[operation.linkUid];
+      }
+      saved.taskAcknowledged = true;
+      saved.phase = "calendar-pending";
+      saved.error = undefined;
+    });
+    this.publish();
   }
 
   private async replaceResolvedProjection(operation: ScheduleOperation) {

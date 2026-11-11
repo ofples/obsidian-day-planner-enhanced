@@ -129,5 +129,9 @@ export function snapshotOf(event: GoogleEvent): CalendarSnapshot | null {
 }
 
 export function sameSnapshot(a: CalendarSnapshot, b: CalendarSnapshot) {
-  return a.title === b.title && a.start === b.start && a.end === b.end;
+  return (
+    a.title === b.title &&
+    Date.parse(a.start) === Date.parse(b.start) &&
+    Date.parse(a.end) === Date.parse(b.end)
+  );
 }
