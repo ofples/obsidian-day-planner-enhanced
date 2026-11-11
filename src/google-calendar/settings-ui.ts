@@ -7,6 +7,86 @@ import type { DayPlannerSettings } from "../settings";
 
 import type { GoogleCalendarSettings, GoogleCalendarSync } from "./service";
 
+/** Native disclosure works in both searchable settings and the legacy settings tab. */
+export function addGoogleCalendarSetupDetails(container: HTMLElement) {
+  const document = container.ownerDocument;
+  const details = document.createElement("details");
+  details.className = "planner-google-setup-details";
+  const summary = document.createElement("summary");
+  summary.textContent = "How to set up Google Calendar sync";
+  details.appendChild(summary);
+  const intro = document.createElement("p");
+  intro.textContent =
+    "One-time setup on desktop: create your own Google connection, then choose a calendar for your schedule. You do not need a paid Google Cloud plan.";
+  details.appendChild(intro);
+  const steps = document.createElement("ol");
+  const addStep = (
+    title: string,
+    text: string,
+    link?: { label: string; url: string },
+  ) => {
+    const item = document.createElement("li");
+    const heading = document.createElement("strong");
+    heading.textContent = `${title} `;
+    item.append(heading, document.createTextNode(text));
+    if (link) {
+      const anchor = document.createElement("a");
+      anchor.textContent = link.label;
+      anchor.href = link.url;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      item.append(document.createTextNode(" "), anchor);
+    }
+    steps.appendChild(item);
+  };
+  addStep(
+    "Create a Google Cloud project.",
+    "Use a project for Day Planner and enable Google Calendar API. Standard Calendar API use is free. Google may require a billing account when you create a project; no paid resources are needed for this setup.",
+    {
+      label: "Open Google Calendar API setup",
+      url: "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com",
+    },
+  );
+  addStep(
+    "Set up Google Auth Platform.",
+    "Under Branding, enter an app name (for example, Day Planner) and your support/contact email. Under Audience, choose External for a personal Gmail account and add yourself as a test user if the app is in Testing.",
+    {
+      label: "Open Google Auth Platform",
+      url: "https://console.cloud.google.com/auth/overview",
+    },
+  );
+  addStep(
+    "Create a Desktop app client.",
+    "Under Clients, create an OAuth client with application type Desktop app. Copy its client ID and client secret into the fields below, then click Save secret. A Web application client or an API key will not work here. Keep the secret private.",
+    {
+      label: "Open OAuth clients",
+      url: "https://console.cloud.google.com/auth/clients",
+    },
+  );
+  addStep(
+    "Choose a calendar.",
+    "Create a separate calendar such as Day Planner in Google Calendar. Under its Settings → Integrate calendar, copy Calendar ID into Target Google calendar ID below. Use the ID, not the secret iCal/ICS URL.",
+    {
+      label: "Open Google Calendar",
+      url: "https://calendar.google.com/calendar/u/0/r/settings",
+    },
+  );
+  addStep(
+    "Connect and test.",
+    "Click Connect below, choose your Google account in the browser and approve calendar access. Then click Sync now. Test one disposable block in each direction before enabling automatic sync. Keep automatic sync enabled on only one desktop at a time.",
+  );
+  details.appendChild(steps);
+  const note = document.createElement("p");
+  note.textContent =
+    "If Google reports access_denied, add the signed-in account as a test user. If sign-in expires after about seven days, the Google app may still be in Testing: reconnect, or review Google's publishing options for personal use. If the browser does not return to Obsidian, check that the client type is Desktop app and local connections to 127.0.0.1 are allowed.";
+  details.appendChild(note);
+  const privacy = document.createElement("p");
+  privacy.textContent =
+    "Your refresh token and client secret are saved in Obsidian SecretStorage. Sync talks directly to Google. It mirrors titles and times for the selected calendar; other event fields and nested note content stay as they are. Google consent allows event access across calendars, while this plugin uses only the calendar ID you select.";
+  details.appendChild(privacy);
+  container.appendChild(details);
+}
+
 export function googleCalendarSettingDefinitions(
   getSettings: () => DayPlannerSettings,
   update: (patch: Partial<GoogleCalendarSettings>) => void,
@@ -33,8 +113,9 @@ export function googleCalendarSettingDefinitions(
     items: [
       {
         name: "Sync daily-note time blocks",
-        desc: "Mirrors titles and times, including nested content kept in notes. Use a dedicated calendar. All-day and multi-day events over 24 hours are not imported. Requires Obsidian 1.11.4+. See the fork's GOOGLE-CALENDAR.md for Google OAuth setup.",
+        desc: "Sync titles and times with a dedicated Google calendar. Nested items stay in notes. Requires Obsidian 1.11.4+; all-day events and events over 24 hours are excluded.",
         searchable: true,
+        render: (setting) => addGoogleCalendarSetupDetails(setting.descEl),
       },
       text(
         "Google OAuth client ID",

@@ -348,3 +348,22 @@ body:has(.modal.day-planner-nested-items-modal) .popover.hover-popover {
     background: var(--background-primary);
   }
 }
+.planner-google-setup-details {
+  max-width: 70ch;
+  margin-top: var(--size-4-3);
+
+  summary {
+    cursor: pointer;
+    font-weight: var(--font-semibold);
+    color: var(--text-normal);
+  }
+
+  li {
+    margin-block: var(--size-4-2);
+    line-height: 1.5;
+  }
+
+  p {
+    line-height: 1.5;
+  }
+}

@@ -2,7 +2,7 @@
 
 This fork adds direct Google Calendar API sync to Day Planner Enhanced. It mirrors **titles and start/end times** between top-level timed blocks in daily notes and one writable Google calendar. Daily notes remain ordinary Markdown; the existing planner parser and daily-note configuration are used.
 
-This is a development implementation. Automated tests exercise the sync engine, note adapter, REST requests and OAuth callback. Real Google consent, live calendar round trips, and installed Obsidian acceptance still need verification before enabling automatic sync for an important calendar.
+This is a development implementation. Automated tests exercise the sync engine, note adapter, REST requests and OAuth callback. Desktop Google consent and live title/time round trips have also been verified with a dedicated calendar. Test your own setup before enabling automatic sync for an important calendar.
 
 ## Existing alternatives checked
 
@@ -19,12 +19,12 @@ No existing drop-in bridge for Day Planner Enhanced's daily-note time ranges was
 ## Setup
 
 1. Use **Obsidian 1.11.4 or later**. Optional Google sync uses Obsidian SecretStorage. The rest of Day Planner keeps its existing minimum version.
-2. In [Google Cloud Console](https://console.cloud.google.com/), create or select a project and enable **Google Calendar API**.
+2. In [Google Cloud Console](https://console.cloud.google.com/), create or select a project and enable **Google Calendar API**. Standard Calendar API use is free; Google may require a billing account when creating a project. No paid resources are needed for this setup.
 3. Configure Google Auth Platform's consent screen. If the app is External and in Testing, add your Google account as a test user. Google's testing-mode refresh tokens can expire after seven days for these scopes; reconnect when needed.
 4. Create an OAuth client with application type **Desktop app**. Copy its client ID and client secret. A Desktop client uses an ephemeral `http://127.0.0.1:<port>/oauth2callback` redirect; do not create a Web client or use the deprecated out-of-band copy/paste flow.
 5. Create a dedicated Google calendar for the schedule. Copy its **Calendar ID** from Google Calendar → Settings → the calendar → Integrate calendar. This is the calendar ID, not its secret ICS URL.
 6. Build this branch with `npm ci` and `npm run build`. Copy `main.js`, `styles.css` and `manifest.json` into the existing `day-planner-enhanced` plugin folder in a **test vault**, then reload Obsidian. Keep a copy of the previous plugin files outside the vault if replacing an installation.
-7. Open Settings → Day Planner Enhanced → **Google Calendar two-way sync**. Enter the client ID, save the client secret, and enter the target calendar ID. Click **Connect** and finish consent in your browser.
+7. Open Settings → Day Planner Enhanced → **Google Calendar two-way sync**. Expand **How to set up Google Calendar sync** for inline instructions, official setup links and troubleshooting. Enter the client ID, save the client secret, and enter the target calendar ID. Click **Connect** and finish consent in your browser. Under Google Auth Platform → Data Access, the requested scopes are `https://www.googleapis.com/auth/calendar.events` and `https://www.googleapis.com/auth/calendar.calendarlist.readonly`.
 8. Keep automatic sync off initially. Run **Sync Google Calendar now**. Test both directions with a disposable event, including renaming, resizing, changing days, cancellation, and an offline/restart recovery. Enable automatic sync only after verifying your setup.
 
 For recurring Google events, each occurrence in the import window is represented as a separate daily-note block. Editing it changes that occurrence, not the entire recurring series. Configure recurring series in Google Calendar.
@@ -75,7 +75,8 @@ Google references: [Desktop OAuth](https://developers.google.com/identity/protoc
 ## Validation of this implementation
 
 - 52 new automated tests pass across reconciliation, Markdown, vault writes and recovery, HTTP transport, and a real local OAuth callback with a mocked Google token endpoint.
-- Full suite: 642 passed, 1 failed, 9 skipped and 17 todo. The failure is the existing ICS test `Last visible day is inclusive` in `tests/ical.test.ts`; it also fails on a separate, untouched checkout of upstream commit `db64375d` with the same environment and dependencies.
+- Full suite: 649 passed, 1 failed, 9 skipped and 17 todo. The failure is the existing ICS test `Last visible day is inclusive` in `tests/ical.test.ts`; it also fails on a separate, untouched checkout of upstream commit `db64375d` with the same environment and dependencies.
 - Prettier, ESLint, stylelint, TypeScript, Svelte diagnostics, the stricter scorecard lint and the production build pass. The aggregate `npm run lint` stops at the inherited test failure, so it is not an all-green result.
 - Windows checkout CRLF bytes in the test fixtures had to be normalized back to the repository's LF content so the recorded metadata offsets matched. No fixture or unrelated source changes are included in this branch.
-- Google consent, actual account permissions and event writes, installed Obsidian settings/timeline behavior, mobile behavior, and DST/travel scenarios remain unverified. The build has not replaced an existing vault installation.
+- Installed desktop acceptance verified Google consent, SecretStorage credentials, initial schedule export, Google event import, title/time edits in both directions, and Google cancellation. The expandable setup row is present in installed settings. Desktop sign-in uses a guarded CommonJS Node HTTP import because Chromium cannot resolve `import("node:http")` in Obsidian's plugin loader.
+- Live cross-day moves, offline/restart recovery, mobile behavior and DST/travel scenarios remain unverified. Automatic sync runs only while Obsidian is open; Google apps left in Testing can require reconnection after seven days.

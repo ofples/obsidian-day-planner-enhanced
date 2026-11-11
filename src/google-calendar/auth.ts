@@ -92,8 +92,10 @@ export class GoogleCalendarAuth {
       throw new Error("Enter a Google Desktop app OAuth client ID first.");
     this.storage();
     this.cancelLogin?.();
-    // Desktop-only dependency: mobile can still load the planner without Node.
-    const { createServer } = await import("node:http");
+    // Obsidian loads plugins through CommonJS; Chromium's dynamic import cannot
+    // resolve Node builtins. Keep require inside the desktop guard for mobile.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { createServer } = require("node:http") as typeof import("node:http");
     const random = () =>
       Array.from(crypto.getRandomValues(new Uint8Array(32)))
         .map((byte) => byte.toString(16).padStart(2, "0"))
