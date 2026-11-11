@@ -135,7 +135,7 @@ Local/task acknowledgment releases the next occurrence while earlier calendar re
 
 Capture reserves historical sources before automatic task creation. Keep their current source positions as notes move, while preserving the original captured baselines. Unchecking historical text opens occurrence review. The custom history surface retains the original task description, known child states, occurrence date, repeat rule, the next date observed at completion and note navigation. Account changes scope browsing to the original owner.
 
-Local checkbox completion, external completion reconciliation and exact occurrence undo continue under M5. Undo must revalidate its exact occurrence against current provider and note identities. A changed provider state or unavailable evidence requires an explicit recovery choice. Child restoration needs its own saved comparison if provider undo leaves child state unchanged.
+Local checkbox completion, external completion reconciliation and exact occurrence undo continue under M5. Associate note-origin reconciliation with its final completion-command UUID. When acknowledgment returns the next task, retain the completed occurrence's baseline for local/archive acknowledgment and the historical calendar phase. Reuse that journal across related title/time commands. External completion needs authoritative occurrence evidence before freezing a linked baseline. Undo must revalidate its exact occurrence against current provider and note identities. A changed provider state or unavailable evidence requires an explicit recovery choice. Child restoration needs its own saved comparison if provider undo leaves child state unchanged.
 
 ## Scheduling and unscheduling
 

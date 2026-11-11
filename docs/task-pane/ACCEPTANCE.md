@@ -108,6 +108,12 @@ Scheduling the next occurrence produced fresh note/calendar identities and a sep
 
 This supplies installed pane-origin A47 evidence and recurrence identity/color evidence for A48. Local-checkbox and external completion, exact undo and full child/copy repair continue. Preference restoration reproduced the missing workspace-save callback. An explicit workspace save restored the original pane state. The automatic persistence source fix and lifecycle regression receive their own installed acceptance.
 
+### Installed pane-preference verification
+
+The matching source build was installed with a full plugin backup and equal bundle hashes. Native search entry and project grouping saved automatically to the actual workspace file and survived a full reload. Native controls restored the original search/grouping, which saved and survived another reload. Readback matched the entire serialized pane state. This verifies automatic preference persistence through the normal callback. The earlier history cleanup used an explicit workspace save before the fix.
+
+Final refreshed API/state checks still found no disposable tasks/events, no native echoes, restored note bytes/file absence and original calendar/pane settings. History/recovery records remained intact with zero pending operations/schedules or source/reconciliation issues. Full source validation has 988 passes and the inherited ICS timeout, nine skips and 17 todo cases. Other source checks, the strict scorecard and production build pass. Timeline selection returned to today while the previous note stayed open after reload, leaving date/navigation restoration in M6.
+
 ## Failure-injection matrix
 
 Exercise each mutation at the boundaries before intent save, after intent save, after local write, after remote success with a lost response, after remote acknowledgment save, after Google write and before operation completion. Restart after every injected failure. Required outcomes are one task per create operation, one event per occurrence, preserved source text and a retriable or explicitly conflicted operation.
