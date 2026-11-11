@@ -42,6 +42,10 @@ function pages(taskPage: (url: URL) => unknown) {
       return Promise.resolve(
         response({ results: [project], next_cursor: null }),
       ) as ReturnType<typeof requestUrl>;
+    if (url.pathname.endsWith("/sync"))
+      return Promise.resolve(
+        response({ user_settings: { reset_recurring_subtasks: true } }),
+      ) as ReturnType<typeof requestUrl>;
     return Promise.resolve(response(taskPage(url))) as ReturnType<
       typeof requestUrl
     >;
@@ -60,7 +64,10 @@ describe("Todoist complete snapshots", () => {
         : request(arg),
     );
     const snapshot = await new TodoistProvider("credential").read();
-    expect(snapshot.account.capabilities).toEqual({ duration: false, delete: true });
+    expect(snapshot.account.capabilities).toEqual({
+      duration: false,
+      delete: true,
+    });
     expect(JSON.stringify(snapshot)).not.toContain("must-not-cache");
   });
   test("normalizes duration data while accepting older cached task shapes", async () => {
@@ -75,6 +82,48 @@ describe("Todoist complete snapshots", () => {
     expect(snapshot.tasks[0]?.duration).toEqual({ amount: 45, unit: "minute" });
     expect(snapshot.tasks[1]?.duration).toBeUndefined();
   });
+  test("retains recurring completion counters and the subtask reset preference", async () => {
+    pages(() => ({
+      results: [{ ...task, completed_count: 3 }],
+      next_cursor: null,
+    }));
+    const snapshot = await new TodoistProvider("credential").read();
+    expect(snapshot.tasks[0]?.completionCount).toBe(3);
+    expect(snapshot.account.preferences).toEqual({
+      resetRecurringSubtasks: true,
+    });
+    const settings = vi
+      .mocked(requestUrl)
+      .mock.calls.find(
+        ([arg]) => typeof arg !== "string" && arg.url.endsWith("/sync"),
+      )![0] as { body: string };
+    expect(new URLSearchParams(settings.body).get("resource_types")).toBe(
+      '["user_settings"]',
+    );
+    expect(JSON.stringify(snapshot)).not.toContain("must-not-cache");
+  });
+  test.each([null, -1, 0.5, "3"])(
+    "rejects an invalid completion counter %j",
+    async (count) => {
+      pages(() => ({
+        results: [{ ...task, completed_count: count }],
+        next_cursor: null,
+      }));
+      await expect(new TodoistProvider("credential").read()).rejects.toThrow();
+    },
+  );
+  test("a missing reset preference fails the fresh snapshot before publishing partial data", async () => {
+    pages(() => ({ results: [task], next_cursor: null }));
+    const request = vi.mocked(requestUrl).getMockImplementation()!;
+    vi.mocked(requestUrl).mockImplementation((arg) =>
+      (typeof arg === "string" ? arg : arg.url).endsWith("/sync")
+        ? (Promise.resolve(response({ user_settings: {} })) as ReturnType<
+            typeof requestUrl
+          >)
+        : request(arg),
+    );
+    await expect(new TodoistProvider("credential").read()).rejects.toThrow();
+  });
   test("reads all cursor pages and excludes unexpected account fields including token", async () => {
     pages((url) =>
       url.searchParams.has("cursor")
@@ -87,10 +136,11 @@ describe("Todoist complete snapshots", () => {
       id: "user",
       name: "Test",
       timezone: "UTC",
+      preferences: { resetRecurringSubtasks: true },
       capabilities: { delete: true },
     });
     expect(JSON.stringify(snapshot)).not.toContain("must-not-cache");
-    expect(requestUrl).toHaveBeenCalledTimes(4);
+    expect(requestUrl).toHaveBeenCalledTimes(5);
   });
   test("partial pages and malformed resources fail the entire snapshot", async () => {
     pages((url) =>

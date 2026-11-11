@@ -6,6 +6,7 @@ import {
   type TaskOperation,
 } from "../src/tasks/operations";
 import { pendingSnapshot } from "../src/tasks/queue";
+import { taskOccurrenceKey } from "../src/tasks/schedule-types";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
 
 const base: ProviderTask = {
@@ -33,6 +34,119 @@ const operation: TaskOperation = {
 };
 
 describe("task write comparisons", () => {
+  test("recurring completion requires one verified counter increment and preserves the rule", () => {
+    const recurring: ProviderTask = {
+      ...base,
+      completionCount: 3,
+      due: {
+        date: "2026-11-12",
+        recurring: true,
+        text: "every day",
+        timezone: null,
+      },
+    };
+    const op: TaskOperation = {
+      ...operation,
+      base: recurring,
+      mutation: { kind: "complete", taskId: base.id },
+    };
+    const moved = {
+      ...recurring,
+      due: { ...recurring.due!, date: "2026-11-13" },
+    };
+    expect(preflightOperation(op, recurring)).toBe("ready");
+    expect(preflightOperation(op, { ...recurring, completed: true })).toBe(
+      "conflict",
+    );
+    expect(preflightOperation({ ...op, base }, recurring)).toBe("conflict");
+    expect(preflightOperation(op, { ...recurring, completionCount: 4 })).toBe(
+      "conflict",
+    );
+    expect(
+      preflightOperation(
+        { ...op, base: { ...recurring, completionCount: undefined } },
+        recurring,
+      ),
+    ).toBe("conflict");
+    expect(matchesOperationResult(op, moved, "UTC")).toBe(false);
+    expect(
+      matchesOperationResult(op, { ...moved, completionCount: 4 }, "UTC"),
+    ).toBe(true);
+    expect(
+      matchesOperationResult(op, { ...recurring, completionCount: 4 }, "UTC"),
+    ).toBe(true);
+    expect(
+      matchesOperationResult(op, { ...moved, completionCount: 5 }, "UTC"),
+    ).toBe(false);
+    expect(
+      matchesOperationResult(
+        op,
+        {
+          ...moved,
+          completionCount: 4,
+          due: { ...moved.due, text: "every week" },
+        },
+        "UTC",
+      ),
+    ).toBe(false);
+    expect(
+      matchesOperationResult(
+        op,
+        {
+          ...moved,
+          completionCount: 4,
+          due: { ...moved.due, timezone: "Asia/Kolkata" },
+        },
+        "UTC",
+      ),
+    ).toBe(false);
+    expect(
+      matchesOperationResult(
+        op,
+        { ...recurring, completionCount: 4, completed: true },
+        "UTC",
+      ),
+    ).toBe(true);
+  });
+  test("a recurring reschedule stays in the same occurrence and cannot move an advanced occurrence", () => {
+    const recurring: ProviderTask = {
+      ...base,
+      completionCount: 2,
+      due: {
+        date: "2026-11-12",
+        recurring: true,
+        text: "every day",
+        timezone: "UTC",
+      },
+    };
+    const moved = {
+      ...recurring,
+      due: { ...recurring.due!, date: "2026-11-13" },
+    };
+    const op: TaskOperation = {
+      ...operation,
+      base: recurring,
+      mutation: {
+        kind: "update",
+        taskId: base.id,
+        changes: { due: moved.due },
+      },
+    };
+    expect(taskOccurrenceKey(recurring)).toBe(taskOccurrenceKey(moved));
+    expect(taskOccurrenceKey(recurring)).not.toBe(
+      taskOccurrenceKey({ ...recurring, completionCount: 3 }),
+    );
+    expect(preflightOperation(op, recurring)).toBe("ready");
+    expect(preflightOperation(op, { ...recurring, completionCount: 3 })).toBe(
+      "conflict",
+    );
+    expect(
+      preflightOperation(
+        { ...op, mutation: { kind: "reopen", taskId: base.id } },
+        recurring,
+      ),
+    ).toBe("conflict");
+  });
   test("readback accepts equivalent provider timezones and flags ignored durations", () => {
     const op: TaskOperation = {
       ...operation,

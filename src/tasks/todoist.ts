@@ -32,6 +32,9 @@ function normalizeTask(task: z.infer<typeof remoteTaskSchema>): ProviderTask {
     labels: task.labels,
     priority: task.priority,
     completed: task.checked,
+    ...(task.completed_count !== undefined
+      ? { completionCount: task.completed_count }
+      : {}),
     order: task.child_order,
     ...(task.duration !== undefined ? { duration: task.duration } : {}),
     due: task.due
@@ -79,6 +82,7 @@ const remoteTaskSchema = z.object({
   labels: z.array(z.string()),
   priority: z.number().int().min(1).max(4),
   checked: z.boolean(),
+  completed_count: z.number().int().nonnegative().optional(),
   child_order: z.number(),
   due: z
     .object({
@@ -186,8 +190,20 @@ export class TodoistProvider implements TaskProvider {
         command.args = { id: mutation.taskId, parent_id: mutation.parentId };
         break;
       case "complete":
-        command.type = "item_close";
-        command.args = { id: mutation.taskId };
+        command.type = operation.recurringCompletion
+          ? "item_update_date_complete"
+          : "item_close";
+        command.args = {
+          id: mutation.taskId,
+          ...(operation.recurringCompletion
+            ? {
+                is_forward: 1,
+                reset_subtasks: Number(
+                  operation.recurringCompletion.resetSubtasks,
+                ),
+              }
+            : {}),
+        };
         break;
       case "reopen":
         command.type = "item_uncomplete";
@@ -267,9 +283,25 @@ export class TodoistProvider implements TaskProvider {
 
   async read(): Promise<TaskSnapshot> {
     const user = userSchema.parse(await this.request("user"));
-    const [projects, tasks] = await Promise.all([
+    const [projects, tasks, settings] = await Promise.all([
       this.pages("projects", projectSchema),
       this.pages("tasks", remoteTaskSchema),
+      this.request(
+        "sync",
+        new URLSearchParams({
+          sync_token: "*",
+          resource_types: '["user_settings"]',
+        }),
+      ).then(
+        (value) =>
+          z
+            .object({
+              user_settings: z.object({
+                reset_recurring_subtasks: z.boolean(),
+              }),
+            })
+            .parse(value).user_settings,
+      ),
     ]);
     // User responses may include a token. Select only these explicit account fields.
     return {
@@ -278,6 +310,9 @@ export class TodoistProvider implements TaskProvider {
         id: user.id,
         name: user.full_name,
         timezone: user.tz_info.timezone,
+        preferences: {
+          resetRecurringSubtasks: settings.reset_recurring_subtasks,
+        },
         capabilities: {
           delete: true,
           ...(user.is_premium !== undefined

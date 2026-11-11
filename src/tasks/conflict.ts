@@ -87,7 +87,10 @@ export function reviewTaskConflict(
         !(
           key === "completed" &&
           operation.base?.due?.recurring &&
-          !sameTaskField(operation.base.due, current?.due, "due")
+          (operation.mutation.kind === "reopen" ||
+            operation.base.completionCount === undefined ||
+            operation.base.completionCount !== current?.completionCount ||
+            !sameTaskField(operation.base.due, current.due, "due"))
         ),
     };
   });

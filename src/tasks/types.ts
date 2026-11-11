@@ -16,6 +16,7 @@ export const taskSchema = z.object({
   labels: z.array(z.string()),
   priority: z.number().int().min(1).max(4),
   completed: z.boolean(),
+  completionCount: z.number().int().nonnegative().optional(),
   order: z.number(),
   duration: taskDurationSchema.nullable().optional(),
   due: z
@@ -34,6 +35,7 @@ export const taskSnapshotSchema = z.object({
     id: z.string().min(1),
     name: z.string(),
     timezone: z.string(),
+    preferences: z.object({ resetRecurringSubtasks: z.boolean() }).optional(),
     capabilities: z
       .object({
         duration: z.boolean().optional(),

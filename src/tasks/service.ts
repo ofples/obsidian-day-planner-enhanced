@@ -10,6 +10,7 @@ import { pendingTaskDeletion } from "./deletion-types";
 import {
   isOutstanding,
   operationTaskId,
+  sameTaskField,
   taskMutationSchema,
   type TaskMutation,
   type TaskOperation,
@@ -19,6 +20,7 @@ import { TaskRegistry, type TaskSource } from "./registry";
 import {
   TaskReadError,
   taskCacheSchema,
+  type ProviderTask,
   type TaskCache,
   type TaskProvider,
   type TaskSnapshot,
@@ -169,6 +171,7 @@ export class TaskService {
       base: import("./types").ProviderTask;
       provider: string;
       accountId: string;
+      reuseCompletion?: boolean;
     },
   ): Promise<TaskOperation> {
     const snapshot = this.cache.snapshot;
@@ -222,6 +225,15 @@ export class TaskService {
           null);
     if (mutation.kind !== "create" && !base && !intent?.base)
       throw new TaskReadError("Refresh this task before editing it.");
+    const savedBase = intent?.base ?? base;
+    if (
+      mutation.kind === "complete" &&
+      savedBase?.due?.recurring &&
+      savedBase.completionCount === undefined
+    )
+      throw new TaskReadError(
+        "Refresh this recurring task to load its occurrence before completing it.",
+      );
     const operation = await this.registry.change((state) => {
       if (intent) {
         const saved = state.operations.find((item) => item.id === intent.id);
@@ -235,6 +247,27 @@ export class TaskService {
               "The saved operation has different task fields. Review it before retrying.",
             );
           return saved;
+        }
+      }
+      if (mutation.kind === "complete" && savedBase?.due?.recurring) {
+        const pending = state.operations.find(
+          (item) =>
+            item.provider === snapshot.provider &&
+            item.accountId === snapshot.account.id &&
+            operationTaskId(item) === mutation.taskId &&
+            item.mutation.kind === "complete" &&
+            isOutstanding(item),
+        );
+        if (pending) {
+          if (
+            (!intent || intent.reuseCompletion) &&
+            pending.base?.completionCount === savedBase.completionCount &&
+            sameTaskField(pending.base?.due, savedBase.due, "due")
+          )
+            return pending;
+          throw new TaskReadError(
+            "Finish this task's saved recurring completion before completing another occurrence.",
+          );
         }
       }
       if (source) {
@@ -303,7 +336,14 @@ export class TaskService {
         provider: snapshot.provider,
         accountId: snapshot.account.id,
         mutation,
-        base: intent?.base ?? base,
+        base: savedBase,
+        recurringCompletion:
+          mutation.kind === "complete" && savedBase?.due?.recurring
+            ? {
+                resetSubtasks:
+                  snapshot.account.preferences?.resetRecurringSubtasks ?? false,
+              }
+            : undefined,
         status: "pending",
         attempts: 0,
         createdAt: new Date().toISOString(),
@@ -317,6 +357,19 @@ export class TaskService {
     this.publish();
     this.requestRefresh();
     return operation;
+  }
+
+  async complete(task: ProviderTask) {
+    const snapshot = get(this.state).snapshot;
+    if (!snapshot)
+      throw new TaskReadError("Refresh this task before completing it.");
+    return this.mutate({ kind: "complete", taskId: task.id }, undefined, {
+      id: crypto.randomUUID(),
+      base: structuredClone(task),
+      provider: snapshot.provider,
+      accountId: snapshot.account.id,
+      reuseCompletion: true,
+    });
   }
 
   async retryOperation(id: string) {

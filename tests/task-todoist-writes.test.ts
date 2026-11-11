@@ -27,14 +27,58 @@ const response = (json: unknown, status = 200) => ({
 beforeEach(() => vi.clearAllMocks());
 
 describe("Todoist UUID write commands", () => {
+  test.each([true, false])(
+    "recurring completion freezes reset-subtasks %j across replay",
+    async (resetSubtasks) => {
+      const op = operation({ kind: "complete", taskId: "task" });
+      op.recurringCompletion = { resetSubtasks };
+      vi.mocked(requestUrl).mockResolvedValue(
+        response({ sync_status: { [op.id]: "ok" } }),
+      );
+      const api = new TodoistProvider("credential");
+      await api.apply(op);
+      await api.apply(op);
+      const commands = vi
+        .mocked(requestUrl)
+        .mock.calls.map(([arg]) =>
+          JSON.parse(
+            new URLSearchParams((arg as { body: string }).body).get(
+              "commands",
+            )!,
+          ),
+        );
+      expect(commands[0]).toEqual([
+        {
+          uuid: op.id,
+          type: "item_update_date_complete",
+          args: {
+            id: "task",
+            is_forward: 1,
+            reset_subtasks: Number(resetSubtasks),
+          },
+        },
+      ]);
+      expect(commands[1]).toEqual(commands[0]);
+    },
+  );
   test("deletion uses item_delete with the same durable UUID on retry", async () => {
     const op = operation({ kind: "delete", taskId: "task" });
-    vi.mocked(requestUrl).mockResolvedValue(response({ sync_status: { [op.id]: "ok" } }));
+    vi.mocked(requestUrl).mockResolvedValue(
+      response({ sync_status: { [op.id]: "ok" } }),
+    );
     const api = new TodoistProvider("credential");
     await api.apply(op);
     await api.apply(op);
-    const commands = vi.mocked(requestUrl).mock.calls.map(([arg]) => JSON.parse(new URLSearchParams((arg as { body: string }).body).get("commands")!));
-    expect(commands[0]).toEqual([{ type: "item_delete", uuid: op.id, args: { id: "task" } }]);
+    const commands = vi
+      .mocked(requestUrl)
+      .mock.calls.map(([arg]) =>
+        JSON.parse(
+          new URLSearchParams((arg as { body: string }).body).get("commands")!,
+        ),
+      );
+    expect(commands[0]).toEqual([
+      { type: "item_delete", uuid: op.id, args: { id: "task" } },
+    ]);
     expect(commands[1]).toEqual(commands[0]);
   });
   test("schedule patches send the Sync duration object and can clear it explicitly", async () => {

@@ -78,6 +78,14 @@ Each case starts as planned. Mark a case passed only with the check date, exact 
 | A55 | US-06 | A remote edit during conflict resolution causes revalidation before the selected patch is applied | M4 |
 | A56 | US-10 | Unloading during backoff cancels the retry and prevents stale UI/cache publication | M1/M4 |
 
+## Recurring command groundwork
+
+Registry v11 backs up original v10 bytes before retaining occurrence-aware command metadata. Focused adapter, service, queue, operation, conflict, registry and schedule checks cover completion counters, stable occurrence keys during rescheduling, immutable reset preferences, duplicate offline requests, reserved schedule identities, stale displayed rows, lost responses across restart, malformed provider data and refreshed legacy snapshots. Completion readback requires one counter increment and the preserved repeat rule/timezone. A changed date alone fails verification. A final completed task can end the series. The ten-file subset has 162 passes.
+
+Disposable live free-account probes confirmed stable task IDs, advancing counters and an explicit provider undo restoring the earlier due value/counter. Activity evidence arrived after the immediate read. The tested completed-task endpoint interval contained no recurring fixture entry. The documented subtask-reset flag was accepted in both numeric and boolean forms, including an explicit next due value, while the checked child remained checked. Provider tree readback determines displayed child state. The parent and child were deleted and individually confirmed absent.
+
+Full validation has 974 passes and the inherited inclusive-last-day ICS timeout, with nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics and production build pass. This verifies command groundwork for A48–A50. Full occurrence history, local/calendar freezing, exact occurrence undo, independent children and M6 release acceptance remain pending.
+
 ## Failure-injection matrix
 
 Exercise each mutation at the boundaries before intent save, after intent save, after local write, after remote success with a lost response, after remote acknowledgment save, after Google write and before operation completion. Restart after every injected failure. Required outcomes are one task per create operation, one event per occurrence, preserved source text and a retriable or explicitly conflicted operation.

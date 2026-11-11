@@ -218,7 +218,9 @@ export function scheduleBlocksTask(operation: ScheduleOperation) {
 
 export function taskOccurrenceKey(task: ProviderTask) {
   return task.due?.recurring
-    ? JSON.stringify([task.due.date, task.due.text, task.due.timezone])
+    ? task.completionCount !== undefined
+      ? `recurring:${task.completionCount}`
+      : JSON.stringify([task.due.date, task.due.text, task.due.timezone])
     : "single";
 }
 

@@ -69,6 +69,7 @@ export const taskOperationSchema = z
     ]),
     remoteId: z.string().optional(),
     readback: taskSchema.optional(),
+    recurringCompletion: z.object({ resetSubtasks: z.boolean() }).optional(),
     deletionReadback: z.record(z.string(), taskSchema.nullable()).optional(),
     sourceUid: z.string().optional(),
     createdAt: z.iso.datetime(),
@@ -77,6 +78,17 @@ export const taskOperationSchema = z
     error: z.string().optional(),
     resolutionIds: z.array(z.uuid()).optional(),
   })
+  .refine(
+    (operation) =>
+      !operation.recurringCompletion ||
+      (operation.mutation.kind === "complete" &&
+        operation.base?.due?.recurring === true &&
+        operation.base.completionCount !== undefined),
+    {
+      message:
+        "Recurring completion commands retain their occurrence baseline.",
+    },
+  )
   .refine(
     (operation) =>
       operation.status !== "verified" ||
@@ -152,11 +164,26 @@ export function preflightOperation(
   if (mutation.kind === "delete")
     return sameDeletionTask(base, remote) ? "ready" : "conflict";
   if (
-    (mutation.kind === "complete" || mutation.kind === "reopen") &&
+    mutation.kind === "update" &&
+    mutation.changes.due !== undefined &&
     base.due?.recurring &&
-    !sameTaskField(base.due, remote.due, "due")
+    base.completionCount !== undefined &&
+    remote.completionCount !== base.completionCount
   )
     return "conflict";
+  if (
+    (mutation.kind === "complete" || mutation.kind === "reopen") &&
+    (base.due?.recurring || remote.due?.recurring)
+  )
+    if (
+      mutation.kind === "reopen" ||
+      base.completed ||
+      remote.completed ||
+      base.completionCount === undefined ||
+      remote.completionCount !== base.completionCount ||
+      !sameTaskField(base.due, remote.due, "due")
+    )
+      return "conflict";
   const changes = mutationFields(mutation);
   let changed = false;
   for (const [field, wanted] of Object.entries(changes)) {
@@ -179,7 +206,12 @@ export function matchesOperationResult(
   if (!remote || remote.id !== operationTaskId(operation)) return false;
   if (operation.mutation.kind === "complete" && operation.base?.due?.recurring)
     return (
-      remote.completed || !sameTaskField(operation.base.due, remote.due, "due")
+      operation.base.completionCount !== undefined &&
+      remote.completionCount === operation.base.completionCount + 1 &&
+      (remote.completed ||
+        (remote.due?.recurring === true &&
+          remote.due.text === operation.base.due.text &&
+          remote.due.timezone === operation.base.due.timezone))
     );
   return Object.entries(mutationFields(operation.mutation)).every(
     ([field, wanted]) => {

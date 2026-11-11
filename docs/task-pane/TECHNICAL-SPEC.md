@@ -117,6 +117,18 @@ Once task/note acknowledgment is durable, a Calendar-only retry allows a newer t
 
 Carry unfinished explicit event removals into every successor. When an untimed task is scheduled again, retire the former event and allocate a fresh calendar projection instead of reusing a deleted event's tombstone. Each removal remains retryable after a restart or later title edit. A failed successor-intent write preserves the original retry. Prepared note reservations end when their link is registered so an old pending export cannot claim a newer edited source.
 
+### Recurring command identity
+
+Retain Todoist's completion counter in the normalized task. A recurring occurrence key uses that counter, so changing its planned date retains the occurrence. Legacy cached tasks retain the earlier date-based key until a fresh snapshot supplies the counter. Completing a recurring task requires the refreshed counter. Date-changing commands compare it during preflight as well.
+
+The Tasks pane submits its displayed task baseline. Concurrent offline completion requests reuse one saved operation. Fresh preflight rejects a changed counter or due value. Successful recurring completion requires exactly one counter increment with the preserved recurrence rule/timezone, or a completed final task. An unrelated date move cannot satisfy completion readback. Ordinary reopen remains reserved for nonrecurring tasks.
+
+Registry v11 preserves exact earlier registry bytes before adding occurrence-aware completion payloads. Read the account's reset-subtasks preference from the user-settings resource and freeze it in the saved completion operation. Send the documented recurring command with its original UUID and preference on every uncertain retry. Read the full provider tree after acknowledgment. [Todoist API](https://developer.todoist.com/api/v1/)
+
+Live free-account probes incremented the counter while retaining the task ID. Explicit undo restored the earlier due value and counter. The documented reset flag was accepted with numeric and boolean values, including an explicit next due value, while the completed fixture child remained checked. Preserve that authoritative child result. The API's activity feed exposed completion evidence after a delay. The completed-task endpoint returned no recurring fixture entry in the tested interval.
+
+Occurrence history and undo will retain immutable pre-completion task, child, link, note and calendar identities independently of the active next occurrence. Journal local freezing and restoration through the existing note/calendar phases. Reserve historical sources during capture, and revalidate the exact occurrence before undo. A changed provider state or unavailable evidence requires an explicit recovery choice. Child restoration needs its own saved comparison if provider undo leaves child state unchanged.
+
 ## Scheduling and unscheduling
 
 Use the planner's pointer-to-date calculation, snapping, duration validation and note writer. The drag payload contains a short-lived local task key and an explicit versioned MIME type. Resolve the task again at drop time and reject another vault/account's payload. A text fallback inserts readable content only and cannot establish a link by itself.
