@@ -1,7 +1,44 @@
+import type { Nodes } from "mdast";
+
+import { fromMarkdown, toMarkdown } from "../mdast/mdast";
+import { getTimeRangeMatch, removeTimeRangeFromLine } from "../parser/parser";
+
 export interface SourceIdentity {
   path: string;
   raw: string;
   from: number;
+}
+
+/** A calendar move can change its root clock and serialize list indentation. */
+export function sameScheduledSource(old: SourceIdentity, next: SourceIdentity) {
+  const oldLine = old.raw.split(/\r?\n/)[0] ?? "";
+  const nextLine = next.raw.split(/\r?\n/)[0] ?? "";
+  if (!getTimeRangeMatch(oldLine) || !getTimeRangeMatch(nextLine)) return false;
+  const title = removeTimeRangeFromLine(oldLine);
+  if (title !== removeTimeRangeFromLine(nextLine)) return false;
+  // An unnamed time slot supplies no content evidence for a cross-note move.
+  if (
+    !title
+      .replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?/, "")
+      .replace(/#[\p{L}\p{M}\p{N}_/-]+|\^[\w-]+/gu, "")
+      .trim()
+  )
+    return false;
+  const normalized = (raw: string, line: string) =>
+    toMarkdown(fromMarkdown(title + raw.slice(line.length)));
+  return normalized(old.raw, oldLine) === normalized(next.raw, nextLine);
+}
+
+function listItemOffsets(raw: string) {
+  const offsets: number[] = [];
+  const pending: Nodes[] = [fromMarkdown(raw)];
+  while (pending.length) {
+    const node = pending.pop()!;
+    if (node.type === "listItem" && node.position?.start.offset !== undefined)
+      offsets.push(node.position.start.offset);
+    if ("children" in node) pending.push(...node.children.toReversed());
+  }
+  return offsets;
 }
 
 function containsSource(parent: SourceIdentity, child: SourceIdentity) {
@@ -70,15 +107,26 @@ export function resolveSourceIdentities<T extends SourceIdentity>(
     candidate.uid = uid;
     assigned.add(uid);
     const identity = previous[uid];
-    if (!options.preserveNested || identity?.raw !== candidate.raw) return;
-    // An exact whole-block match also proves every contained source offset.
+    if (!options.preserveNested || !identity) return;
+    const exact = identity.raw === candidate.raw;
+    if (!exact && !sameScheduledSource(identity, candidate)) return;
+    const oldOffsets = exact ? [] : listItemOffsets(identity.raw);
+    const newOffsets = exact ? [] : listItemOffsets(candidate.raw);
+    if (oldOffsets.length !== newOffsets.length) return;
+    // Equal complete subtrees prove child positions even after reindentation.
     for (const [nestedUid, nested] of missing()) {
       if (!containsSource(identity, nested)) continue;
+      const offset = nested.from - identity.from;
+      const nextOffset = exact
+        ? offset
+        : newOffsets[oldOffsets.indexOf(offset)];
+      if (nextOffset === undefined) continue;
       const child = candidates.find(
         (next) =>
           next.path === candidate.path &&
-          next.from === candidate.from + nested.from - identity.from &&
-          next.raw === nested.raw,
+          next.from === candidate.from + nextOffset &&
+          containsSource(candidate, next) &&
+          (!exact || next.raw === nested.raw),
       );
       if (!child) continue;
       if (child.uid && child.uid !== nestedUid)

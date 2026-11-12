@@ -26,6 +26,20 @@ const candidate = (value: LocalIdentity): IdentityCandidate => ({
 });
 
 describe("external calendar identity", () => {
+  test("a cross-day move with normalized nested indentation keeps its event identity", () => {
+    const old = {
+      ...block("Work"),
+      raw: "- [ ] 09:00 - 10:00 Work\n  - [ ] Child",
+    };
+    const next = candidate({
+      ...block("Work", 20, "10:00", "11:00"),
+      path: "Daily/2026-11-12.md",
+      raw: "- [ ] 10:00 - 11:00 Work\n    - [ ] Child",
+    });
+    resolveIdentities([next], { original: old });
+    expect(next.uid).toBe("original");
+  });
+
   test("reordering retains exact block identities", () => {
     const previous = { first: block("First"), second: block("Second", 40) };
     const next = [candidate(block("Second")), candidate(block("First", 50))];

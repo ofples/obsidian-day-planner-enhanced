@@ -2,6 +2,7 @@ import type { MarkdownView, Plugin } from "obsidian";
 import { get, type Writable } from "svelte/store";
 
 import type { AppStore } from "../redux/store";
+import type { TransactionWriter } from "../service/diff-writer";
 import type { DayPlannerSettings } from "../settings";
 
 import { TaskCapture } from "./capture";
@@ -13,6 +14,7 @@ export function createTaskCapture(
   service: TaskService,
   store: AppStore,
   settings: Writable<DayPlannerSettings>,
+  edits?: Pick<TransactionWriter, "isWriting" | "revision">,
 ) {
   const { workspace, vault } = plugin.app;
   const composing = new Set<Document>();
@@ -48,6 +50,7 @@ export function createTaskCapture(
     candidates: () =>
       Object.values(store.getState().tracker.captureEntries).flat(),
     ready: () => {
+      if (edits?.isWriting) return false;
       initiallyIndexed ||= vault
         .getMarkdownFiles()
         .every((file) =>
@@ -55,6 +58,7 @@ export function createTaskCapture(
         );
       return initiallyIndexed;
     },
+    revision: () => edits?.revision ?? 0,
     read: async (path) => {
       const file = vault.getFileByPath(path);
       return file ? vault.read(file) : null;

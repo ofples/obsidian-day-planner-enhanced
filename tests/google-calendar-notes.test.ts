@@ -12,7 +12,7 @@ const marker = `<!-- dp-gcal:${uid} -->`;
 const original = `- [x] 09:00 - 10:00 Work #work ${marker} ^anchor\r\n    - [ ] Nested [[Other]] ^child`;
 const sourcePath = "Daily/2026-11-11.md";
 
-function harness() {
+function harness(edits?: { isWriting: boolean; revision: number }) {
   const texts = new Map([
     [
       sourcePath,
@@ -82,6 +82,7 @@ function harness() {
     window.moment("2026-12-01").toISOString(),
     state,
     save,
+    edits,
   );
   return {
     texts,
@@ -101,6 +102,31 @@ function harness() {
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 describe("vault calendar adapter", () => {
+  test("native note writes invalidate calendar scan and mutation evidence", async () => {
+    const edits = { isWriting: true, revision: 1 };
+    const h = harness(edits);
+    await expect(h.notes.scan()).rejects.toThrow("current note edit");
+    expect(h.save).not.toHaveBeenCalled();
+    edits.isWriting = false;
+    edits.revision++;
+    const [block] = await h.notes.scan();
+    expect(await h.notes.isUnchanged(block!)).toBe(true);
+    edits.isWriting = true;
+    expect(await h.notes.isUnchanged(block!)).toBe(false);
+    edits.isWriting = false;
+    edits.revision++;
+    expect(await h.notes.isUnchanged(block!)).toBe(false);
+    expect(
+      await h.notes.canDelete(
+        { eventId: "event", path: sourcePath, base: block!.snapshot },
+        uid,
+        true,
+      ),
+    ).toBe(false);
+    await h.notes.scan();
+    expect(await h.notes.isUnchanged(block!)).toBe(true);
+  });
+
   test("preparing a projection exposes exact before/after bytes before applying its note write", async () => {
     const h = harness();
     const [block] = await h.notes.scan();

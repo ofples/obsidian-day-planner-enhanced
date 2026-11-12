@@ -3,6 +3,11 @@ import { isNotVoid } from "typed-assert";
 import { describe, expect, test } from "vitest";
 
 import type { EditableNestedListItem } from "../../src/service/list-item-entry-editor";
+import {
+  resolveSourceIdentities,
+  sameScheduledSource,
+} from "../../src/service/source-identity";
+import { parseCaptureCandidates } from "../../src/tasks/capture-parser";
 import { defaultSettingsForTests } from "../../src/settings";
 import type { EditableTimeBlock } from "../../src/time-block-types";
 import { EditMode } from "../../src/ui/hooks/use-edit/types";
@@ -135,7 +140,13 @@ describe("Editing", () => {
     });
 
     test("Moves a parent task with its nested subtree between notes", async () => {
-      const { editContext, moveCursorTo, vault, findByText } = await setUp({
+      const {
+        editContext,
+        moveCursorTo,
+        vault,
+        findByText,
+        transactionWriter,
+      } = await setUp({
         visibleDays: ["2025-07-28"],
         loadedFixtures: ["2025-07-28.md", "2025-07-19.md"],
         settings: {
@@ -143,6 +154,19 @@ describe("Editing", () => {
           sortTasksInPlanAfterEdit: true,
         },
       });
+
+      const before = vault.state.flatMap((file) =>
+        parseCaptureCandidates(file.path, file.contents),
+      );
+      const previous = Object.fromEntries(
+        before.map((candidate, index) => [String(index), candidate]),
+      );
+      const parentUid = Object.entries(previous).find(
+        ([, candidate]) => candidate.title === "Parent",
+      )![0];
+      const childUid = Object.entries(previous).find(
+        ([, candidate]) => candidate.title === "Child task",
+      )![0];
 
       editContext.handlers.handleGripMouseDown(
         findByText("Parent"),
@@ -154,6 +178,24 @@ describe("Editing", () => {
       await editContext.confirmEdit();
 
       expect(getPathToDiff(vault.initialState, vault.state)).toMatchSnapshot();
+      const moved = vault.state.flatMap((file) =>
+        parseCaptureCandidates(file.path, file.contents),
+      );
+      resolveSourceIdentities(moved, previous, {
+        duplicate: "Duplicate task source",
+        ambiguous: (path) => `Ambiguous in ${path}`,
+        matchers: [sameScheduledSource],
+        preserveNested: true,
+      });
+      expect(
+        moved.find((candidate) => candidate.uid === parentUid)?.path,
+      ).toContain("2025-07-19.md");
+      expect(
+        moved.find((candidate) => candidate.uid === childUid)?.path,
+      ).toContain("2025-07-19.md");
+      expect(transactionWriter.isWriting).toBe(false);
+      await transactionWriter.undo();
+      expect(getPathToDiff(vault.initialState, vault.state)).toEqual({});
     });
 
     test("Removes a parent task with its nested subtree", async () => {

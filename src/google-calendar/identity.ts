@@ -1,4 +1,7 @@
-import { resolveSourceIdentities } from "../service/source-identity";
+import {
+  resolveSourceIdentities,
+  sameScheduledSource,
+} from "../service/source-identity";
 
 import { sameSnapshot, type LocalIdentity } from "./types";
 
@@ -18,6 +21,7 @@ export function resolveIdentities(
     ambiguous: (path) => `Calendar links in ${path} require review.`,
     allowReplacement: true,
     matchers: [
+      sameScheduledSource,
       (old, next) =>
         old.path === next.path && sameSnapshot(old.snapshot, next.snapshot),
       (old, next) =>

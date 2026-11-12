@@ -171,23 +171,50 @@ function applyMdastUpdates(text: string, updates: MdastUpdate[]) {
 
 export class TransactionWriter {
   private readonly history: Array<Record<string, string>> = [];
+  private writes = 0;
+  revision = 0;
 
-  constructor(private readonly vaultFacade: VaultFacade) {}
+  constructor(
+    private readonly vaultFacade: Pick<VaultFacade, "editFile">,
+    private readonly onSettled?: () => void,
+  ) {}
+
+  get isWriting() {
+    return this.writes > 0;
+  }
+
+  private async writeAll(edits: (() => Promise<void>)[]) {
+    this.writes++;
+    this.revision++;
+    try {
+      // A failed file must not release the fence while another edit is pending.
+      const results = await Promise.allSettled(edits.map((edit) => edit()));
+      for (const result of results)
+        if (result.status === "rejected") throw result.reason;
+      return results.map(() => undefined);
+    } finally {
+      this.writes--;
+      this.revision++;
+      if (!this.isWriting) this.onSettled?.();
+    }
+  }
 
   writeTransaction = async (transaction: Transaction) => {
     const previousState: Record<string, string> = {};
 
-    const editPromises = transaction.map(({ path, updateFn }) =>
-      this.vaultFacade.editFile(path, (contents) => {
-        previousState[path] = contents;
+    const edits = transaction.map(
+      ({ path, updateFn }) =>
+        () =>
+          this.vaultFacade.editFile(path, (contents) => {
+            previousState[path] = contents;
 
-        return updateFn(contents);
-      }),
+            return updateFn(contents);
+          }),
     );
 
     this.history.push(previousState);
 
-    return Promise.all(editPromises);
+    return this.writeAll(edits);
   };
 
   undo = async () => {
@@ -197,11 +224,13 @@ export class TransactionWriter {
       throw new Error("No updates to revert");
     }
 
-    const editPromises = Object.entries(lastUpdate).map(([path, contents]) =>
-      this.vaultFacade.editFile(path, () => contents),
+    const edits = Object.entries(lastUpdate).map(
+      ([path, contents]) =>
+        () =>
+          this.vaultFacade.editFile(path, () => contents),
     );
 
-    return Promise.all(editPromises);
+    return this.writeAll(edits);
   };
 }
 

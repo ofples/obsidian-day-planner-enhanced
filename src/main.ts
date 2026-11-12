@@ -213,7 +213,9 @@ export default class DayPlanner extends Plugin {
       settings: initialSettings,
     });
     this.vaultFacade = new VaultFacade(vault, getTasksApi);
-    this.transactionWriter = new TransactionWriter(this.vaultFacade);
+    this.transactionWriter = new TransactionWriter(this.vaultFacade, () => {
+      void this.taskCapture?.scan().then(() => this.taskReconciler?.scan());
+    });
     this.undoNotice = new UndoNotice(this.transactionWriter.undo);
     this.workspaceFacade = new WorkspaceFacade(
       this.app.workspace,
@@ -285,6 +287,7 @@ export default class DayPlanner extends Plugin {
         this.taskService,
         store,
         this.settingsStore,
+        this.transactionWriter,
       );
       registerTaskCalendarDisplay(
         this,
@@ -350,6 +353,7 @@ export default class DayPlanner extends Plugin {
       this.periodicNotes,
       this.getSettings,
       store,
+      this.transactionWriter,
     );
     let calendarReady = false;
     try {

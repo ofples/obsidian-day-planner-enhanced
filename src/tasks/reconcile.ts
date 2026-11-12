@@ -498,6 +498,7 @@ export class TaskReconciler {
     const browser = get(this.service.state);
     return (
       !this.stopped &&
+      this.capture.ready() &&
       browser.writable &&
       browser.snapshot?.provider === snapshot.provider &&
       browser.snapshot.account.id === snapshot.account.id

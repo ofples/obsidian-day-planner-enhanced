@@ -103,6 +103,7 @@ export class GoogleCalendarSync {
     private readonly daily: PeriodicNotes,
     private readonly getSettings: () => DayPlannerSettings,
     private readonly store: AppStore,
+    private readonly edits?: { isWriting: boolean; revision: number },
   ) {}
 
   private get app(): App {
@@ -209,6 +210,7 @@ export class GoogleCalendarSync {
       timeMax,
       this.state,
       () => this.save(),
+      this.edits,
     );
     return { notes, timeMin, timeMax };
   }
@@ -220,7 +222,7 @@ export class GoogleCalendarSync {
       blocks: LocalBlock[],
     ) => Promise<T>,
   ): Promise<T> {
-    if (this.busy || this.stopped)
+    if (this.busy || this.stopped || this.edits?.isWriting)
       throw new Error(
         "Wait for the current calendar operation to finish, then retry scheduling.",
       );
@@ -410,6 +412,13 @@ export class GoogleCalendarSync {
 
   async run(automatic = false) {
     if (this.busy || this.stopped) return;
+    if (this.edits?.isWriting) {
+      if (!automatic)
+        new Notice(
+          "Wait for the current note edit to finish, then sync again.",
+        );
+      return;
+    }
     this.busy = true;
     try {
       const settings = this.getSettings();

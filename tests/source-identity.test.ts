@@ -4,6 +4,7 @@ import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 
 import {
   resolveSourceIdentities,
+  sameScheduledSource,
   type SourceIdentity,
 } from "../src/service/source-identity";
 
@@ -19,6 +20,69 @@ const options = {
 };
 
 describe("shared source identities", () => {
+  test("a moved and reserialized schedule preserves all child identities in order", () => {
+    const old =
+      "- [ ] 09:00 - 10:00 Work #todoist\n  - [ ] Same\n    - [ ] Deep\n  - [ ] Same";
+    const nextText =
+      "- [ ] 10:00 - 11:00 Work #todoist\n    - [ ] Same\n        - [ ] Deep\n    - [ ] Same";
+    const previous = Object.fromEntries(
+      parseCaptureCandidates("Old.md", old).map((candidate, index) => [
+        String(index),
+        candidate,
+      ]),
+    );
+    const next = parseCaptureCandidates("New.md", nextText);
+    resolveSourceIdentities(next, previous, {
+      ...options,
+      preserveNested: true,
+      matchers: [sameScheduledSource],
+    });
+    expect(next.map((candidate) => candidate.uid)).toEqual([
+      "0",
+      "1",
+      "2",
+      "3",
+    ]);
+  });
+
+  test.each([
+    [
+      "- [ ] 09:00 - 10:00 Work\n  - [ ] First",
+      "- [ ] 10:00 - 11:00 Work\n    - [ ] Changed",
+    ],
+    ["- [ ] 09:00 - 10:00 Work", "- [x] 10:00 - 11:00 Work"],
+    ["- [ ] 09:00 - 10:00 #work", "- [ ] 10:00 - 11:00 #work"],
+    ["- [ ] Work", "- [ ] 10:00 - 11:00 Work"],
+    [
+      "- [ ] 09:00 - 10:00 Work\n  - [ ] First\n  - [ ] Second",
+      "- [ ] 10:00 - 11:00 Work\n    - [ ] Second\n    - [ ] First",
+    ],
+  ])(
+    "different content supplies no cross-note identity evidence",
+    (old, next) => {
+      expect(
+        sameScheduledSource(
+          source("Old.md", old, 0),
+          source("New.md", next, 0),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  test("two equivalent moved blocks remain unassigned", () => {
+    const old = source("Old.md", "- [ ] 09:00 - 10:00 Work", 0);
+    const next = parseCaptureCandidates(
+      "New.md",
+      "- [ ] 10:00 - 11:00 Work\n\n- [ ] 11:00 - 12:00 Work",
+    );
+    resolveSourceIdentities(
+      next,
+      { old },
+      { ...options, matchers: [sameScheduledSource] },
+    );
+    expect(next.every((candidate) => !candidate.uid)).toBe(true);
+  });
+
   test("exact-only matching scopes known containers and leaves moved or edited sources unassigned", () => {
     const parent = "- [ ] Parent\n  - [ ] Same";
     const saved = parseCaptureCandidates("Known.md", parent);

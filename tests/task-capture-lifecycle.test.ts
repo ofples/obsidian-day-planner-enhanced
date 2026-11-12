@@ -15,6 +15,8 @@ const captured = vi.hoisted(() => ({
     | {
         stableMissing(): boolean;
         stable(candidate: CaptureCandidate): boolean;
+        ready(): boolean;
+        revision(): number;
       },
 }));
 vi.mock("../src/tasks/capture", () => ({
@@ -73,12 +75,23 @@ test("deferred Markdown tabs do not prevent source stability checks for loaded e
   const service = {
     state: writable({ snapshot: null, writable: false }),
   } as unknown as TaskService;
+  const edits = { isWriting: false, revision: 0 };
   createTaskCapture(
     plugin,
     service,
     makeStore({}),
     writable(defaultSettingsForTests),
+    edits,
   );
+  expect(captured.host!.ready()).toBe(true);
+  edits.isWriting = true;
+  edits.revision++;
+  expect(captured.host!.ready()).toBe(false);
+  expect(captured.host!.revision()).toBe(1);
+  edits.isWriting = false;
+  edits.revision++;
+  expect(captured.host!.ready()).toBe(true);
+  expect(captured.host!.revision()).toBe(2);
   const candidate = parseCaptureCandidates(
     "Tasks.md",
     "- [ ] Task #todoist",

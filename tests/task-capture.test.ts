@@ -98,6 +98,115 @@ async function setup(initial = "- [ ] Buy rice #todoist #karma") {
 }
 
 describe("tagged task capture", () => {
+  test("two missing clock variants reserve a moved block for identity review", async () => {
+    const h = await setup("- [ ] 09:00 - 10:00 Work #todoist");
+    await h.capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    const [uid, link] = Object.entries(h.service.registry.snapshot().links)[0]!;
+    await h.service.registry.change((state) => {
+      delete state.links[uid];
+      for (const [key, path, raw] of [
+        [uid, "Tasks.md", link.source.raw],
+        [
+          "other-missing",
+          "Other.md",
+          link.source.raw.replace("09:00 - 10:00", "11:00 - 12:00"),
+        ],
+      ] as const)
+        state.detached[key] = {
+          reason: "missing",
+          link: { ...link, source: { ...link.source, path, raw } },
+          operationId: crypto.randomUUID(),
+          detachedAt: snapshot.fetchedAt,
+        };
+    });
+    const moved = "- [ ] 10:00 - 11:00 Work #todoist";
+    h.host.candidates = () => parseCaptureCandidates("Moved.md", moved);
+    h.host.read = async () => moved;
+    await h.capture.scan();
+    expect(h.apply).toHaveBeenCalledTimes(1);
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(get(h.capture.state).identityIssues[0]?.uids).toEqual(
+      expect.arrayContaining([uid, "other-missing"]),
+    );
+    h.capture.stop();
+    h.service.stop();
+  });
+
+  test("a native edit invalidates a missing-source inventory read", async () => {
+    const h = await setup();
+    await h.capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    let revision = 0;
+    const host = { ...h.host, revision: () => revision };
+    const capture = new TaskCapture(h.service, host);
+    h.setText("");
+    host.read = async () => {
+      revision++;
+      return "";
+    };
+    await expect(capture.inspectCurrentIdentities()).rejects.toThrow(
+      "notes changed",
+    );
+    expect(Object.keys(h.service.registry.snapshot().links)).toHaveLength(1);
+    capture.stop();
+    h.capture.stop();
+    h.service.stop();
+  });
+
+  test.each([false, true])(
+    "a cross-note clock move keeps the same parent and child tasks after missing detachment %s",
+    async (detached) => {
+      const original =
+        "- [ ] 09:00 - 10:00 Work #todoist\n  - [ ] Same #todoist\n  - [ ] Same #todoist";
+      const moved =
+        "- [ ] 10:00 - 11:00 Work #todoist\n    - [ ] Same #todoist\n    - [ ] Same #todoist";
+      const h = await setup(original);
+      let path = "Tasks.md";
+      let text = original;
+      h.host.candidates = () => parseCaptureCandidates(path, text);
+      h.host.read = async () => text;
+      await h.capture.scan();
+      await h.service.refresh();
+      await h.capture.scan();
+      await h.service.refresh();
+      await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+      await h.service.refresh();
+      const links = h.service.registry.snapshot().links;
+      expect(Object.keys(links)).toHaveLength(3);
+      if (detached)
+        await h.service.registry.change((state) => {
+          for (const [uid, link] of Object.entries(state.links)) {
+            state.detached[uid] = {
+              reason: "missing",
+              link,
+              operationId: crypto.randomUUID(),
+              detachedAt: snapshot.fetchedAt,
+            };
+            delete state.links[uid];
+          }
+        });
+      path = "Moved.md";
+      text = moved;
+      const candidates = h.capture.inspectIdentities().candidates;
+      expect(candidates.map((candidate) => candidate.uid)).toEqual(
+        Object.keys(links),
+      );
+      await h.capture.scan();
+      await h.service.refresh();
+      expect(h.apply).toHaveBeenCalledTimes(3);
+      const restored = h.service.registry.snapshot().links;
+      expect(Object.keys(restored)).toEqual(Object.keys(links));
+      for (const [uid, link] of Object.entries(links))
+        expect(restored[uid]?.taskId).toBe(link.taskId);
+      expect(get(h.capture.state).issues).toEqual([]);
+      h.capture.stop();
+      h.service.stop();
+    },
+  );
+
   test("a re-opted source matching two retired identities stays ambiguous without creating a task", async () => {
     const h = await setup();
     await h.capture.scan();

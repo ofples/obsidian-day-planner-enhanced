@@ -2,6 +2,7 @@ import { TFile, type App } from "obsidian";
 
 import { getTimeRangeMatch } from "../parser/parser";
 import { checkboxRegExp, listTokenWithSpacesRegExp } from "../regexp";
+import type { TransactionWriter } from "../service/diff-writer";
 import type { PeriodicNotes } from "../service/periodic-notes";
 import { locateSource } from "../service/source-identity";
 import type { DayPlannerSettings } from "../settings";
@@ -68,6 +69,7 @@ function untrackedTasks(text: string) {
 export class ObsidianCalendarNotes implements CalendarNotes {
   private readonly missingPaths = new Set<string>();
   private scannedDocuments: Record<string, string> = {};
+  private scanRevision?: number;
 
   constructor(
     private readonly app: App,
@@ -77,9 +79,19 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     private readonly timeMax: string,
     private readonly state: CalendarSyncState,
     private readonly save: () => Promise<void>,
+    private readonly edits?: Pick<TransactionWriter, "isWriting" | "revision">,
   ) {}
 
+  private notesCurrent() {
+    return !this.edits?.isWriting && this.edits?.revision === this.scanRevision;
+  }
+
   async scan(): Promise<LocalBlock[]> {
+    this.scanRevision = this.edits?.revision;
+    if (!this.notesCurrent())
+      throw new Error(
+        "Wait for the current note edit to finish, then sync again.",
+      );
     await this.recoverMove();
     const candidates: IdentityCandidate[] = [];
     const scannedDocuments: Record<string, string> = {};
@@ -110,6 +122,10 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       if (text !== cleaned)
         edits.push({ path: file.path, before: text, after: cleaned });
     }
+    if (!this.notesCurrent())
+      throw new Error(
+        "The notes changed during calendar scanning. Sync again after the edit finishes.",
+      );
     const identities = { ...this.state.identities };
     for (const [uid, record] of Object.entries(this.state.records))
       identities[uid] ??= {
@@ -217,13 +233,15 @@ export class ObsidianCalendarNotes implements CalendarNotes {
   }
 
   async isUnchanged(block: LocalBlock) {
+    if (!this.notesCurrent()) return false;
     const file = this.app.vault.getAbstractFileByPath(block.path);
     if (!(file instanceof TFile)) return false;
     const text = await this.app.vault.read(file);
-    return this.locate(text, block) >= 0;
+    return this.notesCurrent() && this.locate(text, block) >= 0;
   }
 
   async canDelete(record: SyncRecord, uid: string, owned = false) {
+    if (!this.notesCurrent()) return false;
     if (!this.settings.googleCalendar.syncDeletions) return false;
     const identity = this.state.identities?.[uid];
     const before = this.state.documents?.[record.path];
@@ -289,7 +307,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       )
         return false;
     }
-    return (await this.app.vault.read(file)) === text;
+    return (await this.app.vault.read(file)) === text && this.notesCurrent();
   }
 
   async write(

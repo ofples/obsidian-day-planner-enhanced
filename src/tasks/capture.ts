@@ -3,6 +3,7 @@ import { get, writable } from "svelte/store";
 import {
   nativeSourceBlockId,
   resolveSourceIdentities,
+  sameScheduledSource,
 } from "../service/source-identity";
 
 import {
@@ -121,6 +122,7 @@ export class TaskCapture {
     private readonly host: {
       candidates(): CaptureCandidate[];
       ready?(): boolean;
+      revision?(): number;
       paths?(): string[];
       stableMissing?(): boolean;
       read(path: string): Promise<string | null>;
@@ -199,10 +201,18 @@ export class TaskCapture {
       },
     );
     const blocked = new Set<CaptureCandidate>();
-    for (const [uid, item] of detached) {
+    const restoresDetached = (
+      item: (typeof state.detached)[string],
+      candidate: TaskSource,
+    ) =>
+      restoresSource(item.link.source, candidate) ||
+      (item.reason === "missing" &&
+        sameScheduledSource(item.link.source, candidate));
+    for (const [uid, item] of detached.toSorted(
+      (a, b) => b[1].link.source.raw.length - a[1].link.source.raw.length,
+    )) {
       const matches = candidates.filter(
-        (candidate) =>
-          !candidate.uid && restoresSource(item.link.source, candidate),
+        (candidate) => !candidate.uid && restoresDetached(item, candidate),
       );
       if (!matches.length) continue;
       const competing = [
@@ -214,9 +224,29 @@ export class TaskCapture {
           )
           .map((value) => [value.uid, value.link] as const),
         ...detached.map(([id, value]) => [id, value.link] as const),
-      ].filter(([, link]) => restoresSource(link.source, matches[0]!));
-      if (matches.length === 1 && competing.length === 1) matches[0]!.uid = uid;
-      else {
+      ].filter(
+        ([, link]) =>
+          restoresSource(link.source, matches[0]!) ||
+          (item.reason === "missing" &&
+            sameScheduledSource(link.source, matches[0]!)),
+      );
+      if (matches.length === 1 && competing.length === 1) {
+        matches[0]!.uid = uid;
+        resolveSourceIdentities<TaskSource>(
+          candidates,
+          Object.fromEntries(
+            detached.map(([id, value]) => [id, value.link.source]),
+          ),
+          {
+            duplicate: "Several restored task sources claim the same block.",
+            ambiguous: (path) =>
+              `Restored task sources in ${path} require review.`,
+            matchers: [],
+            preserveNested: true,
+            exactOnly: true,
+          },
+        );
+      } else {
         for (const candidate of matches) blocked.add(candidate);
         if (
           !identityIssues.some(
@@ -244,6 +274,13 @@ export class TaskCapture {
       ...Object.entries(state.links).map(
         ([uid, link]) => [uid, link.source] as const,
       ),
+      ...detached
+        .filter(
+          ([uid, item]) =>
+            item.reason === "missing" &&
+            candidates.some((candidate) => candidate.uid === uid),
+        )
+        .map(([uid, item]) => [uid, item.link.source] as const),
     ]);
     for (const operation of state.schedules) {
       if (!["pending", "prepared"].includes(operation.phase)) continue;
@@ -271,6 +308,7 @@ export class TaskCapture {
           ambiguous: (path) =>
             `Task links are ambiguous in ${path}. Restore the previous task text before capturing more tasks there.`,
           matchers: [
+            sameScheduledSource,
             (old, next) => old.path === next.path && old.title === next.title,
           ],
           onAmbiguous: (path, uids) => {
@@ -367,6 +405,9 @@ export class TaskCapture {
   }
 
   async inspectCurrentIdentities() {
+    if (!this.ready())
+      throw new TaskReadError("Wait for the current note edit to finish.");
+    const revision = this.host.revision?.();
     const initial = this.inspectIdentities();
     const links = this.service.registry.snapshot().links;
     const assigned = new Set(
@@ -377,7 +418,7 @@ export class TaskCapture {
         ([uid, link]) => link.taskId && link.base && !assigned.has(uid),
       )
     )
-      return { ...initial, documents: undefined };
+      return { ...initial, documents: undefined, revision };
     const inventory = this.host.paths?.();
     const paths = [
       ...new Set([
@@ -402,6 +443,10 @@ export class TaskCapture {
     const candidates = [...documents].flatMap(([path, text]) =>
       text === null ? [] : parseCaptureCandidates(path, text),
     );
+    if (!this.ready() || this.host.revision?.() !== revision)
+      throw new TaskReadError(
+        "The notes changed while checking task links. Recheck after the edit finishes.",
+      );
     const inspection = this.inspectIdentities(candidates);
     if (unavailable.size || changedInventory) {
       const uncertain = new Set(
@@ -429,12 +474,14 @@ export class TaskCapture {
             })),
         ],
         documents: undefined,
+        revision,
       };
     }
-    return { ...inspection, documents };
+    return { ...inspection, documents, revision };
   }
 
   async readCurrentCandidates() {
+    const revision = this.host.revision?.();
     if (!this.ready())
       throw new TaskReadError(
         "Wait for note indexing before reviewing task identities.",
@@ -452,6 +499,7 @@ export class TaskCapture {
     }
     if (
       !this.ready() ||
+      this.host.revision?.() !== revision ||
       (this.host.paths &&
         JSON.stringify([...this.host.paths()].toSorted()) !==
           JSON.stringify(paths))
@@ -466,7 +514,11 @@ export class TaskCapture {
     uid: string,
     inspection: Awaited<ReturnType<TaskCapture["inspectCurrentIdentities"]>>,
   ) {
-    if (!this.ready() || this.host.stableMissing?.() === false)
+    if (
+      !this.ready() ||
+      inspection.revision !== this.host.revision?.() ||
+      this.host.stableMissing?.() === false
+    )
       return undefined;
     if (
       inspection.candidates.some((candidate) => candidate.uid === uid) ||
@@ -478,6 +530,8 @@ export class TaskCapture {
     const document = inspection.documents.get(link.source.path)!;
     if (
       (await this.host.read(link.source.path)) !== document ||
+      !this.ready() ||
+      inspection.revision !== this.host.revision?.() ||
       this.host.stableMissing?.() === false
     )
       return undefined;
@@ -489,6 +543,7 @@ export class TaskCapture {
   }
 
   async sourceIsCurrent(candidate: CaptureCandidate) {
+    const revision = this.host.revision?.();
     if (
       this.closed ||
       this.host.ready?.() === false ||
@@ -499,6 +554,8 @@ export class TaskCapture {
     return (
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Plugin unload can change this field while the document read is awaited.
       !this.closed &&
+      this.host.ready?.() !== false &&
+      this.host.revision?.() === revision &&
       this.host.stable(candidate) &&
       text?.slice(candidate.from, candidate.to) === candidate.raw
     );
