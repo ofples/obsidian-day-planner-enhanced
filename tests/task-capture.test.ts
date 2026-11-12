@@ -98,6 +98,39 @@ async function setup(initial = "- [ ] Buy rice #todoist #karma") {
 }
 
 describe("tagged task capture", () => {
+  test("a stale indexed source cannot make a restored block create a second task", async () => {
+    const oldText = "- [ ] 09:00 - 10:00 Work #todoist";
+    const nextText = "- [ ] 10:00 - 11:00 Work #todoist";
+    const h = await setup(oldText);
+    await h.capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    const [uid, link] = Object.entries(h.service.registry.snapshot().links)[0]!;
+    const capture = new TaskCapture(h.service, {
+      ...h.host,
+      candidates: () => [
+        ...parseCaptureCandidates("Tasks.md", oldText),
+        ...parseCaptureCandidates("Restored.md", nextText),
+      ],
+      paths: () => ["Tasks.md", "Restored.md"],
+      read: async (path) => (path === "Tasks.md" ? "" : nextText),
+    });
+    const inspection = await capture.inspectCurrentIdentities();
+    expect(inspection.candidates).toHaveLength(1);
+    expect(inspection.candidates[0]?.uid).toBe(uid);
+    await capture.scan();
+    await h.service.refresh();
+    expect(h.apply).toHaveBeenCalledTimes(1);
+    expect(h.service.registry.snapshot().links[uid]?.taskId).toBe(link.taskId);
+    expect(h.service.registry.snapshot().links[uid]?.source.path).toBe(
+      "Restored.md",
+    );
+    expect(get(capture.state).issues).toEqual([]);
+    capture.stop();
+    h.capture.stop();
+    h.service.stop();
+  });
+
   test("two missing clock variants reserve a moved block for identity review", async () => {
     const h = await setup("- [ ] 09:00 - 10:00 Work #todoist");
     await h.capture.scan();

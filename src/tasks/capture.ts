@@ -426,11 +426,21 @@ export class TaskCapture {
       initial.candidates.map((candidate) => candidate.uid),
     );
     if (
+      !initial.inventory.some(
+        (candidate) =>
+          !candidate.uid &&
+          !candidate.completed &&
+          candidate.status === " " &&
+          candidate.tags.some((tag) => tag.name.toLowerCase() === "todoist"),
+      ) &&
       !Object.entries(links).some(
         ([uid, link]) => link.taskId && link.base && !assigned.has(uid),
       )
     )
       return { ...initial, documents: undefined, revision };
+    // A move can be indexed one file at a time. Before creating any task,
+    // compare the complete current inventory so a stale old block cannot keep
+    // its UID while the restored/moved block is mistaken for a new task.
     const inventory = this.host.paths?.();
     const paths = [
       ...new Set([
