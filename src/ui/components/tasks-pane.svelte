@@ -65,6 +65,7 @@
   import TaskPanelOccurrence from "./task-panel-occurrence.svelte";
   import TaskPanelRoute from "./task-panel-route.svelte";
   import TaskPanelSchedule from "./task-panel-schedule.svelte";
+  import TaskPanelStateRestore from "./task-panel-state-restore.svelte";
 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Svelte validates annotated component props.
   let {
@@ -253,7 +254,9 @@
       $scheduleState.error,
   );
   const needsReview = $derived(
-    $reconcileState.issues.length > 0 ||
+    !!$browserState.restoration ||
+      !!$browserState.needsTrackingReadback ||
+      $reconcileState.issues.length > 0 ||
       pendingDeletions.some((item) => item.error) ||
       pendingOccurrences.some((item) => item.error || item.undo?.error) ||
       pendingIdentities.some((item) => item.error) ||
@@ -572,6 +575,7 @@
           class="task-icon-button"
           aria-label="Refresh tasks"
           disabled={!$browserState.connected ||
+            !!$browserState.restoration ||
             $browserState.loading ||
             ($browserState.retryAt ?? 0) > Date.now()}
           onclick={() => {
@@ -867,6 +871,21 @@
       </div>
     </details>{/if}
 
+  {#if $browserState.restoration}<div class="task-panel-form" role="status">
+      <p>Saved task tracking needs review.</p>
+      <button
+        class="task-text-button"
+        onclick={() => startAction({ kind: "state-recovery" })}
+        >Review tracking</button
+      >
+    </div>
+  {:else if $browserState.needsTrackingReadback}<div
+      class="task-panel-form"
+      role="status"
+    >
+      <p>Tracking restored. Refresh tasks to resume sync.</p>
+    </div>{/if}
+
   {#if $action}<div class="task-action-area">
       <button
         class="task-icon-button task-close-action"
@@ -875,7 +894,15 @@
         onclick={cancelAction}><X size={17} /></button
       >
       {#key $action}
-        {#if $action.kind === "connect"}<TaskPanelConnect
+        {#if $action.kind === "state-recovery"}<TaskPanelStateRestore
+            cancel={cancelAction}
+            saved={actionSaved($action)}
+            {service}
+            setBusy={(value: boolean) => {
+              busy = value;
+            }}
+          />
+        {:else if $action.kind === "connect"}<TaskPanelConnect
             cancel={cancelAction}
             saved={actionSaved($action)}
             {service}

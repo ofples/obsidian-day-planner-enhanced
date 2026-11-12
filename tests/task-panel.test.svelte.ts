@@ -118,7 +118,7 @@ function render(
     }),
   );
   flushSync();
-  return { target, state, action, mutate, fallbackSettings, capture, retrySchedule, openSavedNote };
+  return { target, state, action, service, mutate, fallbackSettings, capture, retrySchedule, openSavedNote };
 }
 
 function press(element: EventTarget, key: string, isComposing = false) {
@@ -1310,6 +1310,78 @@ describe("custom Tasks panel", () => {
       h.target.querySelector<HTMLInputElement>('[aria-label="Task title"]')
         ?.value,
     ).toBe("Shopping");
+  });
+
+  function stateRestoreFixture(canRestore = true, readError?: Error) {
+    const h = render();
+    const review = { fingerprint: "a".repeat(64), loaded: { readable: true, version: 19, namespace: "vault", commands: 1, links: 1 }, saved: { readable: true, version: 19, namespace: "vault", commands: 3, links: 2 }, canRestore };
+    const reviewRestoration = readError ? vi.fn().mockRejectedValue(readError) : vi.fn().mockResolvedValue(review);
+    const restoreTracking = vi.fn<TaskService["restoreTracking"]>().mockResolvedValue({ kind: "saved" });
+    Object.assign(h.service, { registry: { reviewRestoration }, restoreTracking });
+    h.state.update(state => ({ ...state, writable: false, restoration: review }));
+    flushSync();
+    Array.from(h.target.querySelectorAll<HTMLButtonElement>("button")).find(button => button.textContent === "Review tracking")!.click();
+    flushSync();
+    return { ...h, review, reviewRestoration, restoreTracking };
+  }
+
+  test("tracking repair is reachable while cached task writes are held and Cancel keeps recovery visible", async () => {
+    const h = stateRestoreFixture();
+    await vi.waitFor(() => expect(h.target.querySelector('[aria-label="Saved tracking"]')?.textContent).toContain("3 saved commands"));
+    expect(h.target.querySelector<HTMLButtonElement>('[aria-label="Refresh tasks"]')?.disabled).toBe(true);
+    const form = h.target.querySelector('form[aria-label="Restore saved task tracking"]')!;
+    expect(form.querySelector("details")?.textContent).toContain("separate checkpoint");
+    Array.from(form.querySelectorAll<HTMLButtonElement>("button")).find(button => button.textContent === "Cancel")!.click();
+    flushSync();
+    expect(get(h.action)).toBeNull();
+    expect(h.target.textContent).toContain("Saved task tracking needs review");
+    expect(h.restoreTracking).not.toHaveBeenCalled();
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
+  test("tracking repair refreshes changed comparisons and holds close and Escape during persistence", async () => {
+    const h = stateRestoreFixture();
+    await vi.waitFor(() => expect(h.target.querySelector('form button[type="submit"]')).not.toBeNull());
+    let finish!: (result: Awaited<ReturnType<TaskService["restoreTracking"]>>) => void;
+    h.restoreTracking.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const form = h.target.querySelector("form")!;
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(h.restoreTracking).toHaveBeenCalledOnce());
+    press(form, "Escape");
+    expect(get(h.action)?.kind).toBe("state-recovery");
+    expect(h.target.querySelector<HTMLButtonElement>('[aria-label="Close task form"]')?.disabled).toBe(true);
+    finish({ kind: "changed", review: { ...h.review, fingerprint: "b".repeat(64), saved: { ...h.review.saved, commands: 4 } } });
+    await vi.waitFor(() => expect(form.textContent).toContain("tracking files changed"));
+    expect(form.textContent).toContain("4 saved commands");
+    expect(h.target.querySelector<HTMLButtonElement>('[aria-label="Close task form"]')?.disabled).toBe(false);
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(get(h.action)).toBeNull());
+    expect(h.restoreTracking).toHaveBeenLastCalledWith(expect.objectContaining({ fingerprint: "b".repeat(64) }));
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
+  test("unsupported tracking comparisons hold confirmation and review loading errors can retry", async () => {
+    const blocked = stateRestoreFixture(false);
+    await vi.waitFor(() => expect(blocked.target.querySelector('form button[type="submit"]')?.hasAttribute("disabled")).toBe(true));
+    blocked.target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    expect(blocked.restoreTracking).not.toHaveBeenCalled();
+    const h = stateRestoreFixture(true, new Error("Tracking temporarily unavailable"));
+    await vi.waitFor(() => expect(h.target.textContent).toContain("Tracking temporarily unavailable"));
+    h.reviewRestoration.mockResolvedValue(h.review);
+    Array.from(h.target.querySelectorAll<HTMLButtonElement>("button")).find(button => button.textContent === "Retry review")!.click();
+    await vi.waitFor(() => expect(h.target.querySelector('[aria-label="Saved tracking"]')?.textContent).toContain("3 saved commands"));
+    expect(h.restoreTracking).not.toHaveBeenCalled();
+  });
+
+  test("failed tracking confirmation remains retryable", async () => {
+    const h = stateRestoreFixture();
+    await vi.waitFor(() => expect(h.target.querySelector('form button[type="submit"]')).not.toBeNull());
+    h.restoreTracking.mockRejectedValueOnce(new Error("Backup unavailable"));
+    h.target.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(h.target.textContent).toContain("Backup unavailable"));
+    expect(get(h.action)?.kind).toBe("state-recovery");
+    expect(h.target.querySelector<HTMLButtonElement>('form button[type="submit"]')?.disabled).toBe(false);
+    expect(h.mutate).not.toHaveBeenCalled();
   });
 
   test("multiple queued changes to one task share one collapsed review count", () => {

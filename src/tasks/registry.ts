@@ -12,6 +12,7 @@ import {
   taskProjectionSchema,
 } from "./schedule-types";
 import { taskSourceSchema, taskLinkSchema } from "./source";
+import { TaskStateJournal, type TaskStateRestoreReview } from "./state-journal";
 import { taskSchema, type TaskStorage } from "./types";
 
 export { taskSourceSchema, type TaskSource } from "./source";
@@ -109,17 +110,53 @@ export class TaskRegistry {
   private state!: TaskRegistryState;
   private lastSaved: string | null = null;
   private tail: Promise<void> = Promise.resolve();
+  private readonly journal: TaskStateJournal;
 
   constructor(
     private readonly storage: Pick<
       TaskStorage,
-      "readState" | "writeState" | "backupState"
+      | "readState"
+      | "writeState"
+      | "backupState"
+      | "readStateCheckpoint"
+      | "writeStateCheckpoint"
     >,
     private readonly namespace: string,
-  ) {}
+  ) {
+    this.journal = new TaskStateJournal(storage, namespace, 19, (content) => {
+      const stored: unknown = JSON.parse(content);
+      const legacy = legacyRegistrySchema.safeParse(stored);
+      const state = legacy.success
+        ? legacy.data
+        : taskRegistrySchema.parse(stored);
+      if (state.namespace !== namespace)
+        throw new Error(
+          "Task checkpoint contains tracking for another vault. Restore its matching files.",
+        );
+    });
+  }
+
+  get restoration() {
+    return this.journal.restoration;
+  }
+
+  get needsReadback() {
+    return this.journal.needsReadback;
+  }
+
+  acknowledgeReadback() {
+    const operation = this.tail.then(() =>
+      this.journal.acknowledgeReadback(this.lastSaved),
+    );
+    this.tail = operation.then(
+      () => {},
+      () => {},
+    );
+    return operation;
+  }
 
   async initialize() {
-    this.lastSaved = await this.storage.readState();
+    this.lastSaved = await this.journal.load();
     const stored: unknown =
       this.lastSaved === null ? null : JSON.parse(this.lastSaved);
     const legacy = legacyRegistrySchema.safeParse(stored);
@@ -161,13 +198,33 @@ export class TaskRegistry {
       throw new Error(
         "Task registry belongs to another vault. Restore its matching cache.",
       );
+    await this.journal.acknowledge(this.lastSaved);
+    if (this.journal.needsRestoration) return;
     if (legacy.success && this.lastSaved !== null)
       await this.storage.backupState?.(this.lastSaved, legacy.data.version);
-    if (this.lastSaved === null || legacy.success) await this.change(() => {});
+    if (this.lastSaved === null || legacy.success)
+      await this.persist(this.state);
   }
 
   snapshot() {
     return structuredClone(this.state);
+  }
+
+  reviewRestoration() {
+    return this.journal.reviewRestoration();
+  }
+
+  restoreTracking(review: TaskStateRestoreReview) {
+    const operation = this.tail.then(async () => {
+      const result = await this.journal.restore(review);
+      if (result.kind === "saved") await this.initialize();
+      return result;
+    });
+    this.tail = operation.then(
+      () => {},
+      () => {},
+    );
+    return operation;
   }
 
   updateOperation(id: string, patch: Partial<TaskOperation>) {
@@ -183,19 +240,12 @@ export class TaskRegistry {
 
   change<T>(update: (state: TaskRegistryState) => T): Promise<T> {
     const operation = this.tail.then(async () => {
-      if ((await this.storage.readState()) !== this.lastSaved)
-        throw new Error(
-          "Task state changed in another session. Reopen this vault before syncing.",
-        );
+      if (this.needsReadback)
+        throw new Error("Refresh tasks before changing restored tracking.");
+      await this.journal.check(this.lastSaved);
       const state = this.snapshot();
       const result = update(state);
-      const validated = taskRegistrySchema.parse(state);
-      const serialized = JSON.stringify(validated);
-      if (serialized !== this.lastSaved) {
-        await this.storage.writeState(serialized);
-        this.lastSaved = serialized;
-      }
-      this.state = validated;
+      await this.persist(state);
       return result;
     });
     this.tail = operation.then(
@@ -203,5 +253,15 @@ export class TaskRegistry {
       () => {},
     );
     return operation;
+  }
+
+  private async persist(state: TaskRegistryState) {
+    const validated = taskRegistrySchema.parse(state);
+    const serialized = JSON.stringify(validated);
+    if (serialized !== this.lastSaved) {
+      await this.journal.write(this.lastSaved, serialized);
+      this.lastSaved = serialized;
+    }
+    this.state = validated;
   }
 }

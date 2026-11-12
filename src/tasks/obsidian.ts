@@ -7,6 +7,7 @@ export function createTaskService(plugin: Plugin) {
   const path = `${plugin.manifest.dir ?? `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}`}/task-cache.json`;
   const adapter = plugin.app.vault.adapter;
   const statePath = path.replace(/task-cache\.json$/, "task-state.json");
+  const checkpointPath = statePath.replace(/\.json$/, "-checkpoint.json");
   const secrets = Reflect.get(plugin.app, "secretStorage") as
     | App["secretStorage"]
     | undefined;
@@ -18,6 +19,11 @@ export function createTaskService(plugin: Plugin) {
       readState: async () =>
         (await adapter.exists(statePath)) ? adapter.read(statePath) : null,
       writeState: (content) => adapter.write(statePath, content),
+      readStateCheckpoint: async () =>
+        (await adapter.exists(checkpointPath))
+          ? adapter.read(checkpointPath)
+          : null,
+      writeStateCheckpoint: (content) => adapter.write(checkpointPath, content),
       backupState: async (content, version) => {
         const digest = await crypto.subtle.digest(
           "SHA-256",
@@ -31,8 +37,12 @@ export function createTaskService(plugin: Plugin) {
           /\.json$/,
           `-v${version}-${hash}.backup.json`,
         );
-        if (!(await adapter.exists(backupPath)))
-          await adapter.write(backupPath, content);
+        if (await adapter.exists(backupPath)) {
+          if ((await adapter.read(backupPath)) !== content)
+            throw new Error(
+              "The saved task tracking backup changed. Preserve it before retrying.",
+            );
+        } else await adapter.write(backupPath, content);
       },
       getSecret: (key) => secrets?.getSecret(key) ?? null,
       setSecret: (key, value) => {

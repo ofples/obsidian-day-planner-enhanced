@@ -28,6 +28,7 @@ import {
 } from "./operations";
 import { pendingSnapshot, TaskQueue } from "./queue";
 import { TaskRegistry, type TaskSource } from "./registry";
+import type { TaskStateRestoreReview } from "./state-journal";
 import {
   TaskReadError,
   taskCacheSchema,
@@ -48,6 +49,8 @@ export interface TaskBrowserState {
   operations: TaskOperation[];
   completed: import("./types").ProviderTask[];
   writable: boolean;
+  restoration?: TaskStateRestoreReview | null;
+  needsTrackingReadback?: boolean;
   aliases: Record<string, string>;
   occurrences?: TaskOccurrenceRecord[];
   identityDecisions?: import("./identity-types").TaskIdentityDecisionView[];
@@ -71,6 +74,7 @@ export class TaskService {
   private closed = false;
   private canWrite = false;
   private refreshAgain = false;
+  private stopRestoration?: () => void;
   registry!: TaskRegistry;
   private queue!: TaskQueue;
 
@@ -101,6 +105,10 @@ export class TaskService {
     this.registry = new TaskRegistry(this.storage, this.cache.namespace);
     await this.registry.initialize();
     this.queue = new TaskQueue(this.registry, () => this.publish());
+    this.stopRestoration?.();
+    this.stopRestoration = this.registry.restoration.subscribe(() =>
+      this.publish(),
+    );
     const token = this.storage.getSecret(this.secretKey());
     this.canWrite = Boolean(token && this.provider(token).apply);
     this.publish({
@@ -178,7 +186,13 @@ export class TaskService {
             ...record,
             cancellable: identityDecisionCanCancel(registry, record),
           })),
-        writable: this.canWrite && current.connected,
+        writable:
+          this.canWrite &&
+          current.connected &&
+          !get(this.registry.restoration) &&
+          !this.registry.needsReadback,
+        restoration: get(this.registry.restoration),
+        needsTrackingReadback: this.registry.needsReadback,
         aliases: Object.fromEntries(
           owned
             .filter(
@@ -189,6 +203,15 @@ export class TaskService {
         ),
       };
     });
+  }
+
+  async restoreTracking(review: TaskStateRestoreReview) {
+    if (this.closed)
+      throw new Error("Reopen Tasks before repairing saved tracking.");
+    const result = await this.registry.restoreTracking(review);
+    this.publish();
+    if (result.kind === "saved") await this.refresh();
+    return result;
   }
 
   async mutate(
@@ -888,6 +911,8 @@ export class TaskService {
       if (!this.isCurrent(generation)) return;
       this.storage.setSecret(this.secretKey(), token);
       this.cache = cache;
+      if (this.registry.needsReadback && !get(this.registry.restoration))
+        await this.registry.acknowledgeReadback();
       this.canWrite = Boolean(this.provider(token).apply);
       this.publish({ connected: true, loading: false, error: "" });
       this.refreshAgain ||= this.registry
@@ -908,6 +933,7 @@ export class TaskService {
 
   refresh(): Promise<void> {
     if (this.closed) return Promise.resolve();
+    if (get(this.registry.restoration)) return Promise.resolve();
     if (this.pending) return this.pending;
     const token = this.storage.getSecret(this.secretKey());
     if (!token) return Promise.resolve();
@@ -940,6 +966,15 @@ export class TaskService {
         throw new Error(
           "This credential now belongs to another account. Reconnect to choose that account.",
         );
+      if (this.registry.needsReadback) {
+        const cache = { ...this.cache, snapshot };
+        await this.save(cache);
+        if (!this.isCurrent(generation)) return;
+        this.cache = cache;
+        await this.registry.acknowledgeReadback();
+        if (!this.isCurrent(generation)) return;
+        this.publish();
+      }
       snapshot = await this.queue.run(provider, snapshot, () =>
         this.isCurrent(generation),
       );
@@ -984,6 +1019,8 @@ export class TaskService {
   }
 
   stop() {
+    this.stopRestoration?.();
+    this.stopRestoration = undefined;
     this.closed = true;
     this.generation++;
     this.state.update((state) => ({

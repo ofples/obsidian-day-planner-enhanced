@@ -79,6 +79,8 @@ export interface TaskStorage {
   readState(): Promise<string | null>;
   writeState(content: string): Promise<void>;
   backupState?(content: string, version: number): Promise<void>;
+  readStateCheckpoint?(): Promise<string | null>;
+  writeStateCheckpoint?(content: string): Promise<void>;
   getSecret(key: string): string | null;
   setSecret(key: string, value: string): void;
 }

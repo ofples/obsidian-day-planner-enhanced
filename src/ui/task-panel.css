@@ -965,6 +965,37 @@
   font-size: 14px;
 }
 
+.dp-task-panel .task-state-summary {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+
+  background: var(--tp-surface);
+  border: 1px solid var(--tp-border);
+  border-radius: 7px;
+}
+
+.dp-task-panel .task-state-summary h4 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dp-task-panel .task-state-summary p {
+  margin: 0;
+  font-size: 11px;
+  color: var(--tp-muted);
+}
+
+.dp-task-panel .task-state-help {
+  font-size: 11px;
+  color: var(--tp-muted);
+}
+
+.dp-task-panel .task-state-help summary {
+  cursor: pointer;
+}
+
 .dp-task-panel .task-form-context {
   font-size: 11px;
   color: var(--tp-muted);

@@ -8,6 +8,7 @@ export type TaskPanelAction =
   | { kind: "connect" }
   | { kind: "settings" }
   | { kind: "calendars" }
+  | { kind: "state-recovery" }
   | { kind: "delete"; task: ProviderTask; replaces?: string }
   | { kind: "deleted-record"; id: string }
   | { kind: "occurrence"; id: string }
