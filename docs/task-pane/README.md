@@ -4,6 +4,8 @@ The Tasks pane connects Todoist tasks to daily-note schedules and the existing G
 
 The production baseline started at `82ae46ff` on `feat/google-calendar-sync` and includes the installed rename/deletion hotfixes through `87de378b`. Feature development runs on `feat/task-pane-todoist`, which includes those hotfixes. The baseline checkout remains available for hotfixes.
 
+The integrated build `58ee62e3` is installed and connected in the working vault. Open Show tasks from the command palette or use the Tasks ribbon button. Current verification and external limits are recorded in ACCEPTANCE.md.
+
 ## Design package
 
 - [User stories and screen behavior](USER-STORIES.md)
