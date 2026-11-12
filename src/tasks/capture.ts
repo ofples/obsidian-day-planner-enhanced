@@ -177,6 +177,27 @@ export class TaskCapture {
     const detached = Object.entries(state.detached).filter(
       ([, item]) => !item.restoredAt && item.reason !== "retired",
     );
+    resolveSourceIdentities<TaskSource>(
+      candidates,
+      Object.fromEntries([
+        ...Object.entries(state.localSources).map(
+          ([uid, value]) => [uid, value.source] as const,
+        ),
+        ...historical.map(({ uid, link }) => [uid, link.source] as const),
+        ...Object.entries(state.links).map(
+          ([uid, link]) => [uid, link.source] as const,
+        ),
+        ...detached.map(([uid, value]) => [uid, value.link.source] as const),
+      ]),
+      {
+        duplicate:
+          "Several known task sources claim the same note block. Review their source identities.",
+        ambiguous: (path) => `Task sources in ${path} require review.`,
+        matchers: [],
+        preserveNested: true,
+        exactOnly: true,
+      },
+    );
     const blocked = new Set<CaptureCandidate>();
     for (const [uid, item] of detached) {
       const matches = candidates.filter(

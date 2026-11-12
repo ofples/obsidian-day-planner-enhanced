@@ -49,6 +49,7 @@ export function resolveSourceIdentities<T extends SourceIdentity>(
     matchers: ((old: T, next: T) => boolean)[];
     allowReplacement?: boolean;
     preserveNested?: boolean;
+    exactOnly?: boolean;
     onAmbiguous?: (path: string, uids: string[]) => void;
   },
 ): void {
@@ -98,9 +99,14 @@ export function resolveSourceIdentities<T extends SourceIdentity>(
         assign(uid, candidate);
     }
   };
-  if (options.preserveNested) {
+  if (options.preserveNested)
     for (const candidate of candidates)
       if (candidate.uid) assign(candidate.uid, candidate);
+  if (options.exactOnly) {
+    matchUnique((old, next) => old.path === next.path && old.raw === next.raw);
+    return;
+  }
+  if (options.preserveNested) {
     // Resolve unique containers before equal child text can match by list order.
     matchUnique((old, next) => old.path === next.path && old.raw === next.raw);
     matchUnique((old, next) => old.raw === next.raw);

@@ -19,6 +19,33 @@ const options = {
 };
 
 describe("shared source identities", () => {
+  test("exact-only matching scopes known containers and leaves moved or edited sources unassigned", () => {
+    const parent = "- [ ] Parent\n  - [ ] Same";
+    const saved = parseCaptureCandidates("Known.md", parent);
+    const previous = {
+      parent: saved[0]!,
+      child: saved[1]!,
+      moving: source("Old.md", "- [ ] Moving", 0),
+      edited: source("Edited.md", "- [ ] Original", 0),
+    };
+    const candidates = [
+      ...parseCaptureCandidates("Known.md", parent),
+      ...parseCaptureCandidates("New.md", "- [ ] Moving"),
+      ...parseCaptureCandidates("Edited.md", "- [ ] Changed"),
+    ];
+    resolveSourceIdentities(candidates, previous, {
+      ...options,
+      preserveNested: true,
+      exactOnly: true,
+    });
+    expect(candidates.map((candidate) => candidate.uid)).toEqual([
+      "parent",
+      "child",
+      undefined,
+      undefined,
+    ]);
+  });
+
   test.each(["reorder", "move", "preassigned", "partial-edit"])(
     "nested identities follow exact parent blocks through %s",
     (scenario) => {

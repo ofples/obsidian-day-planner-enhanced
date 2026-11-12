@@ -354,6 +354,76 @@ describe("tagged task capture", () => {
     h.service.stop();
   });
 
+  test("a deleted identical tree cannot reserve the surviving parent's proven nested source", async () => {
+    const raw = "- [ ] Parent #todoist #karma\n  - [ ] Same child";
+    const h = await setup(raw);
+    await h.capture.scan();
+    await h.service.refresh();
+    const [uid, link] = Object.entries(h.service.registry.snapshot().links)[0]!;
+    const child = parseCaptureCandidates("Tasks.md", raw)[1]!,
+      childTask = {
+        ...link.base!,
+        id: "surviving-child",
+        title: "Same child",
+        parentId: link.taskId,
+      };
+    await h.service.registry.change((state) => {
+      state.links.child = {
+        ...link,
+        taskId: childTask.id,
+        base: childTask,
+        source: child,
+      };
+      const deletedRoot = {
+        ...link,
+        taskId: "deleted-parent",
+        base: { ...link.base!, id: "deleted-parent" },
+        source: { ...link.source, path: "Removed.md" },
+      };
+      const deletedChild = {
+        ...link,
+        taskId: "deleted-child",
+        base: { ...childTask, id: "deleted-child", parentId: "deleted-parent" },
+        source: { ...child, path: "Removed.md" },
+      };
+      for (const [key, saved] of [
+        ["old-root", deletedRoot],
+        ["old-child", deletedChild],
+      ] as const)
+        state.detached[key] = {
+          reason: "deleted",
+          deletionId: crypto.randomUUID(),
+          operationId: crypto.randomUUID(),
+          link: saved,
+          detachedAt: snapshot.fetchedAt,
+        };
+    });
+    const local = raw.replace(" #todoist", "");
+    const capture = new TaskCapture(h.service, {
+      ...h.host,
+      candidates: () => [
+        ...h.host.candidates(),
+        ...parseCaptureCandidates("Removed.md", local),
+      ],
+      paths: () => ["Tasks.md", "Removed.md"],
+      read: async (path) => (path === "Removed.md" ? local : h.host.read()),
+    });
+    await capture.scan();
+    expect(get(capture.state).issues).toEqual([]);
+    expect(
+      capture.candidates().find((source) => source.uid === uid)?.path,
+    ).toBe("Tasks.md");
+    expect(
+      capture.candidates().find((source) => source.uid === "child")?.path,
+    ).toBe("Tasks.md");
+    expect(h.service.registry.snapshot().links.child?.taskId).toBe(
+      "surviving-child",
+    );
+    expect(h.apply).toHaveBeenCalledOnce();
+    capture.stop();
+    h.service.stop();
+  });
+
   test("ambiguous note edits preserve links and allow capture in another note", async () => {
     const h = await setup("- [ ] First #todoist\n- [ ] Second #todoist");
     await h.capture.scan();
