@@ -35,6 +35,8 @@ Deleting a linked note block detaches its task link after you leave Markdown edi
 
 Todoist duration sync depends on its Pro or Business entitlement. Scheduling retains full time ranges in Obsidian and Google Calendar for every account. Sync schedule start to task date in Calendar feeds controls the provider date update. Provider duration synchronizes when the account supports it. [Todoist duration availability](https://www.todoist.com/help/todoist/features/set-a-task-duration-L1kYkZv8d)
 
+New Google exports follow the existing Google Calendar date window. A schedule outside that window stays saved locally and in Todoist with its calendar phase available for retry. Adjust Days to sync in the past or Days to sync ahead in Google Calendar settings and retry the schedule. Existing linked events retain their identity when moved outside the current window.
+
 ## Recurring tasks and recovery
 
 Completing a recurring task saves its checked schedule under Completed occurrences and refreshes the next Todoist occurrence. Schedule that next occurrence to create its own note/calendar identity. Open a completed occurrence to inspect its saved task and subtasks or navigate to its note. Undo this completion opens a comparison before Confirm undo. The historical root becomes active and unchecked, subtasks use their current Todoist state, and following schedules become local checklists with their calendar blocks retained. Cancel closes the comparison. Pending recovery exposes retry and safe cancellation controls.

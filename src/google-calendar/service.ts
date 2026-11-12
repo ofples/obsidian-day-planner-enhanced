@@ -247,6 +247,20 @@ export class GoogleCalendarSync {
     await this.run(true);
     if (this.lastError) throw new Error(this.lastError);
     const record = this.state.records[uid];
+    const config = this.getSettings().googleCalendar;
+    if (
+      !record &&
+      config.clientId.trim() &&
+      config.calendarId.trim() &&
+      !this.edits?.isWriting
+    ) {
+      const { timeMin, timeMax } = this.noteContext();
+      const start = Date.parse(snapshot.start);
+      if (start < Date.parse(timeMin) || start >= Date.parse(timeMax))
+        throw new Error(
+          "The schedule is saved locally. Its date is outside the Google Calendar sync window. Adjust Days to sync in the past or Days to sync ahead in Google Calendar settings, then retry.",
+        );
+    }
     if (!record || record.deleted || !sameSnapshot(record.base, snapshot))
       throw new Error(
         "The schedule is saved. Connect Google Calendar or resolve its sync conflict to finish exporting it.",

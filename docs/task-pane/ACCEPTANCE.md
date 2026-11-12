@@ -598,3 +598,19 @@ Native input verified action-menu End navigation, Escape focus restoration to it
 ## Final UI feedback and adversarial rendering checks
 
 The busy Undo label now uses a valid ellipsis and its existing operation-locking regression asserts the disabled Saving undo control. A focused component case renders HTML/script-like title and description text, a URL-like task ID and a large multilingual string with combining characters and emoji. It verifies literal untruncated row/detail text, absence of injected elements, a fixed Todoist origin with encoded task ID, unchanged cached fields and zero mutation calls. The component suite has 50 passes. The affected source file passes formatting and strict lint, and TypeScript passes. User-facing usage now covers recurrence, copied sources, permanent deletion and restored tracking.
+
+
+## Installed day, Markdown and PNG acceptance
+
+On the installed `2c27abfc` build, trusted Chromium input intercepted the actual Tasks-pane drag payload and delivered it to the day timeline. Todoist, the note subtree and Google agreed on the snapped interval and child relationship. Native Remove from schedule review and Cancel retained the exact note, projection and event. The Sky drag helper produced no drop, so this establishes the Chromium input delivery path.
+
+A native-placed Markdown caret received a trusted pane drop. Cancelling the move-out-of-schedule review retained both files and the existing projection. A repeated drop followed by native Move task confirmation inserted the parent/child between the surrounding Before/After lines, retained task/link/parent identity and provider date, and removed the scheduled interval and owned event. Canonical cleanup removed both disposable tasks, the event and temporary leaves, restored original note absence and preferences, and verified no remaining fixture work or error.
+
+A local-only schedule fixture exercised the actual timeline export menu, Include subtasks off/on and native Save PNG. The full-resolution image retained the parent interval, checked and unchecked subtasks, a timed child and the planner accent color. Reopening after a title and checkbox edit reflected both changes. The compact 15-minute timeline displayed its children inline. Native light-theme inspection at 276 px retained the nested pane with zero horizontal overflow, and the original system theme was restored. The fixture note, image, temporary leaves and newly created empty export folder were removed, and calendar settings were restored. A second visual inspection of the saved PNG confirmed readable times, hierarchy and checkboxes. This supplies A38's representative visual/export evidence.
+
+
+## Google sync-window feedback
+
+Working-vault acceptance found that a new schedule beyond the configured Google date window completed its local/provider phase and retained the calendar phase for retry. Superseding the same task to an in-window note completed its one managed export. Missing calendar projections now identify this date-window condition after normal sync and point to Days to sync in the past or Days to sync ahead. Existing known records keep their current verification and recovery behavior outside the window. No date range is expanded automatically.
+
+Focused exporter, engine and notes suites have 88 passes, including start-boundary and duration overlap cases. Exporter cases also pass under UTC and America/New_York. The previous complete source run has 1,234 passes and the inherited inclusive-last-day ICS failure, nine skips and 17 todo cases. Final validation of this diagnostic change follows.

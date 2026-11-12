@@ -92,6 +92,68 @@ async function setup(
 }
 
 describe("managed calendar exporter ownership", () => {
+  test("missing projections outside the note scan window report the saved schedule and settings", async () => {
+    const h = await setup();
+    h.settings.googleCalendar.daysPast = 2;
+    h.settings.googleCalendar.daysAhead = 3;
+    const run = vi.spyOn(h.service, "run").mockResolvedValue();
+    const min = window.moment().startOf("day").subtract(2, "days");
+    const max = window.moment().startOf("day").add(4, "days");
+    const snapshot = (start: string, end: string) => ({
+      title: "Task",
+      start,
+      end,
+    });
+    const message =
+      /saved locally.*outside the Google Calendar sync window.*Days to sync in the past.*Days to sync ahead.*retry/i;
+    await expect(
+      h.service.syncProjection(
+        "missing",
+        snapshot(
+          min.clone().subtract(1, "minute").toISOString(),
+          min.clone().add(30, "minutes").toISOString(),
+        ),
+      ),
+    ).rejects.toThrow(message);
+    await expect(
+      h.service.syncProjection(
+        "missing",
+        snapshot(max.format(), max.clone().add(1, "hour").format()),
+      ),
+    ).rejects.toThrow(message);
+    // Eligibility uses the start instant, not whether an event's duration overlaps the window.
+    for (const start of [min, max.clone().subtract(1, "minute")]) {
+      await expect(
+        h.service.syncProjection(
+          "missing",
+          snapshot(start.format(), start.clone().add(2, "hours").format()),
+        ),
+      ).rejects.toThrow(/Connect Google Calendar or resolve its sync conflict/);
+    }
+    expect(run).toHaveBeenCalledTimes(4);
+  });
+
+  test("an existing projection outside the window keeps its normal verification path", async () => {
+    const uid = "c".repeat(32);
+    const start = window.moment().startOf("day").add(90, "days");
+    const snapshot = {
+      title: "Task",
+      start: start.toISOString(),
+      end: start.clone().add(1, "hour").toISOString(),
+    };
+    const h = await setup("managed", {
+      [uid]: { eventId: "event", path: "note", base: snapshot },
+    });
+    const run = vi.spyOn(h.service, "run").mockResolvedValue();
+    await expect(h.service.syncProjection(uid, snapshot)).resolves.toBe(
+      "event",
+    );
+    expect(run).toHaveBeenCalledOnce();
+    await expect(
+      h.service.syncProjection(uid, { ...snapshot, title: "Changed" }),
+    ).rejects.toThrow(/Connect Google Calendar or resolve its sync conflict/);
+  });
+
   test.each([false, true])(
     "projection removal verifies an owned time-only event with saved mapping %s",
     async (linked) => {
