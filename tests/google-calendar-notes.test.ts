@@ -317,7 +317,7 @@ describe("vault calendar adapter", () => {
     const [old, keep] = await h.notes.scan();
     const record = { eventId: "event1", path: sourcePath, base: old!.snapshot };
     h.state.records[old!.uid] = record;
-    const revised = `# Day planner\n- [ ] 15:00 - 16:00 New #work\n    - [ ] Child\n- [ ] 10:00 - 11:00 Renamed\n- [ ] 17:00 - 18:00 Added\n\n${journal}`;
+    const revised = `New preamble.\n\n## Notes\n- An ordinary prose bullet.\n\n# Day planner\n- [ ] 15:00 - 16:00 New #work\n    - [ ] Child\n- [ ] 10:00 - 11:00 Renamed\n- [ ] 17:00 - 18:00 Added\n\n${journal}`;
     h.texts.set(sourcePath, revised);
     const next = await h.notes.scan();
     expect(next.map((block) => block.snapshot.title)).toEqual([
@@ -354,10 +354,46 @@ describe("vault calendar adapter", () => {
     h.state.records[uid] = record;
     h.texts.set(
       sourcePath,
-      `# Day planner\r\n- [ ] 15:00 - 16:00 New\r\n\r\n# Journal\r\n${block!.raw}\r\nUntouched.\r\n`,
+      `# Day planner\r\n- [ ] 15:00 - 16:00 New\r\n\r\n# Journal\r\n- [ ] Moved and made untimed\r\nUntouched.\r\n`,
     );
     expect((await h.notes.scan()).map((local) => local.uid)).not.toContain(uid);
     expect(await h.notes.canDelete(record, uid, true)).toBe(false);
+  });
+  test("removing the planner heading does not delete owned events", async () => {
+    const h = harness();
+    const [block] = await h.notes.scan();
+    const record = {
+      eventId: "event1",
+      path: sourcePath,
+      base: block!.snapshot,
+    };
+    h.state.records[uid] = record;
+    h.texts.set(sourcePath, "# Journal\nNew prose.\n");
+    expect(await h.notes.scan()).toEqual([]);
+    expect(await h.notes.canDelete(record, uid, true)).toBe(false);
+  });
+  test("a later removal remains verifiable while an older removal holds the document baseline", async () => {
+    const h = harness();
+    const header = "# Day planner\n";
+    h.texts.set(sourcePath, `${header}- [ ] 07:30 Earlier\n`);
+    const [earlier] = await h.notes.scan();
+    h.state.records[earlier!.uid] = {
+      eventId: "event1",
+      path: sourcePath,
+      base: earlier!.snapshot,
+    };
+    h.texts.set(sourcePath, `${header}- [ ] 08:30 Later\n`);
+    const [later] = await h.notes.scan();
+    const record = {
+      eventId: "event2",
+      path: sourcePath,
+      base: later!.snapshot,
+    };
+    h.state.records[later!.uid] = record;
+    expect(h.state.documents?.[sourcePath]).not.toContain("Later");
+    h.texts.set(sourcePath, header);
+    expect(await h.notes.scan()).toEqual([]);
+    expect(await h.notes.canDelete(record, later!.uid, true)).toBe(true);
   });
   test("only the surplus mapping is retired when an identical copy is removed", async () => {
     const h = harness();
@@ -376,6 +412,23 @@ describe("vault calendar adapter", () => {
       first?.uid,
     ]);
     expect(await h.notes.canDelete(record, second!.uid, true)).toBe(true);
+  });
+  test("a titled task elsewhere does not protect a removed time-only block with the same prefix", async () => {
+    const h = harness();
+    const header = "# Day planner\n";
+    const kept = "- [ ] 08:30 Keep\n";
+    h.texts.set(sourcePath, `${header}- [ ] 07:30 \n${kept}`);
+    const [old] = await h.notes.scan();
+    const record = { eventId: "event1", path: sourcePath, base: old!.snapshot };
+    h.state.records[old!.uid] = record;
+    const elsewhere = "Projects/Other.md";
+    h.file(elsewhere);
+    h.texts.set(elsewhere, "- [ ] 07:30 Other task\n");
+    h.texts.set(sourcePath, header + kept);
+    await h.notes.scan();
+    expect(await h.notes.canDelete(record, old!.uid, true)).toBe(true);
+    h.texts.set(elsewhere, "    - [ ] 07:30\n");
+    expect(await h.notes.canDelete(record, old!.uid, true)).toBe(false);
   });
   test("concurrent edits stop a pull rather than replacing changed text", async () => {
     const h = harness();

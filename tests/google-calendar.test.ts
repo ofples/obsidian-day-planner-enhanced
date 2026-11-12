@@ -273,6 +273,31 @@ describe("calendar reconciliation", () => {
       local(),
     );
   });
+  test("Google can omit the title of an exported time-only block", async () => {
+    const h = harness(false);
+    const untitled = { ...base, title: "" };
+    h.setBlocks([local(untitled)]);
+    vi.mocked(h.api.create).mockResolvedValue({
+      ...ownedEvent(uid, untitled),
+      summary: undefined,
+    });
+    expect(await h.run(false)).toMatchObject({ pushed: 1, conflicts: [] });
+    expect(h.state.pendingCreate).toBeUndefined();
+    expect(h.state.records[uid]?.base).toEqual(untitled);
+  });
+  test("deleting a time-only block retires its unchanged untitled Google event", async () => {
+    const h = harness();
+    const untitled = { ...base, title: "" };
+    const exported = { ...ownedEvent(uid, untitled), summary: undefined };
+    const unrelated = { ...event(), summary: undefined };
+    h.state.records[uid]!.eventId = exported.id;
+    h.state.records[uid]!.base = untitled;
+    h.setBlocks([]);
+    h.setEvents([exported, unrelated]);
+    expect(await h.run(false)).toMatchObject({ deleted: 1, conflicts: [] });
+    expect(h.api.remove).toHaveBeenCalledExactlyOnceWith(exported);
+    expect(h.notes.write).not.toHaveBeenCalled();
+  });
   test("a successful POST followed by a crash is adopted rather than duplicated", async () => {
     const h = harness(false);
     h.setEvents([ownedEvent()]);

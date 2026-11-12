@@ -110,7 +110,10 @@ export function normalizeTitle(title: string) {
     .trim();
 }
 
-export function snapshotOf(event: GoogleEvent): CalendarSnapshot | null {
+export function snapshotOf(
+  event: GoogleEvent,
+  untitled = "(Untitled event)",
+): CalendarSnapshot | null {
   const start = event.start?.dateTime;
   const end = event.end?.dateTime;
   if (event.status === "cancelled" || !start || !end) return null;
@@ -124,7 +127,7 @@ export function snapshotOf(event: GoogleEvent): CalendarSnapshot | null {
   if (Date.parse(start) % 60_000 !== 0 || Date.parse(end) % 60_000 !== 0)
     return null;
   return {
-    title: normalizeTitle(event.summary ?? "(Untitled event)"),
+    title: normalizeTitle(event.summary ?? untitled),
     start: new Date(start).toISOString(),
     end: new Date(end).toISOString(),
   };
