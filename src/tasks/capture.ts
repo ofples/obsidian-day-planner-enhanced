@@ -160,7 +160,9 @@ export class TaskCapture {
     const candidates = structuredClone(input);
     const identityIssues: TaskIdentityIssue[] = [];
     const state = this.service.registry.snapshot();
-    const historical = historicalTaskLinks(state);
+    const historical = historicalTaskLinks(state).filter(
+      ({ uid }) => !state.links[uid],
+    );
     for (const item of historical) {
       const matches = candidates.filter(
         (candidate) =>
@@ -268,9 +270,7 @@ export class TaskCapture {
       ...Object.entries(state.localSources).map(
         ([uid, value]) => [uid, value.source] as const,
       ),
-      ...historicalTaskLinks(state).map(
-        ({ uid, link }) => [uid, link.source] as const,
-      ),
+      ...historical.map(({ uid, link }) => [uid, link.source] as const),
       ...Object.entries(state.links).map(
         ([uid, link]) => [uid, link.source] as const,
       ),
@@ -340,7 +340,14 @@ export class TaskCapture {
           : "Task links need review before capture.",
       );
     }
-    for (const group of findTaskSourceCopies(candidates, previous)) {
+    const historicalOwners = new Map(
+      historical.map(({ uid, occurrenceId }) => [uid, occurrenceId]),
+    );
+    for (const group of findTaskSourceCopies(
+      candidates,
+      previous,
+      historicalOwners,
+    )) {
       const nested = candidates.filter((candidate) =>
         group.copies.some(
           (copy) =>
@@ -590,7 +597,9 @@ export class TaskCapture {
     const { candidates, identityIssues } =
       await this.inspectCurrentIdentities();
     const state = this.service.registry.snapshot();
-    const historical = historicalTaskLinks(state);
+    const historical = historicalTaskLinks(state).filter(
+      ({ uid }) => !state.links[uid],
+    );
     const knownLinks = Object.fromEntries([
       ...historical.map(({ uid, link }) => [uid, link] as const),
       ...Object.entries(state.links),

@@ -248,6 +248,72 @@ async function historicalSetup() {
   return { h, id, rootUid, childUid, record, beforeTask, next };
 }
 
+async function addUnrelatedOccurrence(
+  fixture: Awaited<ReturnType<typeof historicalSetup>>,
+  sameChildTitle: boolean,
+  oldFirst = false,
+) {
+  const { h, record, rootUid, childUid } = fixture;
+  const oldRoot = structuredClone(record.links[rootUid]!);
+  const oldChild = structuredClone(record.links[childUid]!);
+  const oldTask = {
+    ...record.before.task,
+    id: "unrelated-parent",
+    title: "Older parent",
+  };
+  const oldChildTask = {
+    ...record.before.children[0]!,
+    id: "unrelated-child",
+    parentId: oldTask.id,
+    title: sameChildTitle ? "Child" : "Other",
+  };
+  oldRoot.taskId = oldTask.id;
+  oldRoot.base = oldTask;
+  oldRoot.source = {
+    ...oldRoot.source,
+    path: "Earlier.md",
+    raw: oldRoot.source.raw.replace("Parent", "Older"),
+    title: "Older",
+  };
+  oldRoot.noteBase = { ...oldRoot.source };
+  oldChild.taskId = oldChildTask.id;
+  oldChild.base = oldChildTask;
+  oldChild.source = {
+    ...oldChild.source,
+    raw: sameChildTitle
+      ? oldChild.source.raw
+      : oldChild.source.raw.replace("Child", "Other"),
+    title: oldChildTask.title,
+  };
+  oldChild.noteBase = { ...oldChild.source, path: "Tasks.md" };
+  oldChild.source = { ...oldChild.source, path: "Copy.md" };
+  const links = { "unrelated-root": oldRoot, "unrelated-child": oldChild };
+  const old = taskOccurrenceSchema.parse({
+    ...record,
+    id: crypto.randomUUID(),
+    before: {
+      ...record.before,
+      task: oldTask,
+      children: [oldChildTask],
+      links,
+    },
+    next: { ...record.next, id: oldTask.id, title: oldTask.title },
+    links,
+  });
+  await h.service.registry.change((state) => {
+    state.occurrences[old.id] = old;
+    if (oldFirst)
+      state.occurrences = {
+        [old.id]: old,
+        ...Object.fromEntries(
+          Object.entries(state.occurrences).filter(([id]) => id !== old.id),
+        ),
+      };
+  });
+  await h.capture.scan();
+  return old;
+}
+
 describe("task identity decisions", () => {
   test("manual source repair retains a created parent and resumes its missing child with the original identities", async () => {
     const h = await setup("- [ ] Parent #todoist\n  - [ ] Child #todoist"),
@@ -668,6 +734,163 @@ describe("task identity decisions", () => {
     ).toBe(true);
     expect(h.remote.size).toBe(4);
     expect(get(h.capture.state).issues).toEqual([]);
+    h.service.stop();
+  });
+
+  test.each([
+    [false, "Tasks.md", null],
+    [false, "Copy.md", null],
+    [false, "Copy.md", "Tasks.md"],
+    [true, "Tasks.md", null],
+    [true, "Copy.md", null],
+    [true, "Copy.md", "Tasks.md"],
+  ] as const)(
+    "historical copy decisions exclude unrelated overlapping child (same title: %s, selected: %s, separate: %s)",
+    async (sameTitle, selectedPath, separatePath) => {
+      const fixture = await historicalSetup();
+      const { h, id, rootUid, childUid } = fixture;
+      const unrelated = await addUnrelatedOccurrence(fixture, sameTitle);
+      const review = await h.controller.review(rootUid);
+      expect(Object.keys(review.before.links).sort()).toEqual(
+        [rootUid, childUid].sort(),
+      );
+      expect(review.before.historical).toEqual({
+        [rootUid]: id,
+        [childUid]: id,
+      });
+      const selected = review.sources.find(
+        (source) => source.path === selectedPath,
+      )!;
+      const separate =
+        separatePath &&
+        review.sources.find((source) => source.path === separatePath)!;
+      await h.controller.confirm(review, {
+        linked: h.controller.suggestTree(
+          review,
+          rootUid,
+          identitySourceKey(selected),
+        ),
+        create: separate ? [identitySourceKey(separate)] : [],
+      });
+      expect(h.service.registry.snapshot().occurrences[unrelated.id]).toEqual(
+        unrelated,
+      );
+      await h.restart();
+      await h.controller.resume();
+      await h.capture.scan();
+      expect(h.service.registry.snapshot().occurrences[unrelated.id]).toEqual(
+        unrelated,
+      );
+      h.service.stop();
+    },
+  );
+
+  test.each([
+    ["Tasks.md", null],
+    ["Copy.md", null],
+    ["Copy.md", "Tasks.md"],
+  ] as const)(
+    "same-title historical child remains separate with older occurrence first: %s / %s",
+    async (selectedPath, separatePath) => {
+      const fixture = await historicalSetup();
+      const { h, id, rootUid, childUid } = fixture;
+      const unrelated = await addUnrelatedOccurrence(fixture, true, true);
+      const review = await h.controller.review(rootUid);
+      expect(Object.keys(review.before.links).sort()).toEqual(
+        [rootUid, childUid].sort(),
+      );
+      expect(review.before.historical).toEqual({
+        [rootUid]: id,
+        [childUid]: id,
+      });
+      const selected = review.sources.find(
+        (source) => source.path === selectedPath,
+      )!;
+      const separate =
+        separatePath &&
+        review.sources.find((source) => source.path === separatePath)!;
+      await h.controller.confirm(review, {
+        linked: h.controller.suggestTree(
+          review,
+          rootUid,
+          identitySourceKey(selected),
+        ),
+        create: separate ? [identitySourceKey(separate)] : [],
+      });
+      expect(h.service.registry.snapshot().occurrences[unrelated.id]).toEqual(
+        unrelated,
+      );
+      await h.restart();
+      await h.controller.resume();
+      await h.capture.scan();
+      expect(h.service.registry.snapshot().occurrences[unrelated.id]).toEqual(
+        unrelated,
+      );
+      h.service.stop();
+    },
+  );
+
+  test("active identities take precedence over retained historical copies of the same UIDs", async () => {
+    const fixture = await historicalSetup();
+    const { h, id, rootUid, childUid, record } = fixture;
+    await h.service.registry.change((state) => {
+      state.links = structuredClone(record.before.links);
+    });
+    h.texts.set("Tasks.md", h.texts.get("Tasks.md")!.replaceAll("[x]", "[ ]"));
+    h.texts.set("Copy.md", h.texts.get("Copy.md")!.replaceAll("[x]", "[ ]"));
+    for (const link of Object.values(record.before.links))
+      h.remote.set(link.taskId!, { ...link.base!, completed: false });
+    await h.service.refresh();
+    await h.capture.scan();
+    const review = await h.controller.review(rootUid);
+    expect(Object.keys(review.before.links).sort()).toEqual(
+      [rootUid, childUid].sort(),
+    );
+    expect(review.before.historical ?? {}).toEqual({});
+    const source = review.sources.find((item) => item.path === "Copy.md")!;
+    await h.controller.confirm(review, {
+      linked: h.controller.suggestTree(
+        review,
+        rootUid,
+        identitySourceKey(source),
+      ),
+      create: [],
+    });
+    expect(h.service.registry.snapshot().occurrences[id]).toEqual(record);
+    expect(h.service.registry.snapshot().links[rootUid]!.source.path).toBe(
+      "Copy.md",
+    );
+    await h.restart();
+    await h.capture.scan();
+    expect(h.service.registry.snapshot().occurrences[id]).toEqual(record);
+    expect(h.service.registry.snapshot().links[rootUid]!.source.path).toBe(
+      "Copy.md",
+    );
+    h.service.stop();
+  });
+
+  test("an active copied parent excludes historical children at overlapping offsets", async () => {
+    const fixture = await historicalSetup();
+    const { h, id, rootUid, childUid, record } = fixture;
+    const unrelated = await addUnrelatedOccurrence(fixture, false);
+    await h.service.registry.change((state) => {
+      state.links = structuredClone(record.before.links);
+      delete state.occurrences[id];
+    });
+    h.texts.set("Tasks.md", h.texts.get("Tasks.md")!.replaceAll("[x]", "[ ]"));
+    h.texts.set("Copy.md", h.texts.get("Copy.md")!.replaceAll("[x]", "[ ]"));
+    for (const link of Object.values(record.before.links))
+      h.remote.set(link.taskId!, { ...link.base!, completed: false });
+    await h.service.refresh();
+    await h.capture.scan();
+    const review = await h.controller.review(rootUid);
+    expect(Object.keys(review.before.links).sort()).toEqual(
+      [rootUid, childUid].sort(),
+    );
+    expect(review.before.historical ?? {}).toEqual({});
+    expect(h.service.registry.snapshot().occurrences[unrelated.id]).toEqual(
+      unrelated,
+    );
     h.service.stop();
   });
 

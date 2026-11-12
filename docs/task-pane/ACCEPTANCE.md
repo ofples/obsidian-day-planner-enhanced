@@ -537,3 +537,17 @@ Obsidian can index the source and destination notes separately after a native mo
 The installed source checkpoint `409d1210` passed native calendar movement followed immediately by native Undo. The input trace recorded Undo while the preceding schedule remained provider-pending. Settled Todoist/Google readback retained the original parent/child relationship, source UID, calendar UID and Google event ID. The restored interval, mapped color and child description matched. Both note files returned to their exact pre-move bytes. There were exactly two fixture create commands and two active fixture tasks. Complete and cancelled schedule phases were terminal, with no remaining task/schedule work or source/reconciliation issues.
 
 The same comparisons passed after plugin reload. Canonical task deletion and owned calendar removal then completed. Final reload/readback confirmed both tasks and the event absent, original note absence restored, original pane preferences and calendar/planner settings retained, and no pending operations, schedules, issues or provider error. Fixture setup used the canonical scheduling API. Native input supplied the move and Undo. The preceding task-pane drop and resize checks retain their separate recorded evidence.
+
+
+## Installed view-state and row-icon acceptance
+
+At `cba065a3`, actual workspace persistence and full application reload retained independent day and multi-day leaf dates and IDs. Range-mode changes retained the viewed working period, including a Sunday-first week. Temporary views were removed and original dates, settings and pane preferences restored. Note hashes and registry bytes were preserved. A fresh provider timestamp accounted for the reload cache difference.
+
+A controlled visible Chromium comparison retained all title/control DOM and passed the expected filter/fold/expand row counts with zero provider calls and exact fixture restoration. Seven-cycle median filter clearing improved from 504.7 to 391.6 ms, expansion from 248.2 to 175.4 ms, and initial rendering from 464.7 to 293.3 ms. Native keyboard acceptance and A53 filter-clear responsiveness remain open. These measurements use developer APIs and animation-frame boundaries.
+
+
+## Historical copy ownership repair
+
+Native historical-copy review exposed an unrelated archived child whose saved note baseline overlapped the fresh task tree's path and offsets. The review stopped before a choice was applied. Copy expansion and review now require matching occurrence ownership when collecting descendants. Active links take precedence over retained historical entries sharing their UID, so moving an active link cannot retarget archived navigation. No registry schema change is required.
+
+Regressions cover matching and differing child titles, older-first and newer-first history ordering, Keep/Move/Create choices, active parents, retained same-UID history and restart. Unrelated occurrence records remain exact. Six focused identity/copy/capture/calendar suites have 105 passes. The complete run has 1,224 passes, the inherited inclusive-last-day ICS failure, nine skips and 17 todo cases. Source formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass. The paused disposable native fixture remains available for matching installed review and safe-choice acceptance.

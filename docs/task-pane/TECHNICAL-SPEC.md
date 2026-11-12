@@ -261,3 +261,11 @@ The custom pane compares loaded and saved tracking counts, explains command and 
 The checkpoint is established for existing supported registries during upgrade, after validating namespace and schema. An unsupported future checkpoint or a different vault namespace preserves the files and holds writes. Recovery detection depends on the separate checkpoint surviving restoration. Restoring that checkpoint together with an older matching registry cannot be distinguished from the original saved pair without another independent record. This limit must be stated in the recovery documentation.
 
 Acceptance must cover state-write and checkpoint-write failures before and after bytes reach disk, exact legacy migration backups, missing and malformed state, changed confirmation data, another account or namespace, concurrent registry replacement, unsent and previously transmitted commands, repeated confirmation and restart, and original source/calendar identities after repair. Include a disposable installed rollback fixture and verify that review sends no provider mutations.
+
+
+## Planner view date persistence
+
+Day and multi-day views store a validated local YYYY-MM-DD day in each workspace leaf. A restored leaf keeps its own date, and navigation uses the host's debounced workspace save. Legacy or invalid layout state retains the ordinary initial date behavior. Timeline focus continues following daily notes after restoration. Multi-day range configuration uses the current period as its anchor, selecting an already visible weekday for work-week mode. Closing a view removes its date subscription before untracking the range.
+
+
+Historical source-copy expansion must scope descendant identities to their saved occurrence. Path/offset overlap across different occurrences supplies no ownership evidence. Active registry links take precedence over retained historical entries sharing the same source UID. Copy review, confirmation and capture must preserve unrelated occurrence records through restart.

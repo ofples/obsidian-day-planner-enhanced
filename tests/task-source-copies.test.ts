@@ -65,6 +65,31 @@ describe("copied task source detection", () => {
     expect(findTaskSourceCopies(candidates, { child: source })).toEqual([]);
   });
 
+  test("copy expansion includes the same occurrence subtree, not a foreign overlapping child", () => {
+    const text = "- [ ] Parent #todoist\n  - [ ] Child #todoist";
+    const original = parseCaptureCandidates("Tasks.md", text);
+    const copy = parseCaptureCandidates("Copy.md", text);
+    original[0]!.uid = "root";
+    original[1]!.uid = "foreign-child";
+    const previous = {
+      root: original[0]!,
+      child: { ...original[1]!, uid: "child" },
+      "foreign-child": { ...original[1]!, uid: "foreign-child" },
+    };
+    const owners = new Map([
+      ["root", "occurrence-a"],
+      ["child", "occurrence-a"],
+      ["foreign-child", "occurrence-b"],
+    ]);
+    const groups = findTaskSourceCopies(
+      [...original, ...copy],
+      previous,
+      owners,
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.uids.sort()).toEqual(["child", "root"]);
+  });
+
   test("a unique move reuses the existing matcher without a copy group", () => {
     const candidates = parseCaptureCandidates("Moved.md", raw);
     candidates[0]!.uid = "existing";

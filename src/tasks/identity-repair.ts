@@ -145,7 +145,12 @@ export class TaskIdentityRepairController {
     await this.service.refresh();
     await this.capture.scan();
     const state = this.service.registry.snapshot();
-    const historical = historicalTaskLinks(state);
+    const historical = historicalTaskLinks(state).filter(
+      ({ uid }) => !state.links[uid],
+    );
+    const historicalOwners = new Map(
+      historical.map(({ uid, occurrenceId }) => [uid, occurrenceId]),
+    );
     const knownLinks = Object.fromEntries([
       ...historical.map(({ uid, link }) => [uid, link] as const),
       ...Object.entries(state.links),
@@ -197,15 +202,18 @@ export class TaskIdentityRepairController {
         "This source is no longer ambiguous. Recheck the current task link.",
       );
     const initialUids = issue.uids.filter((uid) => knownLinks[uid]);
-    const parentBaselines = initialUids.map(
-      (uid) => knownLinks[uid]!.noteBase ?? knownLinks[uid]!.source,
-    );
+    const parentBaselines = initialUids.map((uid) => ({
+      uid,
+      source: knownLinks[uid]!.noteBase ?? knownLinks[uid]!.source,
+    }));
     const uids = Object.entries(knownLinks)
       .filter(
         ([uid, link]) =>
           initialUids.includes(uid) ||
-          parentBaselines.some((parent) =>
-            inside(parent, link.noteBase ?? link.source),
+          parentBaselines.some(
+            (parent) =>
+              historicalOwners.get(parent.uid) === historicalOwners.get(uid) &&
+              inside(parent.source, link.noteBase ?? link.source),
           ),
       )
       .map(([uid]) => uid);

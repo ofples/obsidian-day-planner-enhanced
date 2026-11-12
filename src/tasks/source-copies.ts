@@ -48,6 +48,7 @@ function matchingSources<T extends TaskSource>(
 export function findTaskSourceCopies(
   candidates: CaptureCandidate[],
   previous: Record<string, TaskSource>,
+  historicalOwners?: ReadonlyMap<string, string>,
 ): TaskSourceCopies[] {
   const entries = Object.entries(previous)
     .map(([uid, source]) => ({ ...source, uid }))
@@ -77,12 +78,17 @@ export function findTaskSourceCopies(
     const nested = candidates.filter((candidate) =>
       copies.some((copy) => contains(copy, candidate)),
     );
+    const nestedUids = new Set(nested.map((candidate) => candidate.uid));
     const uids = entries
-      .filter(
-        (old) =>
-          owners.some(
-            (parent) => old.uid === parent.uid || contains(parent, old),
-          ) || nested.some((candidate) => candidate.uid === old.uid),
+      .filter((old) =>
+        owners.some(
+          (parent) =>
+            historicalOwners?.get(parent.uid) ===
+              historicalOwners?.get(old.uid) &&
+            (old.uid === parent.uid ||
+              contains(parent, old) ||
+              nestedUids.has(old.uid)),
+        ),
       )
       .map((source) => source.uid);
     groups.push({ uids, copies });
