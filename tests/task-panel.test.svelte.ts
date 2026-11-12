@@ -860,6 +860,27 @@ describe("custom Tasks panel", () => {
     return { controller, state, record, review, confirm };
   }
 
+  test("row icons retain their geometry and tree toggle behavior", () => {
+    const h = render();
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks: [task, { ...task, id: "child", title: "Child", parentId: task.id }] } }));
+    flushSync();
+    const toggle = h.target.querySelector<HTMLButtonElement>('[aria-label="Toggle subtasks for Shopping"]')!;
+    const chevron = toggle.querySelector("svg")!;
+    expect(chevron.getAttribute("aria-hidden")).toBe("true");
+    expect(chevron.getAttribute("width")).toBe("13");
+    expect(chevron.getAttribute("stroke")).toBe("currentColor");
+    expect(chevron.querySelector("path")?.getAttribute("d")).toBe("m6 9 6 6 6-6");
+    const more = h.target.querySelector('[aria-label="Actions for Shopping"] svg')!;
+    expect(more.getAttribute("aria-hidden")).toBe("true");
+    expect(more.getAttribute("width")).toBe("16");
+    expect(Array.from(more.querySelectorAll("circle"), circle => circle.getAttribute("cx"))).toEqual(["12", "19", "5"]);
+    toggle.click();
+    flushSync();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(chevron.querySelector("path")?.getAttribute("d")).toBe("m9 18 6-6-6-6");
+    expect(h.target.textContent).not.toContain("Child");
+  });
+
   test("large lists create one action menu on demand for the current task", async () => {
     const h = render();
     const tasks = Array.from({ length: 2000 }, (_, index) => ({ ...task, id: `task-${index}`, title: `Task ${index}`, order: index }));

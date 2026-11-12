@@ -12,7 +12,6 @@
     ExternalLink,
     Flag,
     ListChecks,
-    MoreHorizontal,
     Pencil,
     Plus,
     RefreshCw,
@@ -1140,9 +1139,32 @@
                         aria-label={`Toggle subtasks for ${row.task.title}`}
                         onclick={() =>
                           toggleGroup(`task:${group.id}:${row.task.id}`)}
-                        >{#if $preferences.collapsed.includes(`task:${group.id}:${row.task.id}`)}<ChevronRight
-                            size={13}
-                          />{:else}<ChevronDown size={13} />{/if}</button
+                        ><svg
+                          class="lucide-icon lucide"
+                          class:lucide-chevron-down={!$preferences.collapsed.includes(
+                            `task:${group.id}:${row.task.id}`,
+                          )}
+                          class:lucide-chevron-right={$preferences.collapsed.includes(
+                            `task:${group.id}:${row.task.id}`,
+                          )}
+                          aria-hidden="true"
+                          fill="none"
+                          height="13"
+                          stroke="currentColor"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          stroke-width="2"
+                          viewBox="0 0 24 24"
+                          width="13"
+                          xmlns="http://www.w3.org/2000/svg"
+                          ><path
+                            d={$preferences.collapsed.includes(
+                              `task:${group.id}:${row.task.id}`,
+                            )
+                              ? "m9 18 6-6-6-6"
+                              : "m6 9 6 6 6-6"}
+                          /></svg
+                        ></button
                       >{/if}
                     <input
                       class="task-checkbox"
@@ -1209,7 +1231,25 @@
                       onkeydown={(event) => {
                         if (event.key === "ArrowDown")
                           void contextMenu(row.task, event);
-                      }}><MoreHorizontal size={16} /></button
+                      }}
+                      ><svg
+                        class="lucide-icon lucide lucide-ellipsis"
+                        aria-hidden="true"
+                        fill="none"
+                        height="16"
+                        stroke="currentColor"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        viewBox="0 0 24 24"
+                        width="16"
+                        xmlns="http://www.w3.org/2000/svg"
+                        ><circle cx="12" cy="12" r="1" /><circle
+                          cx="19"
+                          cy="12"
+                          r="1"
+                        /><circle cx="5" cy="12" r="1" /></svg
+                      ></button
                     >
                   </div>
                 {/each}{/if}
