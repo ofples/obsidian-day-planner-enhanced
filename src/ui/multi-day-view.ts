@@ -1,15 +1,20 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
-import { ItemView, WorkspaceLeaf } from "obsidian";
+import { ItemView, WorkspaceLeaf, type ViewStateResult } from "obsidian";
 import { mount, unmount } from "svelte";
 import { derived, get, toStore, type Writable } from "svelte/store";
 import { isNotVoid } from "typed-assert";
 
-import { dateRangeContextKey, viewTypeMultiDay } from "../constants";
+import {
+  dateRangeContextKey,
+  defaultDayFormat,
+  viewTypeMultiDay,
+} from "../constants";
 import type { DateRange, DateRanges } from "../redux/date-ranges";
 import type { DayPlannerSettings } from "../settings";
 import type { ComponentContext } from "../types";
+import type { Moment } from "../util/obsidian-moment";
 import * as r from "../util/range";
-import { setViewTitle } from "../util/view";
+import { getSavedViewDay, setViewTitle } from "../util/view";
 
 import MultiDayGrid from "./components/multi-day/multi-day-grid.svelte";
 
@@ -18,6 +23,8 @@ export default class MultiDayView extends ItemView {
   navigation = true;
   private multiDayComponent?: Record<string, unknown>;
   private dateRange?: DateRange;
+  private savedDay?: Moment;
+  private stopTrackingRange?: () => void;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -44,6 +51,26 @@ export default class MultiDayView extends ItemView {
     return "table-2";
   }
 
+  getState() {
+    return {
+      day: (this.dateRange?.current[0] ?? this.savedDay)?.format(
+        defaultDayFormat,
+      ),
+    };
+  }
+
+  async setState(state: unknown, result: ViewStateResult) {
+    const day = getSavedViewDay(state);
+    if (day) {
+      this.savedDay = day;
+      const settings = get(this.settingsStore);
+      this.dateRange?.set(
+        r.createRange(settings.multiDayRange, settings.firstDayOfWeek, day),
+      );
+    }
+    await super.setState(state, result);
+  }
+
   async onOpen() {
     const contentEl = this.containerEl.children[1];
 
@@ -54,14 +81,17 @@ export default class MultiDayView extends ItemView {
     const range = r.createRange(
       currentSettings.multiDayRange,
       currentSettings.firstDayOfWeek,
+      this.savedDay,
     );
 
     const dateRange = this.dateRanges.trackRange(range);
 
     this.dateRange = dateRange;
-    this.register(
-      toStore(() => dateRange.current).subscribe(this.updateTabTitleAndHeader),
+    this.savedDay = dateRange.first.clone();
+    this.stopTrackingRange = toStore(() => dateRange.current).subscribe(
+      this.updateTabTitleAndHeader,
     );
+    this.register(this.stopTrackingRange);
 
     const relevantSettingsSignal = derived(
       this.settingsStore,
@@ -87,8 +117,16 @@ export default class MultiDayView extends ItemView {
           previousMultiDayRange = next.multiDayRange;
           previousFirstDayOfWeek = next.firstDayOfWeek;
 
+          const anchor = this.dateRange?.current.find(
+            (day) =>
+              next.multiDayRange !== "work-week" || day.isoWeekday() <= 5,
+          );
           this.dateRange?.set(
-            r.createRange(next.multiDayRange, next.firstDayOfWeek),
+            r.createRange(
+              next.multiDayRange,
+              next.firstDayOfWeek,
+              anchor ?? this.dateRange.first,
+            ),
           );
         }
       }),
@@ -106,6 +144,9 @@ export default class MultiDayView extends ItemView {
   }
 
   async onClose() {
+    this.savedDay = this.dateRange?.current[0]?.clone() ?? this.savedDay;
+    this.stopTrackingRange?.();
+    this.stopTrackingRange = undefined;
     if (this.multiDayComponent) {
       await unmount(this.multiDayComponent);
     }
@@ -115,6 +156,11 @@ export default class MultiDayView extends ItemView {
   }
 
   private updateTabTitleAndHeader = () => {
+    const day = this.dateRange?.current[0];
+    if (day && !day.isSame(this.savedDay, "day")) {
+      this.savedDay = day.clone();
+      this.app.workspace.requestSaveLayout();
+    }
     setViewTitle(this, this.getDisplayText());
   };
 }

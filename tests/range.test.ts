@@ -2,12 +2,10 @@ import moment from "moment";
 import { describe, expect, test } from "vitest";
 
 import type { DayPlannerSettings } from "../src/settings";
-import { getFullWeek } from "../src/util/range";
+import { createRange, getFullWeek } from "../src/util/range";
 
 describe("full-week range", () => {
-  test.each<
-    [DayPlannerSettings["firstDayOfWeek"], string, string, string]
-  >([
+  test.each<[DayPlannerSettings["firstDayOfWeek"], string, string, string]>([
     ["monday", "2026-07-13", "2026-07-13", "2026-07-19"],
     ["sunday", "2026-07-12", "2026-07-12", "2026-07-18"],
     ["saturday", "2026-07-18", "2026-07-18", "2026-07-24"],
@@ -26,8 +24,20 @@ describe("full-week range", () => {
     const sundayWeek = getFullWeek(moment("2026-07-12"), "sunday");
     const mondayWeek = getFullWeek(moment("2026-07-13"), "sunday");
 
-    expect(
-      sundayWeek.map((day) => day.format("YYYY-MM-DD")),
-    ).toEqual(mondayWeek.map((day) => day.format("YYYY-MM-DD")));
+    expect(sundayWeek.map((day) => day.format("YYYY-MM-DD"))).toEqual(
+      mondayWeek.map((day) => day.format("YYYY-MM-DD")),
+    );
+  });
+});
+
+describe("anchored ranges", () => {
+  test.each([
+    ["3-days", "2026-07-15", "2026-07-17"],
+    ["full-week", "2026-07-13", "2026-07-19"],
+    ["work-week", "2026-07-13", "2026-07-17"],
+  ] as const)("%s uses the supplied anchor", (mode, start, end) => {
+    const days = createRange(mode, "monday", moment("2026-07-15"));
+    expect(days[0]?.format("YYYY-MM-DD")).toBe(start);
+    expect(days.at(-1)?.format("YYYY-MM-DD")).toBe(end);
   });
 });

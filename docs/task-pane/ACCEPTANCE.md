@@ -530,3 +530,10 @@ Immediate native Undo during the preceding move's provider reconciliation detach
 ## Fresh inventory before automatic capture
 
 Obsidian can index the source and destination notes separately after a native move or Undo. A stale indexed source can retain the original UID while a current restored block appears unlinked. The previous complete-link fast path accepted both. A regression supplies that exact mixed inventory and reproduces the duplicate candidate. Before a new opted-in task can be captured, identity inspection now reads the complete current note inventory and performs matching again. Existing linked-only scans keep their fast path. Partial/unavailable inventories retain their mutation hold. The focused capture/scheduling/identity subset has 187 passes. Final source validation and installed immediate-undo verification continue.
+
+
+## Installed immediate Undo acceptance
+
+The installed source checkpoint `409d1210` passed native calendar movement followed immediately by native Undo. The input trace recorded Undo while the preceding schedule remained provider-pending. Settled Todoist/Google readback retained the original parent/child relationship, source UID, calendar UID and Google event ID. The restored interval, mapped color and child description matched. Both note files returned to their exact pre-move bytes. There were exactly two fixture create commands and two active fixture tasks. Complete and cancelled schedule phases were terminal, with no remaining task/schedule work or source/reconciliation issues.
+
+The same comparisons passed after plugin reload. Canonical task deletion and owned calendar removal then completed. Final reload/readback confirmed both tasks and the event absent, original note absence restored, original pane preferences and calendar/planner settings retained, and no pending operations, schedules, issues or provider error. Fixture setup used the canonical scheduling API. Native input supplied the move and Undo. The preceding task-pane drop and resize checks retain their separate recorded evidence.

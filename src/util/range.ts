@@ -12,12 +12,12 @@ import { getMomentFromDayOfWeek } from "./moment";
 export function createRange(
   type: DayPlannerSettings["multiDayRange"],
   firstDayOfWeek: DayPlannerSettings["firstDayOfWeek"],
+  anchor: Moment = window.moment(),
 ) {
-  const today = window.moment();
   return match(type)
-    .with("full-week", () => getFullWeek(today, firstDayOfWeek))
-    .with("3-days", () => getUpcomingDays(today, 3))
-    .with("work-week", () => getWorkWeek(today))
+    .with("full-week", () => getFullWeek(anchor, firstDayOfWeek))
+    .with("3-days", () => getUpcomingDays(anchor, 3))
+    .with("work-week", () => getWorkWeek(anchor))
     .exhaustive();
 }
 
