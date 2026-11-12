@@ -126,6 +126,32 @@ describe("task browser grouping", () => {
     ]);
     expect(groups[0]?.count).toBe(2);
   });
+  test("deep unfiltered trees resolve parent dates and visible ancestry with linear work", () => {
+    const count = 2000;
+    let reads = 0;
+    const tasks = Array.from({ length: count }, (_, index) => {
+      const value = task(String(index), { order: index });
+      Object.defineProperty(value, "parentId", {
+        get: () => {
+          reads++;
+          return index ? String(index - 1) : null;
+        },
+      });
+      Object.defineProperty(value, "due", {
+        get: () => {
+          reads++;
+          return index ? null : due("2026-11-11");
+        },
+      });
+      return value;
+    });
+    const groups = taskGroups(snapshot(tasks), prefs, now);
+    expect(
+      groups.map((group) => [group.label, group.count, group.rows.length]),
+    ).toEqual([["Today", 1, count]]);
+    expect(reads).toBeLessThan(count * 20);
+  });
+
   test("very deep trees use iterative traversal", () => {
     const tasks = Array.from({ length: 2000 }, (_, i) =>
       task(String(i), { parentId: i ? String(i - 1) : null, order: i }),

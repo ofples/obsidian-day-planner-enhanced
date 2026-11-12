@@ -92,26 +92,39 @@ export function taskGroups(
     .plus({ days: 1 })
     .toISODate();
   const dateGroups = ["Overdue", "Today", "Tomorrow", "Upcoming", "No date"];
+  const datedGroups = new Map<string, string>();
   const groupFor = (task: ProviderTask) => {
     if (prefs.groupBy === "project") return task.projectId;
-    let dated = task;
+    const known = datedGroups.get(task.id);
+    if (known) return known;
+    const path: ProviderTask[] = [];
     const visited = new Set<string>();
-    while (!dated.due && dated.parentId && !visited.has(dated.id)) {
+    let dated: ProviderTask | undefined = task;
+    while (
+      dated &&
+      !dated.due &&
+      !datedGroups.has(dated.id) &&
+      !visited.has(dated.id)
+    ) {
+      path.push(dated);
       visited.add(dated.id);
-      const parent = byId.get(dated.parentId);
-      if (!parent) break;
-      dated = parent;
+      dated = dated.parentId ? byId.get(dated.parentId) : undefined;
     }
-    const day = taskDay(dated, snapshot.account.timezone);
-    return !day
-      ? "No date"
-      : day < today
-        ? "Overdue"
-        : day === today
-          ? "Today"
-          : day === tomorrow
-            ? "Tomorrow"
-            : "Upcoming";
+    const day = dated ? taskDay(dated, snapshot.account.timezone) : null;
+    const group =
+      (dated && datedGroups.get(dated.id)) ||
+      (!day
+        ? "No date"
+        : day < today
+          ? "Overdue"
+          : day === today
+            ? "Today"
+            : day === tomorrow
+              ? "Tomorrow"
+              : "Upcoming");
+    for (const source of path) datedGroups.set(source.id, group);
+    if (dated) datedGroups.set(dated.id, group);
+    return group;
   };
   const groups = new Map<string, TaskBrowserGroup>();
   const children = new Map<string, ProviderTask[]>();
@@ -136,6 +149,7 @@ export function taskGroups(
       let task = byId.get(id);
       const visited = new Set([id]);
       while (task?.parentId && !visited.has(task.parentId)) {
+        if (visible.has(task.parentId)) break;
         visited.add(task.parentId);
         task = byId.get(task.parentId);
         if (task) visible.add(task.id);
