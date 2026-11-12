@@ -207,7 +207,7 @@
           class="task-primary"
           disabled={busy || !writable}
           onclick={() => void undoAction("confirm")}
-          >{busy ? "Saving undo�" : "Confirm undo"}</button
+          >{busy ? "Saving undo…" : "Confirm undo"}</button
         >
         <button
           class="task-text-button"

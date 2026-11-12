@@ -136,6 +136,41 @@ function press(element: EventTarget, key: string, isComposing = false) {
 }
 
 describe("custom Tasks panel", () => {
+  test("untrusted markup, URL-like IDs and large Unicode text remain literal in rows and details", () => {
+    const h = render();
+    const hostileTask: ProviderTask = {
+      ...task,
+      id: 'javascript:alert(1)?value=<img src="x">',
+      title:
+        '<img src="x" onerror="alert(1)">' +
+        " മലയാളം עברית 🧘🏽‍♀️ é".repeat(4096),
+      description:
+        '</p><script>alert(1)</script><a href="javascript:alert(1)">Open</a>\nUnicode മലയാളം עברית 🧘🏽‍♀️ é',
+    };
+    h.state.update((state) => ({
+      ...state,
+      snapshot: { ...snapshot, tasks: [hostileTask] },
+    }));
+    flushSync();
+    expect(h.target.querySelector(".task-title")?.textContent).toBe(
+      hostileTask.title,
+    );
+    h.target.querySelector<HTMLButtonElement>(".task-row")!.click();
+    flushSync();
+    expect(h.target.querySelector(".task-description")?.textContent).toBe(
+      hostileTask.description,
+    );
+    expect(h.target.querySelector("script, img, iframe, object")).toBeNull();
+    const link = h.target.querySelector<HTMLAnchorElement>(
+      'a[href^="https://app.todoist.com/app/task/"]',
+    );
+    expect(link?.getAttribute("href")).toBe(
+      `https://app.todoist.com/app/task/${encodeURIComponent(hostileTask.id)}`,
+    );
+    expect(get(h.state).snapshot?.tasks[0]).toEqual(hostileTask);
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
   function occurrence() {
     const before = {
       ...task,
@@ -306,6 +341,7 @@ describe("custom Tasks panel", () => {
     );
     h.button("Confirm undo").click();
     flushSync();
+    expect(h.button("Saving undo…").disabled).toBe(true);
     expect(
       h.target.querySelector<HTMLButtonElement>(
         '[aria-label="Close task form"]',

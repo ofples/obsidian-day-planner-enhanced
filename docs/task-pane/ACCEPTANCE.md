@@ -133,10 +133,10 @@ Use deterministic provider responses for focused regression tests and a real dis
 | Evidence | State | Required record |
 | --- | --- | --- |
 | Baseline source | Confirmed | Original `82ae46ff` remains an ancestor. Baseline hotfix `87de378b` is pushed, merged into the feature and installed in the working vault |
-| New source checks | M5 recovery implemented | 1,178 full-suite passes and one inherited ICS timeout. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass |
+| New source checks | Integrated source verified | 1,233 full-suite passes and the inherited inclusive-last-day ICS failure. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass. Subsequent UI-label polish receives a focused component check |
 | Inherited ICS timeout | Known baseline issue | `tests/ical.test.ts`, last visible day inclusive case, independently reproduced on upstream previously |
-| Synthetic desktop acceptance | M6 partial | Custom forms, cached browsing, theme/width checks, source repair and restored-state controls verified. Large-list latency, exhaustive keyboard/IME/popout and real pointer acceptance continue |
-| Live Todoist acceptance | M5 API/native partial | Editing, capture, recurring history/undo, copied identities and fixture cleanup verified. Interrupted-tree repair and restored-state confirmation have native evidence. Historical-copy and undo native controls remain open |
+| Synthetic desktop acceptance | M6 final checks | Custom forms, cached browsing, source repair, restored-state controls, popout menus and retained-row native keyboard checks verified. The installed 2,000-task comparison improved warm clear/fold/expand to 117.7/56.6/85.3 ms. Day-view/Markdown drops and final visual/export checks continue. Native OS composition has no configured test input method |
+| Live Todoist acceptance | M5 representative workflows verified | Editing, capture, recurring history/Undo, copied identities and fixture cleanup verified. Interrupted-tree repair, restored-state review, historical Keep/Move/Create and occurrence Undo Cancel/Confirm have native and reload evidence |
 | Live Google acceptance | M5 readback verified | Stable owned event IDs, intervals, colors, subtask descriptions, exact feed exclusion, exporter collision handling and controlled cleanup verified. Final combined working-vault acceptance remains open |
 | Working-vault installation | Feature pending | Baseline hotfix is installed. Feature acceptance still requires matching backup, exact bundle hashes, reload and normal-entry readback |
 
@@ -586,3 +586,15 @@ The follow-up retains canonical complete-forest DOM order when visible rows are 
 A temporary Tasks popout passed native search, action-menu opening, arrow navigation to Edit and Escape dismissal. Removing the temporary leaf preserved the original leaves. Windows currently lists English and Hebrew keyboard layouts; an OS composition input method is unavailable for the native composition scenario. Simulated composition gating and Unicode source cases retain their separate evidence.
 
 Physical Escape released desktop control during preparation of the day-view/Markdown fixture. No drop or cancellation was exercised. Background canonical cleanup removed both tasks, owned events and the temporary timeline leaf, restored original note absence and pane preferences, and verified no remaining fixture work or error. The final row-order build is committed and production-built at `2c27abfc`. Its installed performance comparison, native retained-row keyboard checks, day-view/Markdown drop and cancellation, final visual/export checks and working-vault installation remain open. The working-vault bundle and styles match the clean baseline hotfix checkout at `87de378b`. That hotfix is an ancestor of the feature branch.
+
+
+## Installed retained-row ordering acceptance
+
+The matching `2c27abfc` bundle was installed with a full backup and equal source/installed hashes. A guarded visible seven-cycle comparison measured cold one-result startup at 35.9 ms with one mounted row, first full expansion at 394.5 ms with 2,000 rows, and warm median filter clearing/folding/expansion at 117.7/56.6/85.3 ms. Maximum observed long task was 360 ms. The preceding retention build measured 135.5/86.1/350.7 ms, and the earlier row-icon build measured 391.6/61.9/175.4 ms. Visible counts remained 1/2,000/1,001/2,000 while previously shown DOM stayed mounted. The fixture made zero provider requests and restored registry, cache and preferences exactly.
+
+Native input verified action-menu End navigation, Escape focus restoration to its originating control, root folding, scrolling, single-result search and keyboard clearing back to the complete forest. Folded hidden rows used display suppression, with zero horizontal overflow. Cleanup restored original preferences and registry/cache bytes. These results supply the large-list representative acceptance for A53. Timings describe this controlled fixture and retain the measured cold-load long-task limitation.
+
+
+## Final UI feedback and adversarial rendering checks
+
+The busy Undo label now uses a valid ellipsis and its existing operation-locking regression asserts the disabled Saving undo control. A focused component case renders HTML/script-like title and description text, a URL-like task ID and a large multilingual string with combining characters and emoji. It verifies literal untruncated row/detail text, absence of injected elements, a fixed Todoist origin with encoded task ID, unchanged cached fields and zero mutation calls. The component suite has 50 passes. The affected source file passes formatting and strict lint, and TypeScript passes. User-facing usage now covers recurrence, copied sources, permanent deletion and restored tracking.
