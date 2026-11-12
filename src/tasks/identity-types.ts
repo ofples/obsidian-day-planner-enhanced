@@ -3,7 +3,7 @@ import { z } from "zod";
 import { taskDraftSchema, type TaskOperation } from "./operations";
 import type { TaskRegistryState } from "./registry";
 import { taskProjectionSchema } from "./schedule-types";
-import { taskLinkSchema, taskSourceSchema } from "./source";
+import { identitySourceKey, taskLinkSchema, taskSourceSchema } from "./source";
 
 export const localTaskSourceSchema = z.object({
   provider: z.string(),
@@ -36,6 +36,18 @@ export const identityDecisionSchema = z
         completionId: z.uuid().optional(),
       }),
     ),
+    repairs: z
+      .array(
+        z.object({
+          id: z.uuid(),
+          fingerprint: z.string().min(1),
+          createdAt: z.iso.datetime(),
+          before: z.record(z.string(), taskSourceSchema),
+          after: z.record(z.string(), taskSourceSchema),
+          locals: z.record(z.string(), taskSourceSchema),
+        }),
+      )
+      .default([]),
     phase: z.enum(["creating", "complete", "cancelled"]),
     createdAt: z.iso.datetime(),
     error: z.string().optional(),
@@ -45,6 +57,26 @@ export const identityDecisionSchema = z
       const assignments = record.assignments;
       return (
         Object.keys(record.before.links).length > 0 &&
+        new Set(record.repairs.map((repair) => repair.id)).size ===
+          record.repairs.length &&
+        record.repairs.every((repair) => {
+          const uids = assignments
+            .filter((item) => item.kind === "create")
+            .map((item) => item.uid);
+          return (
+            uids.length > 0 &&
+            [repair.before, repair.after].every(
+              (sources) =>
+                Object.keys(sources).length === uids.length &&
+                uids.every((uid) => sources[uid]),
+            ) &&
+            Object.keys(repair.locals).every(
+              (uid) => !assignments.some((item) => item.uid === uid),
+            ) &&
+            new Set(Object.values(repair.after).map(identitySourceKey)).size ===
+              uids.length
+          );
+        }) &&
         Object.keys(record.before.historical ?? {}).every((uid) =>
           Boolean(record.before.links[uid]),
         ) &&

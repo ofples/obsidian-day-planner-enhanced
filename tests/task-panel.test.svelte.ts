@@ -411,7 +411,15 @@ describe("custom Tasks panel", () => {
       phase: "complete",
       createdAt: snapshot.fetchedAt,
     });
+    const sourceRepair = {
+      review: vi.fn(),
+      suggestTree: vi.fn((_review: unknown, uid: string, key: string) => ({
+        [uid]: key,
+      })),
+      confirm: vi.fn(),
+    };
     const controller = {
+      sourceRepair,
       review: vi.fn().mockResolvedValue(review),
       suggestTree: vi.fn(
         (_review: TaskIdentityReview, uid: string, key: string) => ({
@@ -561,6 +569,147 @@ describe("custom Tasks panel", () => {
     );
   });
 
+  test("unfinished source recovery opens a custom reassignment form, rechecks changes and locks saving", async () => {
+    const h = identityHarness(),
+      copy = h.review.sources[1]!,
+      other = parseCaptureCandidates(
+        "Spare.md",
+        "- [ ] Shopping copy #todoist",
+      )[0]!;
+    const record = identityDecisionSchema.parse({
+      ...h.record,
+      phase: "creating",
+      assignments: [
+        h.record.assignments[0],
+        { uid: "new", kind: "create", source: copy, draft: task },
+      ],
+    });
+    const review = {
+      decision: record,
+      links: {
+        new: {
+          ...h.review.before.links.source!,
+          taskId: "created-copy",
+          source: copy,
+        },
+      },
+      candidates: [copy, other],
+      retained: [copy, other],
+      selected: { new: "" },
+      fingerprint: "initial",
+      guard: "guard",
+      cached: true,
+    };
+    h.controller.sourceRepair.review.mockResolvedValue(review);
+    h.controller.sourceRepair.confirm.mockResolvedValueOnce({
+      kind: "changed",
+      review: { ...review, fingerprint: "updated" },
+    });
+    h.state.update((state) => ({ ...state, identityDecisions: [record] }));
+    h.action.set({ kind: "identity-record", id: record.id });
+    flushSync();
+    h.button("Repair selected sources").click();
+    await vi.waitFor(() => {
+      flushSync();
+      expect(
+        h.target.querySelector('[aria-label="Repair copied task sources"]'),
+      ).not.toBeNull();
+    });
+    expect(h.target.textContent).toContain("Task created");
+    expect(h.target.textContent).toContain("Using cached task details");
+    const select = h.target.querySelector<HTMLSelectElement>(
+      'select[aria-label="Recovery source for Shopping"]',
+    )!;
+    select.value = identitySourceKey(other);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    flushSync();
+    const form = h.target.querySelector<HTMLFormElement>(
+      '[aria-label="Repair copied task sources"]',
+    )!;
+    form.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.target.textContent).toContain("Review every selected source");
+    });
+    expect(select.value).toBe("");
+    let finish!: (value: { kind: string; id: string }) => void;
+    h.controller.sourceRepair.confirm.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    select.value = identitySourceKey(other);
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    flushSync();
+    form.dispatchEvent(
+      new Event("submit", { bubbles: true, cancelable: true }),
+    );
+    flushSync();
+    expect(h.button("Cancel source repair").disabled).toBe(true);
+    expect(
+      h.target.querySelector<HTMLButtonElement>(
+        '[aria-label="Close task form"]',
+      )!.disabled,
+    ).toBe(true);
+    press(form, "Escape");
+    expect(get(h.action)?.kind).toBe("identity-record");
+    finish({ kind: "saved", id: record.id });
+    await vi.waitFor(() => {
+      flushSync();
+      expect(
+        h.target.querySelector('[aria-label="Repair copied task sources"]'),
+      ).toBeNull();
+    });
+    expect(h.controller.sourceRepair.confirm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ fingerprint: "updated" }),
+      { new: identitySourceKey(other) },
+    );
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
+  test("cancelling the source reassignment form preserves the pending decision", async () => {
+    const h = identityHarness(),
+      copy = h.review.sources[1]!;
+    const record = identityDecisionSchema.parse({
+      ...h.record,
+      phase: "creating",
+      assignments: [
+        h.record.assignments[0],
+        { uid: "new", kind: "create", source: copy, draft: task },
+      ],
+    });
+    h.controller.sourceRepair.review.mockResolvedValue({
+      decision: record,
+      links: {
+        new: { ...h.review.before.links.source!, taskId: null, source: copy },
+      },
+      candidates: [copy],
+      retained: [copy],
+      selected: { new: identitySourceKey(copy) },
+      fingerprint: "initial",
+      guard: "guard",
+      cached: false,
+    });
+    h.state.update((state) => ({ ...state, identityDecisions: [record] }));
+    h.action.set({ kind: "identity-record", id: record.id });
+    flushSync();
+    h.button("Repair selected sources").click();
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.button("Cancel source repair")).toBeTruthy();
+    });
+    h.button("Cancel source repair").click();
+    flushSync();
+    expect(
+      h.target.querySelector('[aria-label="Saved task link decision"]'),
+    ).not.toBeNull();
+    expect(h.controller.sourceRepair.confirm).not.toHaveBeenCalled();
+    expect(h.controller.cancel).not.toHaveBeenCalled();
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
   test.each([true, false])(
     "saved source recovery uses its durable cancellability value %s",
     (cancellable) => {

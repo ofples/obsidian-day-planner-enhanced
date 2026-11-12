@@ -8,6 +8,8 @@
   import type { TaskIdentityDecisionView } from "../../tasks/identity-types";
   import { identitySourceKey } from "../../tasks/source";
 
+  import TaskPanelSourceRepair from "./task-panel-source-repair.svelte";
+
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Svelte validates annotated component props.
   let {
     controller,
@@ -38,6 +40,7 @@
   let mode: "keep" | "move" | "create" = $state("keep"),
     linked: Record<string, string> = $state({}),
     create: string[] = $state([]);
+  let repairing = $state(false);
   let closed = false;
   const canCancel = $derived(Boolean(decision?.cancellable));
   async function load() {
@@ -140,7 +143,20 @@
   }
 </script>
 
-{#if decision}<section
+{#if decision && repairing}<TaskPanelSourceRepair
+    id={decision.id}
+    cancel={() => {
+      repairing = false;
+    }}
+    controller={controller.sourceRepair}
+    saved={() => {
+      repairing = false;
+      saved(decision!.id);
+    }}
+    {setBusy}
+    {writable}
+  />
+{:else if decision}<section
     class="task-panel-form"
     aria-label="Saved task link decision"
   >
@@ -151,10 +167,15 @@
           ? "Source decision cancelled"
           : "Finishing task links"}
     </h3>
-    {#each decision.assignments as assignment (assignment.uid)}<div
-        class="task-form-context"
-      >
-        <strong>{assignment.source.title}</strong>
+    {#each decision.assignments as assignment (assignment.uid)}
+      {@const source =
+        decision.repairs
+          .toReversed()
+          .find((repair) => repair.after[assignment.uid])?.after[
+          assignment.uid
+        ] ?? assignment.source}
+      <div class="task-form-context">
+        <strong>{source.title}</strong>
         <p>
           {assignment.kind === "linked"
             ? decision.before.historical?.[assignment.uid]
@@ -162,12 +183,12 @@
               : "Existing task"
             : assignment.kind === "create"
               ? "Separate task"
-              : "Local checklist"} · {assignment.source.path}
+              : "Local checklist"} · {source.path}
         </p>
         <button
           class="task-text-button"
           disabled={!openNote}
-          onclick={() => openNote?.(assignment.source.path)}>Open note</button
+          onclick={() => openNote?.(source.path)}>Open note</button
         >
       </div>{/each}
     {#if decision.error || error}<p class="task-form-error" role="status">
@@ -179,7 +200,22 @@
         onclick={() => reviewLinks(Object.keys(decision!.before.links)[0]!)}
         >Review source choices</button
       >{/if}
+    {#if decision.phase === "cancelled" && decision.repairs.length}<p
+        class="task-form-context"
+      >
+        Repaired copies remain local checklists.
+      </p>{/if}
+    {#if decision.repairs.length}<p class="task-form-context">
+        Source repairs saved · {decision.repairs.length}
+      </p>{/if}
     {#if decision.phase === "creating"}<div class="task-form-actions">
+        <button
+          class="task-text-button"
+          disabled={busy || !writable}
+          onclick={() => {
+            repairing = true;
+          }}>Repair selected sources</button
+        >
         <button
           class="task-primary"
           disabled={busy || !writable}

@@ -1,7 +1,8 @@
 import { nativeSourceBlockId } from "../service/source-identity";
 
 import type { CaptureCandidate } from "./capture-parser";
-import type { TaskSource } from "./source";
+import { identitySourceKey, type TaskSource } from "./source";
+import { TaskReadError } from "./types";
 
 export interface TaskSourceCopies {
   uids: string[];
@@ -88,4 +89,49 @@ export function findTaskSourceCopies(
     for (const candidate of nested) covered.add(candidate);
   }
   return groups;
+}
+
+export function suggestTaskSourceTree(
+  candidates: CaptureCandidate[],
+  links: Record<string, { source: TaskSource }>,
+  uid: string,
+  key: string,
+) {
+  const original = links[uid]?.source;
+  const source = candidates.find(
+    (candidate) => identitySourceKey(candidate) === key,
+  );
+  if (!original || !source)
+    throw new TaskReadError("Choose a current source for this task.");
+  const linked: Record<string, string> = { [uid]: key };
+  for (const [childUid, link] of Object.entries(links)) {
+    if (!contains(original, link.source) || original.from === link.source.from)
+      continue;
+    const blockId = nativeSourceBlockId(link.source.raw);
+    const exact =
+      original.raw === source.raw
+        ? candidates.find(
+            (candidate) =>
+              contains(source, candidate) &&
+              source.from !== candidate.from &&
+              candidate.from - source.from ===
+                link.source.from - original.from &&
+              candidate.raw === link.source.raw,
+          )
+        : undefined;
+    const matches = exact
+      ? [exact]
+      : candidates.filter(
+          (candidate) =>
+            contains(source, candidate) &&
+            source.from !== candidate.from &&
+            ((original.raw === source.raw &&
+              candidate.from - source.from ===
+                link.source.from - original.from) ||
+              (blockId && nativeSourceBlockId(candidate.raw) === blockId) ||
+              candidate.raw === link.source.raw),
+        );
+    if (matches.length === 1) linked[childUid] = identitySourceKey(matches[0]!);
+  }
+  return linked;
 }

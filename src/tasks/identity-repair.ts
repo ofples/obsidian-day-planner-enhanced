@@ -1,11 +1,10 @@
 import { get } from "svelte/store";
 
-import { nativeSourceBlockId } from "../service/source-identity";
-
 import { routeCapture, type TaskCapture } from "./capture";
 import type { CaptureCandidate } from "./capture-parser";
 import type { TaskCaptureSettings } from "./capture-settings";
 import { pendingTaskDeletion } from "./deletion-types";
+import { TaskIdentitySourceRepairController } from "./identity-source-repair";
 import { pendingIdentityDecision } from "./identity-types";
 import {
   historicalIdentityOwner,
@@ -23,6 +22,7 @@ import {
 import type { TaskRegistryState } from "./registry";
 import type { TaskService } from "./service";
 import { identitySourceKey, taskSourceSchema, type TaskSource } from "./source";
+import { suggestTaskSourceTree } from "./source-copies";
 import { TaskReadError } from "./types";
 
 export { identitySourceKey } from "./source";
@@ -108,6 +108,7 @@ function sourceOwner(
 }
 
 export class TaskIdentityRepairController {
+  readonly sourceRepair: TaskIdentitySourceRepairController;
   private pending?: Promise<void>;
   private readonly confirmations = new Map<
     string,
@@ -121,7 +122,14 @@ export class TaskIdentityRepairController {
     private readonly capture: TaskCapture,
     private readonly settings: () => TaskCaptureSettings,
     private readonly active: () => boolean,
-  ) {}
+  ) {
+    this.sourceRepair = new TaskIdentitySourceRepairController(
+      service,
+      capture,
+      active,
+      () => this.resume(),
+    );
+  }
 
   private current(owner: { provider: string; accountId: string }) {
     const state = get(this.service.state);
@@ -335,41 +343,12 @@ export class TaskIdentityRepairController {
   }
 
   suggestTree(review: TaskIdentityReview, uid: string, key: string) {
-    const original = review.before.links[uid]?.source;
-    const source = review.candidates.find(
-      (candidate) => identitySourceKey(candidate) === key,
+    return suggestTaskSourceTree(
+      review.candidates,
+      review.before.links,
+      uid,
+      key,
     );
-    if (!original || !source)
-      throw new TaskReadError("Choose a current source for this task.");
-    const linked: Record<string, string> = { [uid]: key };
-    for (const [childUid, link] of Object.entries(review.before.links)) {
-      if (!inside(original, link.source)) continue;
-      const blockId = nativeSourceBlockId(link.source.raw);
-      const exact =
-        original.raw === source.raw
-          ? review.candidates.find(
-              (candidate) =>
-                inside(source, candidate) &&
-                candidate.from - source.from ===
-                  link.source.from - original.from &&
-                candidate.raw === link.source.raw,
-            )
-          : undefined;
-      const matches = exact
-        ? [exact]
-        : review.candidates.filter(
-            (candidate) =>
-              inside(source, candidate) &&
-              ((original.raw === source.raw &&
-                candidate.from - source.from ===
-                  link.source.from - original.from) ||
-                (blockId && nativeSourceBlockId(candidate.raw) === blockId) ||
-                candidate.raw === link.source.raw),
-          );
-      if (matches.length === 1)
-        linked[childUid] = identitySourceKey(matches[0]!);
-    }
-    return linked;
   }
 
   private decision(review: TaskIdentityReview, choices: TaskIdentityChoices) {
@@ -652,16 +631,26 @@ export class TaskIdentityRepairController {
         throw new TaskReadError(
           "Task creation has started. Finish this decision's saved recovery.",
         );
+      const localCopies = decision.repairs.length
+        ? [
+            ...Object.values(state.localSources)
+              .filter((local) => local.decisionId === id)
+              .map((local) => local.source),
+            ...decision.assignments
+              .filter((item) => item.kind === "create")
+              .flatMap((item) =>
+                state.links[item.uid] ? [state.links[item.uid]!.source] : [],
+              ),
+          ]
+        : [];
       for (const command of commands) {
         command.status = "cancelled";
         command.error = undefined;
       }
-      for (const assignment of decision.assignments) {
-        if (assignment.kind === "local")
-          delete state.localSources[assignment.uid];
-        else if (assignment.kind === "create")
-          delete state.links[assignment.uid];
-      }
+      for (const [uid, local] of Object.entries(state.localSources))
+        if (local.decisionId === id) delete state.localSources[uid];
+      for (const assignment of decision.assignments)
+        if (assignment.kind === "create") delete state.links[assignment.uid];
       for (const [uid, link] of Object.entries(decision.before.links))
         sourceOwner(state, decision.before, uid).links[uid] = link;
       for (const [uid, projection] of Object.entries(
@@ -669,6 +658,25 @@ export class TaskIdentityRepairController {
       ))
         sourceOwner(state, decision.before, uid).projections[uid] = projection;
       Object.assign(state.localSources, decision.before.localSources);
+      const kept = new Set([
+        ...Object.values(decision.before.links).map((link) =>
+          identitySourceKey(link.source),
+        ),
+        ...Object.values(state.localSources).map((local) =>
+          identitySourceKey(local.source),
+        ),
+      ]);
+      for (const source of localCopies) {
+        const key = identitySourceKey(source);
+        if (kept.has(key)) continue;
+        kept.add(key);
+        state.localSources[crypto.randomUUID().replaceAll("-", "")] = {
+          provider: decision.provider,
+          accountId: decision.accountId,
+          decisionId: id,
+          source,
+        };
+      }
       decision.phase = "cancelled";
       decision.error = undefined;
     });

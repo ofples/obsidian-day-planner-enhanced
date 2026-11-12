@@ -246,6 +246,288 @@ async function historicalSetup() {
 }
 
 describe("task identity decisions", () => {
+  test("manual source repair retains a created parent and resumes its missing child with the original identities", async () => {
+    const h = await setup("- [ ] Parent #todoist\n  - [ ] Child #todoist"),
+      uid = Object.keys(h.links)[0]!;
+    const review = await h.controller.review(uid),
+      original = review.sources.find((source) => source.path === "Tasks.md")!,
+      copy = review.sources.find((source) => source.path === "Copy.md")!;
+    h.normalizeNext({ title: "Normalized parent" });
+    await h.controller.confirm(review, {
+      linked: h.controller.suggestTree(
+        review,
+        uid,
+        identitySourceKey(original),
+      ),
+      create: [identitySourceKey(copy)],
+    });
+    const record = Object.values(
+        h.service.registry.snapshot().identityDecisions,
+      )[0]!,
+      assignments = structuredClone(record.assignments),
+      parent = record.assignments.find(
+        (item) => item.kind === "create" && !item.parentUid,
+      )!,
+      child = record.assignments.find(
+        (item) => item.kind === "create" && item.parentUid,
+      )!;
+    const rootCommand = h.service.registry
+        .snapshot()
+        .operations.find((op) => op.sourceUid === parent.uid)!,
+      remoteId = rootCommand.remoteId;
+    expect(rootCommand.status).toBe("conflict");
+    expect(remoteId).toBeTruthy();
+    expect(
+      h.service.registry
+        .snapshot()
+        .operations.some((op) => op.sourceUid === child.uid),
+    ).toBe(false);
+    const edited =
+      "- [ ] First choice #todoist\n  - [ ] Child A #todoist\n- [ ] Second choice #todoist\n  - [ ] Child B #todoist";
+    h.texts.set("Copy.md", edited);
+    await h.capture.scan();
+    const repair = await h.controller.sourceRepair.review(record.id);
+    const parentSource = repair.candidates.find(
+        (source) => source.title === "Second choice",
+      )!,
+      childSource = repair.candidates.find(
+        (source) => source.title === "Child B",
+      )!;
+    expect(Object.values(repair.selected)).toEqual(["", ""]);
+    const choices = {
+      [parent.uid]: identitySourceKey(parentSource),
+      [child.uid]: identitySourceKey(childSource),
+    };
+    const saved = await h.controller.sourceRepair.confirm(repair, choices);
+    expect(saved).toEqual({ kind: "saved", id: record.id });
+    const intermediate = h.service.registry.snapshot();
+    expect(intermediate.identityDecisions[record.id]!.repairs).toHaveLength(1);
+    expect(intermediate.identityDecisions[record.id]!.assignments).toEqual(
+      assignments,
+    );
+    expect(intermediate.links[parent.uid]!.taskId).toBe(remoteId);
+    await expect(h.controller.cancel(record.id)).rejects.toThrow(
+      "Task creation has started",
+    );
+    expect(
+      intermediate.operations.find((op) => op.id === rootCommand.id)!.mutation,
+    ).toEqual(rootCommand.mutation);
+    expect(Object.values(intermediate.localSources)).toHaveLength(2);
+    expect(h.texts.get("Copy.md")).toBe(edited);
+    const conflict = await h.service.inspectConflict(rootCommand.id);
+    await h.service.resolveConflict(
+      conflict,
+      Object.fromEntries(
+        conflict.fields.map((item) => [item.key, "remote" as const]),
+      ),
+    );
+    await h.controller.resume();
+    await h.capture.scan();
+    const state = h.service.registry.snapshot();
+    expect(state.identityDecisions[record.id]!.phase).toBe("complete");
+    expect(state.links[parent.uid]!.taskId).toBe(remoteId);
+    expect(state.links[parent.uid]!.source.title).toBe("Second choice");
+    expect(state.links[child.uid]!.source.title).toBe("Child B");
+    expect(state.links[parent.uid]!.noteBase?.raw).toBe(copy.raw);
+    expect(h.remote.get(state.links[child.uid]!.taskId!)?.parentId).toBe(
+      remoteId,
+    );
+    expect(
+      state.operations
+        .filter(
+          (op) => op.sourceUid === parent.uid && op.mutation.kind === "create",
+        )
+        .map((op) => op.id),
+    ).toEqual([rootCommand.id]);
+    expect(
+      state.operations.filter(
+        (op) => op.sourceUid === child.uid && op.mutation.kind === "create",
+      ),
+    ).toHaveLength(1);
+    expect(h.remote.size).toBe(4);
+    expect(get(h.capture.state).issues).toEqual([]);
+    const commands = state.operations.length;
+    await h.restart();
+    await h.capture.scan();
+    expect(await h.controller.sourceRepair.confirm(repair, choices)).toEqual(
+      saved,
+    );
+    expect(h.service.registry.snapshot().operations).toHaveLength(commands);
+    expect(
+      h.service.registry.snapshot().identityDecisions[record.id]!.repairs,
+    ).toHaveLength(1);
+    h.service.stop();
+  });
+
+  test("cancelling a repaired unsent decision keeps edited copies local across restart", async () => {
+    const h = await setup(),
+      uid = Object.keys(h.links)[0]!,
+      review = await h.controller.review(uid);
+    h.setOffline(true);
+    await h.controller.confirm(review, {
+      linked: {
+        [uid]: identitySourceKey(
+          review.sources.find((source) => source.path === "Tasks.md")!,
+        ),
+      },
+      create: [
+        identitySourceKey(
+          review.sources.find((source) => source.path === "Copy.md")!,
+        ),
+      ],
+    });
+    const record = Object.values(
+        h.service.registry.snapshot().identityDecisions,
+      )[0]!,
+      created = record.assignments.find((item) => item.kind === "create")!;
+    const edited = "- [ ] First choice #todoist\n- [ ] Second choice #todoist";
+    h.texts.set("Copy.md", edited);
+    await h.capture.scan();
+    const repair = await h.controller.sourceRepair.review(record.id),
+      source = repair.candidates.find(
+        (source) => source.title === "Second choice",
+      )!;
+    await h.controller.sourceRepair.confirm(repair, {
+      [created.uid]: identitySourceKey(source),
+    });
+    await h.controller.cancel(record.id);
+    expect(h.service.registry.snapshot().links).toEqual(h.links);
+    expect(
+      Object.values(h.service.registry.snapshot().localSources),
+    ).toHaveLength(2);
+    expect(h.texts.get("Copy.md")).toBe(edited);
+    h.setOffline(false);
+    await h.restart();
+    await h.capture.scan();
+    await h.service.refresh();
+    expect(h.remote.size).toBe(1);
+    expect(h.service.registry.snapshot().links).toEqual(h.links);
+    expect(
+      h.service.registry.snapshot().identityDecisions[record.id]!.phase,
+    ).toBe("cancelled");
+    expect(get(h.capture.state).issues).toEqual([]);
+    h.service.stop();
+  });
+
+  test("source repair rejects a claimed original block and rechecks changed candidates", async () => {
+    const h = await setup(),
+      uid = Object.keys(h.links)[0]!,
+      review = await h.controller.review(uid);
+    h.setOffline(true);
+    await h.controller.confirm(review, {
+      linked: {
+        [uid]: identitySourceKey(
+          review.sources.find((source) => source.path === "Tasks.md")!,
+        ),
+      },
+      create: [
+        identitySourceKey(
+          review.sources.find((source) => source.path === "Copy.md")!,
+        ),
+      ],
+    });
+    const record = Object.values(
+        h.service.registry.snapshot().identityDecisions,
+      )[0]!,
+      created = record.assignments.find((item) => item.kind === "create")!;
+    let repair = await h.controller.sourceRepair.review(record.id);
+    expect(
+      repair.candidates.every((source) => source.path !== "Tasks.md"),
+    ).toBe(true);
+    await expect(
+      h.controller.sourceRepair.confirm(repair, {
+        [created.uid]: identitySourceKey(
+          review.sources.find((source) => source.path === "Tasks.md")!,
+        ),
+      }),
+    ).rejects.toThrow("available note block");
+    h.texts.set("Copy.md", "Heading\n" + h.texts.get("Copy.md"));
+    const changed = await h.controller.sourceRepair.confirm(
+      repair,
+      repair.selected,
+    );
+    expect(changed.kind).toBe("changed");
+    expect(
+      h.service.registry.snapshot().identityDecisions[record.id]!.repairs,
+    ).toEqual([]);
+    repair = await h.controller.sourceRepair.review(record.id);
+    h.failState(true);
+    await expect(
+      h.controller.sourceRepair.confirm(repair, repair.selected),
+    ).rejects.toThrow("State unavailable");
+    expect(
+      h.service.registry.snapshot().identityDecisions[record.id]!.repairs,
+    ).toEqual([]);
+    expect(h.remote.size).toBe(1);
+    h.service.stop();
+  });
+
+  test("whole-tree source repair follows nested offsets and saves the displaced copies as local", async () => {
+    const h = await setup("- [ ] Parent #todoist\n  - [ ] Child #todoist"),
+      uid = Object.keys(h.links)[0]!,
+      review = await h.controller.review(uid);
+    h.setOffline(true);
+    await h.controller.confirm(review, {
+      linked: h.controller.suggestTree(
+        review,
+        uid,
+        identitySourceKey(
+          review.sources.find((source) => source.path === "Tasks.md")!,
+        ),
+      ),
+      create: [
+        identitySourceKey(
+          review.sources.find((source) => source.path === "Copy.md")!,
+        ),
+      ],
+    });
+    const record = Object.values(
+        h.service.registry.snapshot().identityDecisions,
+      )[0]!,
+      parent = record.assignments.find(
+        (item) => item.kind === "create" && !item.parentUid,
+      )!;
+    h.texts.set("Other.md", h.texts.get("Copy.md")!);
+    const repair = await h.controller.sourceRepair.review(record.id),
+      source = repair.candidates.find(
+        (source) =>
+          source.path === "Other.md" && source.parentFrom === undefined,
+      )!;
+    const selected = h.controller.sourceRepair.suggestTree(
+      repair,
+      parent.uid,
+      identitySourceKey(source),
+    );
+    expect(Object.keys(selected)).toHaveLength(2);
+    const confirmations = await Promise.all([
+      h.controller.sourceRepair.confirm(repair, selected),
+      h.controller.sourceRepair.confirm(repair, selected),
+    ]);
+    expect(confirmations[0]).toEqual(confirmations[1]);
+    expect(
+      h.service.registry.snapshot().identityDecisions[record.id]!.repairs,
+    ).toHaveLength(1);
+    expect(
+      Object.values(h.service.registry.snapshot().localSources).every(
+        (local) => local.source.path === "Copy.md",
+      ),
+    ).toBe(true);
+    h.setOffline(false);
+    await h.restart();
+    await h.controller.retry(record.id);
+    await h.capture.scan();
+    const state = h.service.registry.snapshot();
+    expect(state.identityDecisions[record.id]!.phase).toBe("complete");
+    expect(
+      record.assignments
+        .filter((item) => item.kind === "create")
+        .every((item) => state.links[item.uid]!.source.path === "Other.md"),
+    ).toBe(true);
+    expect(h.remote.size).toBe(4);
+    expect(get(h.capture.state).issues).toEqual([]);
+    h.service.stop();
+  });
+
   test.each(["Tasks.md", "Copy.md"])(
     "historical copies retain occurrence ownership when choosing %s",
     async (path) => {

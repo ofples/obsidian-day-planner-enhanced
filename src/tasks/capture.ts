@@ -352,6 +352,7 @@ export class TaskCapture {
     }
     const ambiguousPaths = new Set(identityIssues.map((issue) => issue.path));
     return {
+      inventory: candidates,
       candidates: candidates.filter(
         (candidate) =>
           !blocked.has(candidate) &&
