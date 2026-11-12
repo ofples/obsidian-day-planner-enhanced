@@ -339,3 +339,10 @@ A controlled installed-view fixture rendered 2,000 tasks, including a 1,000-deep
 The pane now creates one task action menu on demand. The menu follows current visible task data and disappears when that task leaves the visible forest. Context-menu, keyboard and action-button entry points share the same custom menu. Cached tasks focus the available provider link. Escape returns focus to the originating control. Schedule badges use one indexed projection lookup per task, preserving the previous first-match behavior.
 
 A 2,000-task component regression verifies zero initial menus and one shared menu after switching tasks, including renamed and removed tasks. Keyboard navigation, cached-state focus and permanent-deletion entry remain covered. The two-file focused subset has 47 passes. Full validation has 1,142 passes, the inherited inclusive-last-day ICS timeout, nine skips and 17 todo cases. TypeScript, zero-warning Svelte diagnostics, the strict scorecard and production build pass. Installed rendering and native menu verification follow.
+
+
+### Installed shared menu and offscreen rendering
+
+The shared-menu build reduced the same controlled 2,000-task initial render from approximately 1.7 seconds to 1.1 seconds. Native input opened the shared menu for a nested cached task. Readback verified one open menu, focus on the available provider link and zero provider calls. Native Escape closed it and returned focus to its originating action button. The fixture restored original view state and preserved registry/cache bytes.
+
+Rows now use browser-managed offscreen content visibility with remembered intrinsic block sizing. This retains the full task forest and keyboard targets while deferring offscreen rendering work. Native scrolling, focus and repeated profiling of this style change follow in the isolated vault. Direct CSS lint reports two existing property-order warnings outside the changed row rule. Production build passes.

@@ -410,6 +410,9 @@
 }
 
 .dp-task-panel .task-row-container {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 40px;
+
   position: relative;
 
   display: grid;
