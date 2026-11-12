@@ -1,5 +1,6 @@
+import { webcrypto } from "node:crypto";
 import { get } from "svelte/store";
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { TaskCapture } from "../src/tasks/capture";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
@@ -16,6 +17,8 @@ import {
   type ProviderTask,
   type TaskSnapshot,
 } from "../src/tasks/types";
+
+beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 async function setup(raw = "- [ ] Work #todoist") {
   let cache: string | null = null,
@@ -409,6 +412,122 @@ describe("task identity decisions", () => {
     h.service.stop();
   });
 
+  test.each([false, true])(
+    "historical source evidence remains scoped during pending recovery with a present source %s",
+    async (present) => {
+      const h = await setup(),
+        uid = Object.keys(h.links)[0]!,
+        review = await h.controller.review(uid);
+      h.setOffline(true);
+      await h.controller.confirm(review, {
+        linked: {
+          [uid]: identitySourceKey(
+            review.sources.find((source) => source.path === "Tasks.md")!,
+          ),
+        },
+        create: [
+          identitySourceKey(
+            review.sources.find((source) => source.path === "Copy.md")!,
+          ),
+        ],
+      });
+      const record = Object.values(
+          h.service.registry.snapshot().identityDecisions,
+        )[0]!,
+        created = record.assignments.find((item) => item.kind === "create")!;
+      const old = {
+        ...h.links[uid]!.base!,
+        id: "past-task",
+        title: "An older occurrence",
+        completionCount: 0,
+        due: {
+          date: "2026-11-10",
+          recurring: true,
+          text: "every day",
+          timezone: "UTC",
+        },
+      };
+      const source = parseCaptureCandidates(
+          "Copy.md",
+          "- [x] An older occurrence #todoist",
+        )[0]!,
+        oldLink = { ...h.links[uid]!, taskId: old.id, base: old, source };
+      const history = taskOccurrenceSchema.parse({
+        id: crypto.randomUUID(),
+        provider: "todoist",
+        accountId: "account",
+        before: {
+          task: old,
+          children: [],
+          links: { past: oldLink },
+          projections: {},
+        },
+        next: {
+          ...old,
+          completionCount: 1,
+          due: { ...old.due, date: "2026-11-11" },
+        },
+        links: { past: oldLink },
+        projections: {},
+        phase: "complete",
+        recovered: false,
+        requestedAt: "2026-11-10T00:00:00Z",
+        verifiedAt: "2026-11-10T00:01:00Z",
+      });
+      await h.service.registry.change((state) => {
+        state.occurrences[history.id] = history;
+      });
+      h.texts.set(
+        "Copy.md",
+        `- [ ] ${present ? "An older occurrence" : "First choice"} #todoist\n- [ ] Second choice #todoist`,
+      );
+      await h.capture.scan();
+      const repair = await h.controller.sourceRepair.review(record.id);
+      expect(repair.candidates.map((source) => source.title)).toEqual(
+        present ? ["Second choice"] : ["First choice", "Second choice"],
+      );
+      if (present)
+        await expect(
+          h.controller.sourceRepair.confirm(repair, {
+            [created.uid]: identitySourceKey(
+              parseCaptureCandidates("Copy.md", h.texts.get("Copy.md")!)[0]!,
+            ),
+          }),
+        ).rejects.toThrow("available note block");
+      const chosen = repair.candidates.find(
+        (source) => source.title === "Second choice",
+      )!;
+      await h.controller.sourceRepair.confirm(repair, {
+        [created.uid]: identitySourceKey(chosen),
+      });
+      expect(
+        h.service.registry.snapshot().occurrences[history.id]!.before,
+      ).toEqual(history.before);
+      expect(
+        h.service.registry.snapshot().occurrences[history.id]!.links.past!
+          .taskId,
+      ).toBe(old.id);
+      h.setOffline(false);
+      await h.restart();
+      await h.controller.retry(record.id);
+      await h.capture.scan();
+      expect(h.remote.size).toBe(2);
+      expect(
+        h.service.registry.snapshot().occurrences[history.id]!.before,
+      ).toEqual(history.before);
+      expect(
+        h.service.registry.snapshot().occurrences[history.id]!.links.past!
+          .taskId,
+      ).toBe(old.id);
+      expect(
+        get(h.capture.state).issues.some(
+          (issue) => issue.occurrenceId === history.id,
+        ),
+      ).toBe(present);
+      h.service.stop();
+    },
+  );
+
   test("source repair rejects a claimed original block and rechecks changed candidates", async () => {
     const h = await setup(),
       uid = Object.keys(h.links)[0]!,
@@ -512,6 +631,30 @@ describe("task identity decisions", () => {
         (local) => local.source.path === "Copy.md",
       ),
     ).toBe(true);
+    for (const path of ["Copy.md", "Other.md"]) {
+      const next = await h.controller.sourceRepair.review(record.id),
+        source = next.candidates.find(
+          (candidate) =>
+            candidate.path === path && candidate.parentFrom === undefined,
+        )!;
+      await h.controller.sourceRepair.confirm(
+        next,
+        h.controller.sourceRepair.suggestTree(
+          next,
+          parent.uid,
+          identitySourceKey(source),
+        ),
+      );
+    }
+    const repaired =
+      h.service.registry.snapshot().identityDecisions[record.id]!;
+    expect(repaired.repairs).toHaveLength(3);
+    expect(
+      repaired.repairs.every((repair) => repair.fingerprint.length === 64),
+    ).toBe(true);
+    expect(JSON.stringify(repaired).length).toBeLessThan(
+      JSON.stringify(record).length + 10000,
+    );
     h.setOffline(false);
     await h.restart();
     await h.controller.retry(record.id);

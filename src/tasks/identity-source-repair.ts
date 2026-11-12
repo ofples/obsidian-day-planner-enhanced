@@ -1,5 +1,7 @@
 import { get } from "svelte/store";
 
+import { nativeSourceBlockId } from "../service/source-identity";
+
 import type { TaskCapture, TaskIdentityIssue } from "./capture";
 import type { CaptureCandidate } from "./capture-parser";
 import {
@@ -38,6 +40,29 @@ function issueIncludes(issue: TaskIdentityIssue, candidate: CaptureCandidate) {
     : issue.candidate
       ? includesSource(issue.candidate, candidate)
       : issue.path === candidate.path;
+}
+
+async function repairFingerprint(value: string) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(value),
+  );
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function hasSourceEvidence(source: TaskSource, candidates: CaptureCandidate[]) {
+  const blockId = nativeSourceBlockId(source.raw);
+  return candidates.some(
+    (candidate) =>
+      source.raw.replace(/\r\n/g, "\n") ===
+        candidate.raw.replace(/\r\n/g, "\n") ||
+      (source.path === candidate.path &&
+        (source.title === candidate.title ||
+          (Boolean(blockId) &&
+            nativeSourceBlockId(candidate.raw) === blockId))),
+  );
 }
 
 function repairGuard(state: TaskRegistryState, decision: TaskIdentityDecision) {
@@ -153,8 +178,18 @@ export class TaskIdentitySourceRepairController {
         candidate.uid ? [candidate.uid] : [],
       ),
     );
+    const historical = new Map(
+      historicalTaskLinks(state).map((item) => [item.uid, item.link.source]),
+    );
     const unavailable = inspection.identityIssues.filter((issue) =>
-      issue.uids.some((uid) => !owned.has(uid) && !proven.has(uid)),
+      issue.uids.some(
+        (uid) =>
+          !owned.has(uid) &&
+          !proven.has(uid) &&
+          (!historical.has(uid) ||
+            state.links[uid] ||
+            hasSourceEvidence(historical.get(uid)!, inventory)),
+      ),
     );
     const candidates = inventory.filter((candidate) => {
       const known = inspection.inventory.find(
@@ -206,14 +241,19 @@ export class TaskIdentitySourceRepairController {
       );
     const current = this.service.registry.snapshot();
     const plan = { decision, links, candidates, retained, selected };
+    const guard = repairGuard(current, decision);
+    const fingerprint = await repairFingerprint(
+      JSON.stringify({ plan, guard }),
+    );
+    if (!this.current(decision))
+      throw new TaskReadError(
+        "The account changed during source repair review.",
+      );
     return {
       ...plan,
       cached: Boolean(get(this.service.state).error),
-      guard: repairGuard(current, decision),
-      fingerprint: JSON.stringify({
-        plan,
-        guard: repairGuard(current, decision),
-      }),
+      guard,
+      fingerprint,
     };
   }
 
@@ -228,15 +268,21 @@ export class TaskIdentitySourceRepairController {
     | { kind: "changed"; review: TaskSourceRepairReview }
     | { kind: "saved"; id: string }
   > {
-    const fingerprint = JSON.stringify({
+    const input = JSON.stringify({
       review: review.fingerprint,
       selected: Object.entries(selected).toSorted(([a], [b]) =>
         a.localeCompare(b),
       ),
     });
+    const fingerprint = await repairFingerprint(input);
     const prior =
       this.service.registry.snapshot().identityDecisions[review.decision.id];
-    if (prior?.repairs.some((repair) => repair.fingerprint === fingerprint)) {
+    if (
+      prior?.repairs.some(
+        (repair) =>
+          repair.fingerprint === fingerprint || repair.fingerprint === input,
+      )
+    ) {
       if (!this.current(prior))
         throw new TaskReadError(
           "Reconnect the original account before resuming this source repair.",
