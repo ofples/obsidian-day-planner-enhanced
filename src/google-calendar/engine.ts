@@ -43,7 +43,10 @@ export async function recoverCalendarProjection({
     throw new Error(
       "Review this event's calendar ownership before recovering its export.",
     );
-  const current = snapshotOf(event);
+  const current = snapshotOf(
+    event,
+    isOwned(event, state.namespace, uid) ? "" : undefined,
+  );
   if (
     record &&
     (!current ||
@@ -187,7 +190,10 @@ export async function syncCalendar({
       byEvent.get(record.eventId) ?? (await api.get(record.eventId));
     let colorEvent = remote;
     const remoteDeleted = !remote || remote.status === "cancelled";
-    const remoteSnapshot = remote && snapshotOf(remote);
+    const owned = remote !== null && isOwned(remote, state.namespace, uid);
+    // Google may omit the summary of a time-only block.
+    const untitled = owned ? "" : undefined;
+    const remoteSnapshot = remote && snapshotOf(remote, untitled);
     const localChanged = local && !sameSnapshot(local.snapshot, record.base);
     const remoteChanged =
       remoteSnapshot && !sameSnapshot(remoteSnapshot, record.base);
@@ -220,7 +226,6 @@ export async function syncCalendar({
       continue;
     }
     if (!local) {
-      const owned = isOwned(remote, state.namespace, uid);
       if (record.eventId === exportId(state.namespace, uid) && !owned) {
         conflict("the event's Day Planner ownership could not be verified");
         continue;
@@ -257,7 +262,7 @@ export async function syncCalendar({
     if (localChanged && !remoteChanged) {
       const updated = await api.update(remote, local.snapshot);
       colorEvent = updated;
-      record.base = snapshotOf(updated) ?? local.snapshot;
+      record.base = snapshotOf(updated, untitled) ?? local.snapshot;
       result.pushed++;
     } else if (remoteChanged && !localChanged) {
       const updated = await notes.write(uid, remoteSnapshot, local);
@@ -304,7 +309,7 @@ export async function syncCalendar({
       await save();
       event = await api.create(eventId, local.uid, local.snapshot, local);
     }
-    const existing = snapshotOf(event);
+    const existing = snapshotOf(event, "");
     if (
       !isOwned(event, state.namespace, local.uid) ||
       !existing ||

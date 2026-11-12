@@ -27,6 +27,17 @@ function headingText(heading: Heading) {
     .join("");
 }
 
+export function hasPlannerSection(text: string, settings: DayPlannerSettings) {
+  return (
+    !settings.plannerHeading ||
+    fromMarkdown(text).children.some(
+      (node) =>
+        node.type === "heading" &&
+        headingText(node) === settings.plannerHeading,
+    )
+  );
+}
+
 /** Use the planner's AST and time parser, with source offsets for minimal writes. */
 export function parseBlocks(
   text: string,

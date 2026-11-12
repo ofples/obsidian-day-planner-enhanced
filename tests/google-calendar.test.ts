@@ -355,6 +355,62 @@ describe("calendar reconciliation", () => {
       local(),
     );
   });
+  test.each([false, true])(
+    "time-only export recovery retains the empty title with an existing mapping %s",
+    async (linked) => {
+      const h = harness(false),
+        untitled = { ...base, title: "" },
+        exported = { ...ownedEvent(uid, untitled), summary: undefined };
+      h.setEvents([exported]);
+      if (linked)
+        h.state.records[uid] = {
+          eventId: exported.id,
+          path: local().path,
+          base: untitled,
+        };
+      const path = "Daily/Moved.md";
+      await recoverCalendarProjection({
+        state: h.state,
+        api: h.api,
+        save: h.save,
+        uid,
+        path,
+        snapshot: untitled,
+      });
+      expect(h.state.records[uid]).toEqual({
+        eventId: exported.id,
+        path,
+        base: untitled,
+      });
+      expect(h.save).toHaveBeenCalledOnce();
+    },
+  );
+
+  test("Google can omit the title of an exported time-only block", async () => {
+    const h = harness(false);
+    const untitled = { ...base, title: "" };
+    h.setBlocks([local(untitled)]);
+    vi.mocked(h.api.create).mockResolvedValue({
+      ...ownedEvent(uid, untitled),
+      summary: undefined,
+    });
+    expect(await h.run(false)).toMatchObject({ pushed: 1, conflicts: [] });
+    expect(h.state.pendingCreate).toBeUndefined();
+    expect(h.state.records[uid]?.base).toEqual(untitled);
+  });
+  test("deleting a time-only block retires its unchanged untitled Google event", async () => {
+    const h = harness();
+    const untitled = { ...base, title: "" };
+    const exported = { ...ownedEvent(uid, untitled), summary: undefined };
+    const unrelated = { ...event(), summary: undefined };
+    h.state.records[uid]!.eventId = exported.id;
+    h.state.records[uid]!.base = untitled;
+    h.setBlocks([]);
+    h.setEvents([exported, unrelated]);
+    expect(await h.run(false)).toMatchObject({ deleted: 1, conflicts: [] });
+    expect(h.api.remove).toHaveBeenCalledExactlyOnceWith(exported);
+    expect(h.notes.write).not.toHaveBeenCalled();
+  });
   test("a successful POST followed by a crash is adopted rather than duplicated", async () => {
     const h = harness(false);
     h.setEvents([ownedEvent()]);

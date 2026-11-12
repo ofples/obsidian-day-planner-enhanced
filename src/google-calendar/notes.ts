@@ -1,5 +1,7 @@
 import { TFile, type App } from "obsidian";
 
+import { getTimeRangeMatch } from "../parser/parser";
+import { checkboxRegExp, listTokenWithSpacesRegExp } from "../regexp";
 import type { PeriodicNotes } from "../service/periodic-notes";
 import { locateSource } from "../service/source-identity";
 import type { DayPlannerSettings } from "../settings";
@@ -7,6 +9,7 @@ import type { DayPlannerSettings } from "../settings";
 import { resolveIdentities, type IdentityCandidate } from "./identity";
 import {
   appendToPlanner,
+  hasPlannerSection,
   parseBlocks,
   renderBlock,
   stripSyncMarkers,
@@ -44,6 +47,22 @@ function normalizeDocument(value: string) {
     .replace(/\r\n/g, "\n")
     .replace(/\n[ \t]*\n+/g, "\n\n")
     .trim();
+}
+
+function untrackedTasks(text: string) {
+  return text
+    .split(/\r?\n/)
+    .filter((line) => {
+      const unquoted = line.replace(/^\s*(?:>\s*)+/, "");
+      const prefix = unquoted.match(listTokenWithSpacesRegExp)?.[0];
+      return (
+        prefix &&
+        (unquoted.slice(prefix.length).match(checkboxRegExp)?.index === 0 ||
+          getTimeRangeMatch(unquoted))
+      );
+    })
+    .map((line) => line.trimEnd())
+    .join("\n");
 }
 
 export class ObsidianCalendarNotes implements CalendarNotes {
@@ -219,9 +238,50 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       )
     )
       return false;
-    // Moving a block to an unindexed note or changing its heading is not deletion.
+    // Match whole lines so a time-only block does not match a titled task.
+    const blockPattern = identity.raw
+      .split(/\r?\n/)
+      .map((line) => line.trimEnd().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("[ \\t]*\\r?\\n");
+    const exactBlock = new RegExp(`^[ \\t]*${blockPattern}[ \\t]*$`, "m");
     const stillPresent = (text: string) =>
-      text.includes(`<!-- dp-gcal:${uid} -->`) || text.includes(identity.raw);
+      text.includes(`<!-- dp-gcal:${uid} -->`) || exactBlock.test(text);
+    const text = await this.app.vault.read(file);
+    const date = day.format("YYYY-MM-DD");
+    const parsed = parseBlocks(text, date, this.settings);
+    if (owned) {
+      if (
+        text !== this.scannedDocuments[record.path] ||
+        !hasPlannerSection(text, this.settings)
+      )
+        return false;
+      // Require an identity scanned in this note. The saved document can
+      // predate that block when a different removal is still unresolved.
+      // Untracked task changes can indicate a move or conversion.
+      const oldBlocks = parseBlocks(before, date, this.settings);
+      const outside = withoutBlocks(text, parsed);
+      if (
+        identity.path !== record.path ||
+        identity.from < 0 ||
+        stillPresent(outside) ||
+        untrackedTasks(outside) !==
+          untrackedTasks(withoutBlocks(before, oldBlocks))
+      )
+        return false;
+    } else {
+      const index = this.locate(before, { uid, ...identity });
+      if (index < 0) return false;
+      const removed =
+        before.slice(0, index) + before.slice(index + identity.raw.length);
+      if (
+        stillPresent(text) ||
+        text.includes(record.base.title) ||
+        parsed.some((block) => sameSnapshot(block.snapshot, record.base)) ||
+        normalizeDocument(text) !== normalizeDocument(removed)
+      )
+        return false;
+    }
+    // An exact block moved to an unindexed note still belongs to the planner.
     for (const note of this.app.vault.getMarkdownFiles()) {
       if (
         note.path !== file.path &&
@@ -229,35 +289,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       )
         return false;
     }
-    const index = this.locate(before, { uid, ...identity });
-    if (index < 0) return false;
-    const text = await this.app.vault.read(file);
-    const date = day.format("YYYY-MM-DD");
-    const parsed = parseBlocks(text, date, this.settings);
-    if (owned) {
-      if (text !== this.scannedDocuments[record.path]) return false;
-      // Concurrent edits can replace several timed blocks. Require the old
-      // block to have been in scope and the surrounding Markdown to agree.
-      const oldBlocks = parseBlocks(before, date, this.settings);
-      const outside = withoutBlocks(text, parsed);
-      return (
-        oldBlocks.some(
-          (block) => block.from === index && block.raw === identity.raw,
-        ) &&
-        !stillPresent(outside) &&
-        normalizeDocument(outside) ===
-          normalizeDocument(withoutBlocks(before, oldBlocks))
-      );
-    }
-    if (
-      stillPresent(text) ||
-      text.includes(record.base.title) ||
-      parsed.some((block) => sameSnapshot(block.snapshot, record.base))
-    )
-      return false;
-    const removed =
-      before.slice(0, index) + before.slice(index + identity.raw.length);
-    return normalizeDocument(text) === normalizeDocument(removed);
+    return (await this.app.vault.read(file)) === text;
   }
 
   async write(
