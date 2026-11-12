@@ -203,7 +203,7 @@ Registry v17 stores source decisions, local-copy identities, ordered copied-tree
 
 Identical concurrent confirmations share the same saved decision. Revalidate the relevant decision inventory inside the intent transaction to reject competing assignments. Source review includes known nested links from their acknowledged container baselines and the current candidate inventory. New source drafts retain the original note acknowledgment while canonical identity matching follows a selected source's later edits or moves. Source decisions are visible in the custom pane's history, with open-note navigation, reviewed reassignment, retry and safe queued cancellation.
 
-This implementation has source and synthetic integration verification. Installed source-choice and provider/calendar readback remain required. Historical-copy ownership, manual reassignment within a partially created tree and explicit older-state restoration review remain follow-through work for complete US-12 acceptance.
+Source, synthetic integration and installed controller-API verification cover the three source choices, nested provider identities, canonical calendar adoption, restart and fixture cleanup. Native form confirmation and cancellation remain required. Resolve proven same-note whole-block containers and their nested offsets before detached restoration so a deleted identical tree cannot reserve another linked child. Historical-copy ownership, manual reassignment within a partially created tree and explicit older-state restoration review remain follow-through work for complete US-12 acceptance.
 
 ### Permanent provider deletion
 
