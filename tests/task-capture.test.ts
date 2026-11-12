@@ -639,6 +639,52 @@ describe("tagged task capture", () => {
     h.service.stop();
   });
 
+  test("an absent prepared source cannot compete with a block restored by native undo", async () => {
+    const h = await setup("- [ ] 09:00 - 10:00 Work #todoist");
+    await h.capture.scan();
+    await h.service.refresh();
+    await vi.waitUntil(() => get(h.service.state).operations.length === 0);
+    const [uid, link] = Object.entries(h.service.registry.snapshot().links)[0]!;
+    await h.service.registry.change((state) => {
+      state.schedules.push({
+        id: crypto.randomUUID(),
+        provider: "todoist",
+        accountId: "account",
+        task: link.base!,
+        linkUid: uid,
+        googleUid: "calendar",
+        providerOperationId: crypto.randomUUID(),
+        occurrenceKey: "single",
+        target: { kind: "insert", path: "Tasks.md", offset: 16, before: "" },
+        children: [],
+        raw: link.source.raw,
+        generatedTaskIds: [link.taskId!],
+        syncTaskDate: false,
+        phase: "prepared",
+        createdAt: snapshot.fetchedAt,
+        plan: {
+          edits: [],
+          interval: null,
+          links: [
+            { uid, task: link.base!, source: { ...link.source, from: 16 } },
+          ],
+        },
+      });
+    });
+    const text = "- [ ] 10:00 - 11:00 Work #todoist";
+    h.host.candidates = () => parseCaptureCandidates("Restored.md", text);
+    h.host.read = async () => text;
+    expect(h.capture.inspectIdentities().candidates[0]?.uid).toBe(uid);
+    await h.capture.scan();
+    expect(h.apply).toHaveBeenCalledTimes(1);
+    expect(h.service.registry.snapshot().links[uid]?.source.path).toBe(
+      "Restored.md",
+    );
+    expect(get(h.capture.state).issues).toEqual([]);
+    h.capture.stop();
+    h.service.stop();
+  });
+
   test("parses real first-line tags while ignoring code, comments, links and escaped tags", () => {
     const text = [
       "---",

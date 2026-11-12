@@ -285,6 +285,18 @@ export class TaskCapture {
     for (const operation of state.schedules) {
       if (!["pending", "prepared"].includes(operation.phase)) continue;
       for (const link of operation.plan?.links ?? []) {
+        // Reserve only a block that currently exists at the prepared location.
+        // An absent plan must not compete with the same task after native undo.
+        if (
+          !candidates.some(
+            (candidate) =>
+              !candidate.uid &&
+              candidate.path === link.source.path &&
+              candidate.from === link.source.from &&
+              candidate.raw === link.source.raw,
+          )
+        )
+          continue;
         if (
           Object.values(previous).some(
             (source) =>
