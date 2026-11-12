@@ -9,7 +9,7 @@ import type { DayPlannerSettings } from "../settings";
 
 import { GoogleCalendarApi } from "./api";
 import { GoogleCalendarAuth } from "./auth";
-import { recoverCalendarProjection, syncCalendar } from "./engine";
+import { isOwned, recoverCalendarProjection, syncCalendar } from "./engine";
 import { ObsidianCalendarNotes } from "./notes";
 import type { CalendarSyncState } from "./types";
 import type { LocalBlock } from "./types";
@@ -309,15 +309,14 @@ export class GoogleCalendarSync {
       const eventId = record?.eventId ?? `dp${this.state.namespace}${uid}`;
       const event = await api.get(eventId);
       if (event && event.status !== "cancelled") {
-        if (
-          !record &&
-          event.extendedProperties?.private?.["dayPlannerVault"] !==
-            this.state.namespace
-        )
+        if (!record && !isOwned(event, this.state.namespace, uid))
           throw new Error(
             "Review this event's calendar ownership before removing the schedule.",
           );
-        const current = snapshotOf(event);
+        const current = snapshotOf(
+          event,
+          isOwned(event, this.state.namespace, uid) ? "" : undefined,
+        );
         if (!current || !sameSnapshot(current, record?.base ?? snapshot))
           throw new Error(
             "This event changed in Google Calendar. Review the changes before removing its schedule.",

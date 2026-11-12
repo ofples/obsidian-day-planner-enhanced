@@ -12,6 +12,10 @@ vi.mock("obsidian", async () => ({
 }));
 
 import { GoogleCalendarAuth } from "../src/google-calendar/auth";
+import type {
+  CalendarSyncState,
+  GoogleEvent,
+} from "../src/google-calendar/types";
 import { GoogleCalendarSync } from "../src/google-calendar/service";
 import { makeStore } from "../src/redux/store";
 import type { PeriodicNotes } from "../src/service/periodic-notes";
@@ -32,12 +36,15 @@ const response = (json: unknown, status = 200) => ({
   arrayBuffer: new ArrayBuffer(0),
 });
 
-async function setup(calendarId = "") {
+async function setup(
+  calendarId = "",
+  records: CalendarSyncState["records"] = {},
+) {
   let disk = JSON.stringify({
     version: 2,
     namespace: "a".repeat(32),
     calendarId,
-    records: {},
+    records,
     identities: {},
     documents: {},
   });
@@ -85,6 +92,111 @@ async function setup(calendarId = "") {
 }
 
 describe("managed calendar exporter ownership", () => {
+  test.each([false, true])(
+    "projection removal verifies an owned time-only event with saved mapping %s",
+    async (linked) => {
+      const uid = "c".repeat(32),
+        namespace = "a".repeat(32),
+        snapshot = {
+          title: "",
+          start: "2026-11-12T08:00:00.000Z",
+          end: "2026-11-12T08:30:00.000Z",
+        },
+        eventId = `dp${namespace}${uid}`,
+        path = "Daily/2026-11-12.md";
+      const h = await setup(
+        "managed",
+        linked ? { [uid]: { eventId, path, base: snapshot } } : {},
+      );
+      const event: GoogleEvent = {
+        id: eventId,
+        etag: '"fixture-version"',
+        start: { dateTime: snapshot.start },
+        end: { dateTime: snapshot.end },
+        extendedProperties: {
+          private: { dayPlannerVault: namespace, dayPlannerBlock: uid },
+        },
+      };
+      vi.mocked(requestUrl).mockImplementation((arg) => {
+        const request = typeof arg === "string" ? { url: arg } : arg;
+        const result =
+          request.method === "DELETE"
+            ? response({}, 204)
+            : response(
+                request.url.includes("/calendarList/")
+                  ? { id: "managed", accessRole: "owner" }
+                  : event,
+              );
+        return Promise.resolve(result) as ReturnType<typeof requestUrl>;
+      });
+      await h.service.removeProjection(uid, snapshot, path);
+      expect(
+        vi
+          .mocked(requestUrl)
+          .mock.calls.filter(
+            ([arg]) => typeof arg !== "string" && arg.method === "DELETE",
+          ),
+      ).toHaveLength(1);
+      expect(JSON.parse(h.disk()).records[uid]).toEqual({
+        eventId,
+        path,
+        base: snapshot,
+        deleted: true,
+      });
+      expect(h.readNotes).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each(["block", "vault", "id"])(
+    "orphan projection removal rejects a changed %s owner",
+    async (field) => {
+      const uid = "c".repeat(32),
+        namespace = "a".repeat(32),
+        snapshot = {
+          title: "Owned task",
+          start: "2026-11-12T08:00:00.000Z",
+          end: "2026-11-12T08:30:00.000Z",
+        };
+      const h = await setup("managed");
+      const event: GoogleEvent = {
+        id: field === "id" ? "foreign" : `dp${namespace}${uid}`,
+        etag: '"fixture-version"',
+        summary: snapshot.title,
+        start: { dateTime: snapshot.start },
+        end: { dateTime: snapshot.end },
+        extendedProperties: {
+          private: {
+            dayPlannerVault: field === "vault" ? "foreign" : namespace,
+            dayPlannerBlock: field === "block" ? "foreign" : uid,
+          },
+        },
+      };
+      vi.mocked(requestUrl).mockImplementation(
+        (arg) =>
+          Promise.resolve(
+            response(
+              (typeof arg === "string" ? arg : arg.url).includes(
+                "/calendarList/",
+              )
+                ? { id: "managed", accessRole: "owner" }
+                : event,
+            ),
+          ) as ReturnType<typeof requestUrl>,
+      );
+      await expect(
+        h.service.removeProjection(uid, snapshot, "Daily/2026-11-12.md"),
+      ).rejects.toThrow("calendar ownership");
+      expect(
+        vi
+          .mocked(requestUrl)
+          .mock.calls.some(
+            ([arg]) => typeof arg !== "string" && arg.method === "DELETE",
+          ),
+      ).toBe(false);
+      expect(h.write).not.toHaveBeenCalled();
+    },
+  );
+
   test("normal sync rejects an existing native exporter before binding state or reading notes", async () => {
     const h = await setup();
     vi.mocked(requestUrl).mockImplementation(

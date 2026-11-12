@@ -65,7 +65,7 @@ function exportId(namespace: string, uid: string) {
   return `dp${namespace}${uid}`;
 }
 
-function isOwned(event: GoogleEvent, namespace: string, uid: string) {
+export function isOwned(event: GoogleEvent, namespace: string, uid: string) {
   const properties = event.extendedProperties?.private;
   return (
     event.id === exportId(namespace, uid) &&
