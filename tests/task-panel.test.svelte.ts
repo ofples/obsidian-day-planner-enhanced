@@ -51,12 +51,15 @@ const snapshot: TaskSnapshot = {
 };
 const mounted: ReturnType<typeof mount>[] = [];
 const originalHidePopover = HTMLElement.prototype.hidePopover;
+const originalShowPopover = HTMLElement.prototype.showPopover;
 beforeAll(() => {
   // jsdom lacks the browser popover API. Browser acceptance covers real menus.
   HTMLElement.prototype.hidePopover = vi.fn();
+  HTMLElement.prototype.showPopover = vi.fn();
 });
 afterAll(() => {
   HTMLElement.prototype.hidePopover = originalHidePopover;
+  HTMLElement.prototype.showPopover = originalShowPopover;
 });
 afterEach(async () => {
   for (const component of mounted.splice(0)) await unmount(component);
@@ -857,12 +860,66 @@ describe("custom Tasks panel", () => {
     return { controller, state, record, review, confirm };
   }
 
+  test("large lists create one action menu on demand for the current task", async () => {
+    const h = render();
+    const tasks = Array.from({ length: 2000 }, (_, index) => ({ ...task, id: `task-${index}`, title: `Task ${index}`, order: index }));
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks } }));
+    flushSync();
+    expect(h.target.querySelectorAll(".task-row-container")).toHaveLength(2000);
+    expect(h.target.querySelectorAll('[role="menu"]')).toHaveLength(0);
+    h.target.querySelector<HTMLButtonElement>('[aria-label="Actions for Task 1999"]')!.click();
+    await vi.waitFor(() => expect(h.target.querySelector('[role="menu"]')?.getAttribute("aria-label")).toBe("Actions for Task 1999"));
+    expect(h.target.querySelectorAll('[role="menu"]')).toHaveLength(1);
+    expect(h.target.querySelector<HTMLAnchorElement>('[role="menu"] a')?.href).toMatch(/\/task\/task-1999$/);
+    h.target.querySelector<HTMLButtonElement>('[aria-label="Actions for Task 0"]')!.click();
+    await vi.waitFor(() => expect(h.target.querySelector('[role="menu"]')?.getAttribute("aria-label")).toBe("Actions for Task 0"));
+    expect(h.target.querySelectorAll('[role="menu"]')).toHaveLength(1);
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks: [{ ...tasks[0]!, title: "Renamed task" }] } }));
+    flushSync();
+    expect(h.target.querySelector('[role="menu"]')?.getAttribute("aria-label")).toBe("Actions for Renamed task");
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks: [] } }));
+    flushSync();
+    expect(h.target.querySelector('[role="menu"]')).toBeNull();
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
+  test("task action menus keep keyboard navigation and return focus on Escape", async () => {
+    const h = render();
+    const trigger = h.target.querySelector<HTMLButtonElement>('[aria-label="Actions for Shopping"]')!;
+    trigger.focus();
+    press(trigger, "ArrowDown");
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toContain("Edit task"));
+    const menu = h.target.querySelector<HTMLElement>('[role="menu"]')!;
+    press(menu, "End");
+    expect(document.activeElement?.textContent).toContain("Open in Todoist");
+    press(menu, "Home");
+    expect(document.activeElement?.textContent).toContain("Edit task");
+    press(menu, "ArrowUp");
+    expect(document.activeElement?.textContent).toContain("Open in Todoist");
+    press(menu, "Escape");
+    expect(document.activeElement).toBe(trigger);
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
+  test("cached task action menus focus the available provider link", async () => {
+    const h = render();
+    h.state.update(state => ({ ...state, writable: false }));
+    flushSync();
+    const row = h.target.querySelector<HTMLButtonElement>(".task-row")!;
+    row.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toContain("Open in Todoist"));
+    expect(h.target.querySelector<HTMLButtonElement>('[role="menu"] button')?.disabled).toBe(true);
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
   test("task menus open the custom permanent-deletion confirmation", async () => {
     const deletion = deletionController();
     deletion.state.set({ records: [], error: "" });
     const h = render(null, undefined, deletion.controller);
     h.state.update(state => ({ ...state, snapshot: { ...snapshot, account: { ...snapshot.account, capabilities: { delete: true } } } }));
     flushSync();
+    h.target.querySelector<HTMLButtonElement>('[aria-label="Actions for Shopping"]')!.click();
+    await vi.waitFor(() => expect(h.target.querySelector('[role="menu"]')).not.toBeNull());
     const button = Array.from(h.target.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(button => button.textContent?.includes("Delete from Todoist"))!;
     button.click();
     await vi.waitFor(() => { flushSync(); expect(h.target.querySelector('form[aria-label="Confirm task deletion"]')?.textContent).toContain("Shopping"); });

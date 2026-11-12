@@ -196,10 +196,15 @@
   const selected = $derived(
     snapshot?.tasks.find((task) => task.id === $preferences.selectedId),
   );
-  const selectedProjection = $derived(
-    $scheduleState.projections.find(
-      (projection) => projection.taskId === selected?.id,
+  const projectionsByTask = $derived(
+    new Map(
+      $scheduleState.projections
+        .toReversed()
+        .map((projection) => [projection.taskId, projection]),
     ),
+  );
+  const selectedProjection = $derived(
+    selected ? projectionsByTask.get(selected.id) : undefined,
   );
   const children = $derived(
     selected && snapshot ? taskSubtree(snapshot, selected) : [],
@@ -270,6 +275,18 @@
       !selected.id.startsWith("local-"),
   );
   const paneId = crypto.randomUUID();
+  const menuId = `${paneId}-task-menu`;
+  let menuTaskId = $state<string | null>(null);
+  const menuTask = $derived(
+    menuTaskId
+      ? groups
+          .flatMap((group) => group.rows)
+          .find((row) => row.task.id === menuTaskId)?.task
+      : undefined,
+  );
+  const menuProjection = $derived(
+    menuTask ? projectionsByTask.get(menuTask.id) : undefined,
+  );
   let showDetails = $state(false);
   let reviewOpen = $state(false);
   let menuLeft = $state(0);
@@ -435,9 +452,6 @@
     if (day === today.plus({ days: 1 }).toISODate()) return "Tomorrow";
     return DateTime.fromISO(day, { zone }).toFormat("d MMM");
   }
-  function menuId(task: ProviderTask) {
-    return `${paneId}-task-${task.id}`;
-  }
   function positionMenu(event: MouseEvent | KeyboardEvent) {
     menuTrigger = event.currentTarget as HTMLElement;
     const rect = menuTrigger.getBoundingClientRect();
@@ -451,12 +465,21 @@
       Math.min(rect.bottom + 5, viewport.innerHeight - 156),
     );
   }
-  function contextMenu(task: ProviderTask, event: MouseEvent | KeyboardEvent) {
+  async function contextMenu(
+    task: ProviderTask,
+    event: MouseEvent | KeyboardEvent,
+  ) {
     event.preventDefault();
     positionMenu(event);
-    const menu = menuTrigger?.ownerDocument.getElementById(menuId(task));
+    const trigger = menuTrigger;
+    menuTaskId = task.id;
+    await tick();
+    if (menuTrigger !== trigger || menuTask?.id !== task.id) return;
+    const menu = trigger?.ownerDocument.getElementById(menuId);
     menu?.showPopover();
-    menu?.querySelector("button")?.focus();
+    menu
+      ?.querySelector<HTMLElement>('[role="menuitem"]:not(:disabled)')
+      ?.focus();
   }
   function menuKeydown(event: KeyboardEvent) {
     const menu = event.currentTarget as HTMLElement;
@@ -1072,9 +1095,7 @@
                 ><span>{group.count}</span></button
               >
               {#if !$preferences.collapsed.includes(group.id)}{#each group.rows as row (row.task.id)}
-                  {@const projection = $scheduleState.projections.find(
-                    (item) => item.taskId === row.task.id,
-                  )}
+                  {@const projection = projectionsByTask.get(row.task.id)}
                   <div
                     style:--task-depth={Math.min(row.depth, 6)}
                     class="task-row-container"
@@ -1122,7 +1143,7 @@
                             event.key === "ContextMenu" ||
                             (event.shiftKey && event.key === "F10")
                           )
-                            contextMenu(row.task, event);
+                            void contextMenu(row.task, event);
                         }}
                         ><span class="task-title"
                           >{row.task.title || "Untitled task"}</span
@@ -1151,58 +1172,15 @@
                     </div>
                     <button
                       class="task-icon-button task-row-more"
+                      aria-controls={menuId}
+                      aria-haspopup="menu"
                       aria-label={`Actions for ${row.task.title}`}
-                      onclick={positionMenu}
+                      onclick={(event) => contextMenu(row.task, event)}
                       onkeydown={(event) => {
                         if (event.key === "ArrowDown")
-                          contextMenu(row.task, event);
-                      }}
-                      popovertarget={menuId(row.task)}
-                      ><MoreHorizontal size={16} /></button
+                          void contextMenu(row.task, event);
+                      }}><MoreHorizontal size={16} /></button
                     >
-                    <div
-                      id={menuId(row.task)}
-                      style:left={`${menuLeft}px`}
-                      style:top={`${menuTop}px`}
-                      class="task-menu"
-                      aria-label={`Actions for ${row.task.title}`}
-                      onkeydown={menuKeydown}
-                      popover="auto"
-                      role="menu"
-                      tabindex="-1"
-                    >
-                      {#if scheduler}<button
-                          disabled={!$browserState.writable ||
-                            pendingIds.has(row.task.id)}
-                          onclick={() =>
-                            startAction({ kind: "schedule", task: row.task })}
-                          role="menuitem"
-                          ><CalendarClock size={15} />{projection?.interval
-                            ? "Move schedule"
-                            : "Schedule"}</button
-                        >{/if}
-                      <button
-                        disabled={!$browserState.writable ||
-                          pendingIds.has(row.task.id)}
-                        onclick={() =>
-                          startAction({ kind: "edit", task: row.task })}
-                        role="menuitem"><Pencil size={15} />Edit task</button
-                      ><a
-                        href={`https://app.todoist.com/app/task/${encodeURIComponent(row.task.id)}`}
-                        rel="noopener noreferrer"
-                        role="menuitem"
-                        target="_blank"
-                        ><ExternalLink size={15} />Open in Todoist</a
-                      >
-                      {#if deleter && snapshot?.account.capabilities?.delete}<button
-                          disabled={!$browserState.writable ||
-                            pendingIds.has(row.task.id)}
-                          onclick={() =>
-                            startAction({ kind: "delete", task: row.task })}
-                          role="menuitem"
-                          ><Trash2 size={15} />Delete from Todoist</button
-                        >{/if}
-                    </div>
                   </div>
                 {/each}{/if}
             </section>{/each}
@@ -1444,6 +1422,44 @@
           >{/if}
       </section>{/if}
   </div>
+
+  {#if menuTask}
+    <div
+      id={menuId}
+      style:left={`${menuLeft}px`}
+      style:top={`${menuTop}px`}
+      class="task-menu"
+      aria-label={`Actions for ${menuTask.title}`}
+      onkeydown={menuKeydown}
+      popover="auto"
+      role="menu"
+      tabindex="-1"
+    >
+      {#if scheduler}<button
+          disabled={!$browserState.writable || pendingIds.has(menuTask.id)}
+          onclick={() => startAction({ kind: "schedule", task: menuTask })}
+          role="menuitem"
+          ><CalendarClock size={15} />{menuProjection?.interval
+            ? "Move schedule"
+            : "Schedule"}</button
+        >{/if}
+      <button
+        disabled={!$browserState.writable || pendingIds.has(menuTask.id)}
+        onclick={() => startAction({ kind: "edit", task: menuTask })}
+        role="menuitem"><Pencil size={15} />Edit task</button
+      ><a
+        href={`https://app.todoist.com/app/task/${encodeURIComponent(menuTask.id)}`}
+        rel="noopener noreferrer"
+        role="menuitem"
+        target="_blank"><ExternalLink size={15} />Open in Todoist</a
+      >
+      {#if deleter && snapshot?.account.capabilities?.delete}<button
+          disabled={!$browserState.writable || pendingIds.has(menuTask.id)}
+          onclick={() => startAction({ kind: "delete", task: menuTask })}
+          role="menuitem"><Trash2 size={15} />Delete from Todoist</button
+        >{/if}
+    </div>
+  {/if}
 
   <footer class="task-panel-footer" aria-live="polite" role="status">
     <span
