@@ -754,6 +754,80 @@ describe("recurring occurrence freezing", () => {
     },
   );
 
+  test.each(["keep", "move"])(
+    "a %s historical-copy decision preserves occurrence history and calendar ownership through undo",
+    async (mode) => {
+      const { h, projection } = await scheduled();
+      const completion = await h.service.complete(h.tasks.get(root.id)!);
+      await h.service.refresh();
+      await h.reconcile();
+      const frozen = h.service.registry.snapshot().occurrences[completion.id]!;
+      const baseline = structuredClone(frozen.before);
+      const copyPath = "Daily/2026-11-13.md";
+      h.file(copyPath);
+      h.texts.set(
+        copyPath,
+        "# Day planner\n\n" +
+          frozen.links[projection.linkUid]!.source.raw +
+          "\n",
+      );
+      await h.syncCalendar();
+      await h.indexNotes();
+      const beforeEvents = structuredClone([...h.events]),
+        beforeTexts = [...h.texts],
+        commands = h.apply.mock.calls.length;
+      const review = await h.reconciler.identity.review(projection.linkUid),
+        selected = review.sources.find(
+          (source) =>
+            source.path ===
+            (mode === "keep" ? projection.source.path : copyPath),
+        )!;
+      await h.reconciler.identity.confirm(review, {
+        linked: h.reconciler.identity.suggestTree(
+          review,
+          projection.linkUid,
+          JSON.stringify([selected.path, selected.from, selected.raw]),
+        ),
+        create: [],
+      });
+      await h.reconcile();
+      const state = h.service.registry.snapshot();
+      expect(state.links[projection.linkUid]).toBeUndefined();
+      expect(state.occurrences[completion.id]!.before).toEqual(baseline);
+      expect(
+        state.occurrences[completion.id]!.links[projection.linkUid]!.source
+          .path,
+      ).toBe(selected.path);
+      expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+      expect(h.apply).toHaveBeenCalledTimes(commands);
+      expect([...h.texts]).toEqual(beforeTexts);
+      expect([...h.events]).toEqual(beforeEvents);
+      const selectedBlock = (await h.notes.scan()).find(
+        (block) => block.path === selected.path,
+      )!;
+      const selectedEvent = h.calendarState.records[selectedBlock.uid]!.eventId;
+      await h.restart();
+      await h.reconcile();
+      const undoReview = await h.reconciler.occurrenceUndo.review(completion.id);
+      await h.reconciler.occurrenceUndo.confirm(undoReview);
+      await h.reconcile();
+      const restored = h.service.registry.snapshot();
+      expect(restored.occurrences[completion.id]!.phase).toBe("undone");
+      expect(restored.occurrences[completion.id]!.before).toEqual(baseline);
+      expect(restored.links[projection.linkUid]!.source.path).toBe(
+        selected.path,
+      );
+      expect(restored.projections[projection.linkUid]!.googleEventId).toBe(
+        selectedEvent,
+      );
+      expect(h.tasks.get(root.id)?.completionCount).toBe(0);
+      expect(h.events.size).toBe(2);
+      expect(get(h.capture.state).issues).toEqual([]);
+      expect(get(h.reconciler.state).issues).toEqual([]);
+      h.service.stop();
+    },
+  );
+
   test.each([1, 3])(
     "an external counter advance of %i freezes the linked occurrence without a provider command",
     async (advance) => {

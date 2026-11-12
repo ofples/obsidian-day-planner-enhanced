@@ -20,6 +20,7 @@ export const identityDecisionSchema = z
     accountId: z.string(),
     before: z.object({
       links: z.record(z.string(), taskLinkSchema),
+      historical: z.record(z.string(), z.uuid()).optional(),
       projections: z.record(z.string(), taskProjectionSchema),
       localSources: z.record(z.string(), localTaskSourceSchema).default({}),
     }),
@@ -44,6 +45,9 @@ export const identityDecisionSchema = z
       const assignments = record.assignments;
       return (
         Object.keys(record.before.links).length > 0 &&
+        Object.keys(record.before.historical ?? {}).every((uid) =>
+          Boolean(record.before.links[uid]),
+        ) &&
         new Set(
           assignments.flatMap((item) =>
             item.completionId ? [item.completionId] : [],
@@ -165,8 +169,29 @@ export function identityDecisionCanCancel(
   );
 }
 
+export function historicalIdentityOwner(
+  state: Pick<TaskRegistryState, "links" | "occurrences">,
+  before: TaskIdentityDecision["before"],
+  uid: string,
+) {
+  const id = before.historical?.[uid];
+  const occurrence = id ? state.occurrences[id] : undefined;
+  const original = before.links[uid];
+  return occurrence &&
+    original &&
+    occurrence.phase === "complete" &&
+    (!occurrence.undo || occurrence.undo.phase === "cancelled") &&
+    occurrence.provider === original.provider &&
+    occurrence.accountId === original.accountId &&
+    !state.links[uid] &&
+    occurrence.links[uid]?.taskId === original.taskId &&
+    occurrence.before.links[uid]?.taskId === original.taskId
+    ? occurrence
+    : undefined;
+}
+
 export function matchingIdentityCommand(
-  state: Pick<TaskRegistryState, "identityDecisions" | "links">,
+  state: Pick<TaskRegistryState, "identityDecisions" | "links" | "occurrences">,
   operation: TaskOperation,
 ) {
   const record =
@@ -177,6 +202,12 @@ export function matchingIdentityCommand(
     record.phase !== "creating" ||
     record.provider !== operation.provider ||
     record.accountId !== operation.accountId
+  )
+    return undefined;
+  if (
+    Object.keys(record.before.historical ?? {}).some(
+      (uid) => !historicalIdentityOwner(state, record.before, uid),
+    )
   )
     return undefined;
   const assignment = record.assignments.find(

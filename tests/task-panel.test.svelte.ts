@@ -471,6 +471,27 @@ describe("custom Tasks panel", () => {
     expect(h.mutate).not.toHaveBeenCalled();
   });
 
+  test("historical source choices identify the completed occurrence in review and saved history", async () => {
+    const h = identityHarness();
+    h.review.before.historical = { source: crypto.randomUUID() };
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.target.textContent).toContain("Completed occurrence");
+    });
+    const record = identityDecisionSchema.parse({
+      ...h.record,
+      before: h.review.before,
+    });
+    h.state.update((state) => ({ ...state, identityDecisions: [record] }));
+    h.action.set({ kind: "identity-record", id: record.id });
+    flushSync();
+    expect(
+      h.target.querySelector('[aria-label="Saved task link decision"]')
+        ?.textContent,
+    ).toContain("Completed occurrence");
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
   test("separate-task selection preserves the existing link and submits the chosen copy", async () => {
     const h = identityHarness();
     await vi.waitFor(() => {

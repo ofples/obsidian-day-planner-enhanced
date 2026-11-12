@@ -8,12 +8,13 @@ import type { TaskCaptureSettings } from "./capture-settings";
 import { pendingTaskDeletion } from "./deletion-types";
 import { pendingIdentityDecision } from "./identity-types";
 import {
+  historicalIdentityOwner,
   identityDecisionSchema,
   identityDecisionCanCancel,
   matchingIdentityCommand,
   type TaskIdentityDecision,
 } from "./identity-types";
-import { pendingTaskOccurrence } from "./occurrence-types";
+import { historicalTaskLinks, pendingTaskOccurrence } from "./occurrence-types";
 import {
   isOutstanding,
   operationAffectsTasks,
@@ -90,6 +91,22 @@ function identityTaskBusy(
   );
 }
 
+/** Locate a reviewed source without promoting completed occurrence history to an active link. */
+function sourceOwner(
+  state: TaskRegistryState,
+  before: TaskIdentityDecision["before"],
+  uid: string,
+) {
+  const occurrenceId = before.historical?.[uid];
+  if (!occurrenceId) return state;
+  const occurrence = historicalIdentityOwner(state, before, uid);
+  if (!occurrence)
+    throw new TaskReadError(
+      "This completed occurrence changed. Review its history before assigning sources.",
+    );
+  return occurrence;
+}
+
 export class TaskIdentityRepairController {
   private pending?: Promise<void>;
   private readonly confirmations = new Map<
@@ -119,8 +136,13 @@ export class TaskIdentityRepairController {
   async review(linkUid: string): Promise<TaskIdentityReview> {
     await this.service.refresh();
     await this.capture.scan();
-    const state = this.service.registry.snapshot(),
-      link = state.links[linkUid];
+    const state = this.service.registry.snapshot();
+    const historical = historicalTaskLinks(state);
+    const knownLinks = Object.fromEntries([
+      ...historical.map(({ uid, link }) => [uid, link] as const),
+      ...Object.entries(state.links),
+    ]);
+    const link = knownLinks[linkUid];
     if (!link?.taskId || !this.current(link))
       throw new TaskReadError(
         "Reconnect the original account to review this task link.",
@@ -136,8 +158,8 @@ export class TaskIdentityRepairController {
     const previousSources = previous
       ? [
           ...previous.assignments.flatMap((item) =>
-            item.kind === "linked" && state.links[item.uid]
-              ? [state.links[item.uid]!.source]
+            item.kind === "linked" && knownLinks[item.uid]
+              ? [knownLinks[item.uid]!.source]
               : [],
           ),
           ...Object.values(state.localSources)
@@ -166,11 +188,11 @@ export class TaskIdentityRepairController {
       throw new TaskReadError(
         "This source is no longer ambiguous. Recheck the current task link.",
       );
-    const initialUids = issue.uids.filter((uid) => state.links[uid]);
+    const initialUids = issue.uids.filter((uid) => knownLinks[uid]);
     const parentBaselines = initialUids.map(
-      (uid) => state.links[uid]!.noteBase ?? state.links[uid]!.source,
+      (uid) => knownLinks[uid]!.noteBase ?? knownLinks[uid]!.source,
     );
-    const uids = Object.entries(state.links)
+    const uids = Object.entries(knownLinks)
       .filter(
         ([uid, link]) =>
           initialUids.includes(uid) ||
@@ -186,13 +208,13 @@ export class TaskIdentityRepairController {
     );
     const links = Object.fromEntries(
       uids
-        .map((uid) => [uid, state.links[uid]])
+        .map((uid) => [uid, knownLinks[uid]])
         .filter((entry): entry is [string, NonNullable<typeof link>] =>
           Boolean(entry[1]),
         ),
     );
     if (
-      issue.uids.some((uid) => !state.links[uid] && !state.localSources[uid]) ||
+      issue.uids.some((uid) => !knownLinks[uid] && !state.localSources[uid]) ||
       Object.values(links).some(
         (item) =>
           !item.taskId ||
@@ -241,8 +263,8 @@ export class TaskIdentityRepairController {
         (item) => identitySourceKey(item) === identitySourceKey(candidate),
       );
       if (!known?.uid) continue;
-      if (state.links[known.uid] && !links[known.uid]) {
-        links[known.uid] = state.links[known.uid]!;
+      if (knownLinks[known.uid] && !links[known.uid]) {
+        links[known.uid] = knownLinks[known.uid]!;
         uids.push(known.uid);
       }
       if (state.localSources[known.uid])
@@ -275,13 +297,20 @@ export class TaskIdentityRepairController {
         );
     if (!this.current(link))
       throw new TaskReadError("The account changed during source review.");
-    const before = {
+    const before: TaskIdentityDecision["before"] = {
       links,
       localSources,
-      projections: Object.fromEntries(
-        Object.entries(state.projections).filter(([uid]) => uids.includes(uid)),
+      historical: Object.fromEntries(
+        historical
+          .filter((item) => uids.includes(item.uid))
+          .map((item) => [item.uid, item.occurrenceId]),
       ),
+      projections: {},
     };
+    for (const uid of uids) {
+      const projection = sourceOwner(state, before, uid).projections[uid];
+      if (projection) before.projections[uid] = projection;
+    }
     const browser = get(this.service.state);
     const decisionIds = Object.values(state.identityDecisions)
       .filter((record) =>
@@ -512,11 +541,15 @@ export class TaskIdentityRepairController {
         ) ||
         Object.entries(decision.before.links).some(
           ([uid, link]) =>
-            JSON.stringify(state.links[uid]) !== JSON.stringify(link),
+            JSON.stringify(
+              sourceOwner(state, decision.before, uid).links[uid],
+            ) !== JSON.stringify(link),
         ) ||
         Object.entries(decision.before.projections).some(
           ([uid, value]) =>
-            JSON.stringify(state.projections[uid]) !== JSON.stringify(value),
+            JSON.stringify(
+              sourceOwner(state, decision.before, uid).projections[uid],
+            ) !== JSON.stringify(value),
         )
       )
         throw new TaskReadError(
@@ -551,12 +584,13 @@ export class TaskIdentityRepairController {
             base: null,
           };
         else {
-          const link = state.links[assignment.uid]!;
+          const owner = sourceOwner(state, decision.before, assignment.uid);
+          const link = owner.links[assignment.uid]!;
           const moved =
             identitySourceKey(link.source) !==
             identitySourceKey(assignment.source);
           link.source = assignment.source;
-          const projection = state.projections[assignment.uid];
+          const projection = owner.projections[assignment.uid];
           if (projection && moved) {
             projection.source = assignment.source;
             projection.googleUid = undefined;
@@ -629,11 +663,11 @@ export class TaskIdentityRepairController {
           delete state.links[assignment.uid];
       }
       for (const [uid, link] of Object.entries(decision.before.links))
-        state.links[uid] = link;
+        sourceOwner(state, decision.before, uid).links[uid] = link;
       for (const [uid, projection] of Object.entries(
         decision.before.projections,
       ))
-        state.projections[uid] = projection;
+        sourceOwner(state, decision.before, uid).projections[uid] = projection;
       Object.assign(state.localSources, decision.before.localSources);
       decision.phase = "cancelled";
       decision.error = undefined;
@@ -675,6 +709,8 @@ export class TaskIdentityRepairController {
     }
   }
   private async process(decision: TaskIdentityDecision) {
+    for (const uid of Object.keys(decision.before.historical ?? {}))
+      sourceOwner(this.service.registry.snapshot(), decision.before, uid);
     for (const assignment of decision.assignments.filter(
       (item) => item.kind === "create",
     )) {

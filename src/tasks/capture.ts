@@ -509,6 +509,12 @@ export class TaskCapture {
       return;
     const { candidates, identityIssues } =
       await this.inspectCurrentIdentities();
+    const state = this.service.registry.snapshot();
+    const historical = historicalTaskLinks(state);
+    const knownLinks = Object.fromEntries([
+      ...historical.map(({ uid, link }) => [uid, link] as const),
+      ...Object.entries(state.links),
+    ]);
     const issues: CaptureIssue[] = identityIssues.flatMap((issue) =>
       issue.candidate
         ? [
@@ -516,19 +522,14 @@ export class TaskCapture {
               kind: "identity",
               candidate: issue.candidate,
               message: issue.message,
-              linkUid: issue.uids.find(
-                (uid) => this.service.registry.snapshot().links[uid]?.taskId,
-              ),
+              linkUid: issue.uids.find((uid) => knownLinks[uid]?.taskId),
               taskId: issue.uids.flatMap((uid) =>
-                this.service.registry.snapshot().links[uid]?.taskId
-                  ? [this.service.registry.snapshot().links[uid]!.taskId!]
-                  : [],
+                knownLinks[uid]?.taskId ? [knownLinks[uid]!.taskId!] : [],
               )[0],
             },
           ]
         : [],
     );
-    const historical = historicalTaskLinks(this.service.registry.snapshot());
     let historyChanged = false;
     for (const candidate of candidates) {
       const item = historical.find((value) => value.uid === candidate.uid);

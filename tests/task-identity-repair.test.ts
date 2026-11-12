@@ -8,6 +8,7 @@ import {
   TaskIdentityRepairController,
   identitySourceKey,
 } from "../src/tasks/identity-repair";
+import { taskOccurrenceSchema } from "../src/tasks/occurrence-types";
 import type { TaskOperation } from "../src/tasks/operations";
 import { TaskService } from "../src/tasks/service";
 import {
@@ -176,7 +177,224 @@ async function setup(raw = "- [ ] Work #todoist") {
   };
 }
 
+async function historicalSetup() {
+  const h = await setup("- [ ] Parent #todoist\n  - [ ] Child #todoist");
+  const [rootUid, rootLink] = Object.entries(h.links).find(
+    ([, link]) => link.source.from === 0,
+  )!;
+  const childUid = Object.keys(h.links).find((uid) => uid !== rootUid)!;
+  const beforeTask = {
+    ...rootLink.base!,
+    completionCount: 0,
+    due: {
+      date: "2026-11-11",
+      recurring: true,
+      text: "every day",
+      timezone: "UTC",
+    },
+  };
+  const next = {
+    ...beforeTask,
+    completionCount: 1,
+    due: { ...beforeTask.due, date: "2026-11-12" },
+  };
+  const beforeLinks = structuredClone(h.links);
+  beforeLinks[rootUid]!.base = beforeTask;
+  beforeLinks[childUid]!.base = {
+    ...beforeLinks[childUid]!.base!,
+    parentId: beforeTask.id,
+  };
+  const checked = h.texts.get("Tasks.md")!.replaceAll("[ ]", "[x]");
+  h.texts.set("Tasks.md", checked);
+  h.texts.set("Copy.md", checked);
+  const sources = parseCaptureCandidates("Tasks.md", checked);
+  const frozenLinks = structuredClone(beforeLinks);
+  frozenLinks[rootUid]!.source = sources[0]!;
+  frozenLinks[childUid]!.source = sources[1]!;
+  const id = crypto.randomUUID();
+  const record = taskOccurrenceSchema.parse({
+    id,
+    provider: "todoist",
+    accountId: "account",
+    before: {
+      task: beforeTask,
+      children: [beforeLinks[childUid]!.base],
+      links: beforeLinks,
+      projections: {},
+    },
+    next,
+    links: frozenLinks,
+    projections: {},
+    phase: "complete",
+    recovered: false,
+    requestedAt: "2026-11-11T00:00:00Z",
+    verifiedAt: "2026-11-11T00:01:00Z",
+  });
+  h.remote.set(beforeTask.id, next);
+  h.remote.set(beforeLinks[childUid]!.taskId!, {
+    ...beforeLinks[childUid]!.base!,
+    completed: true,
+  });
+  await h.service.registry.change((state) => {
+    state.links = {};
+    state.projections = {};
+    state.occurrences[id] = record;
+  });
+  await h.service.refresh();
+  await h.capture.scan();
+  return { h, id, rootUid, childUid, record, beforeTask, next };
+}
+
 describe("task identity decisions", () => {
+  test.each(["Tasks.md", "Copy.md"])(
+    "historical copies retain occurrence ownership when choosing %s",
+    async (path) => {
+      const { h, id, rootUid, record, next } = await historicalSetup();
+      expect(
+        get(h.capture.state).issues.some((issue) => issue.linkUid === rootUid),
+      ).toBe(true);
+      const review = await h.controller.review(rootUid);
+      expect(Object.values(review.before.historical!)).toEqual([id, id]);
+      const source = review.sources.find((source) => source.path === path)!;
+      const texts = [...h.texts],
+        calls = h.apply.mock.calls.length;
+      await h.controller.confirm(review, {
+        linked: h.controller.suggestTree(
+          review,
+          rootUid,
+          identitySourceKey(source),
+        ),
+        create: [],
+      });
+      const state = h.service.registry.snapshot();
+      expect(state.links).toEqual({});
+      expect(state.occurrences[id]!.before).toEqual(record.before);
+      expect(
+        Object.values(state.occurrences[id]!.links).every(
+          (link) => link.source.path === path,
+        ),
+      ).toBe(true);
+      expect(state.occurrences[id]!.next).toEqual(next);
+      expect(h.remote.get(next.id)).toEqual(next);
+      expect([...h.texts]).toEqual(texts);
+      expect(h.apply).toHaveBeenCalledTimes(calls);
+      await h.restart();
+      await h.capture.scan();
+      expect(get(h.capture.state).issues).toEqual([]);
+      expect(h.service.registry.snapshot().links).toEqual({});
+      expect(h.service.registry.snapshot().occurrences[id]!.before).toEqual(
+        record.before,
+      );
+      h.service.stop();
+    },
+  );
+
+  test("creating a checked historical copy preserves the recurring task and original completion baseline", async () => {
+    const { h, id, rootUid, record, next } = await historicalSetup();
+    const review = await h.controller.review(rootUid),
+      original = review.sources.find((source) => source.path === "Tasks.md")!,
+      copy = review.sources.find((source) => source.path === "Copy.md")!;
+    const result = await h.controller.confirm(review, {
+      linked: h.controller.suggestTree(
+        review,
+        rootUid,
+        identitySourceKey(original),
+      ),
+      create: [identitySourceKey(copy)],
+    });
+    expect(result.kind).toBe("saved");
+    const state = h.service.registry.snapshot(),
+      created = Object.values(state.links);
+    expect(created).toHaveLength(2);
+    expect(
+      created.every(
+        (link) =>
+          link.source.path === "Copy.md" &&
+          h.remote.get(link.taskId!)?.completed &&
+          link.taskId !== next.id,
+      ),
+    ).toBe(true);
+    const parent = created.find((link) => link.base?.parentId === null)!,
+      child = created.find((link) => link.base?.parentId !== null)!;
+    expect(child.base?.parentId).toBe(parent.taskId);
+    expect(state.occurrences[id]!.before).toEqual(record.before);
+    expect(state.occurrences[id]!.next).toEqual(next);
+    expect(h.remote.get(next.id)).toEqual(next);
+    expect(Object.values(state.identityDecisions)[0]!.phase).toBe("complete");
+    const calls = h.apply.mock.calls.length;
+    await h.restart();
+    await h.controller.resume();
+    await h.capture.scan();
+    expect(h.apply).toHaveBeenCalledTimes(calls);
+    expect(get(h.capture.state).issues).toEqual([]);
+    h.service.stop();
+  });
+
+  test("cancelling unsent historical-copy creation restores history without promoting active links", async () => {
+    const { h, id, rootUid, record } = await historicalSetup();
+    const review = await h.controller.review(rootUid),
+      original = review.sources.find((source) => source.path === "Tasks.md")!,
+      copy = review.sources.find((source) => source.path === "Copy.md")!;
+    h.setOffline(true);
+    await h.controller.confirm(review, {
+      linked: h.controller.suggestTree(
+        review,
+        rootUid,
+        identitySourceKey(copy),
+      ),
+      create: [identitySourceKey(original)],
+    });
+    const decision = Object.values(
+      h.service.registry.snapshot().identityDecisions,
+    )[0]!;
+    expect(decision.phase).toBe("creating");
+    await h.controller.cancel(decision.id);
+    const state = h.service.registry.snapshot();
+    expect(state.links).toEqual({});
+    expect(state.localSources).toEqual({});
+    expect(state.occurrences[id]).toEqual(record);
+    expect(h.remote.size).toBe(2);
+    h.service.stop();
+  });
+
+  test("changed historical ownership blocks queued creation after restart", async () => {
+    const { h, id, rootUid } = await historicalSetup();
+    const review = await h.controller.review(rootUid),
+      original = review.sources.find((source) => source.path === "Tasks.md")!,
+      copy = review.sources.find((source) => source.path === "Copy.md")!;
+    h.setOffline(true);
+    await h.controller.confirm(review, {
+      linked: h.controller.suggestTree(
+        review,
+        rootUid,
+        identitySourceKey(original),
+      ),
+      create: [identitySourceKey(copy)],
+    });
+    const decision = Object.values(
+      h.service.registry.snapshot().identityDecisions,
+    )[0]!;
+    await h.service.registry.change((state) => {
+      state.occurrences[id]!.phase = "undone";
+    });
+    const calls = h.apply.mock.calls.length;
+    h.setOffline(false);
+    await h.restart();
+    await h.controller.retry(decision.id);
+    expect(h.apply).toHaveBeenCalledTimes(calls);
+    expect(h.remote.size).toBe(2);
+    expect(
+      h.service.registry.snapshot().identityDecisions[decision.id]!.phase,
+    ).toBe("creating");
+    expect(
+      h.service.registry.snapshot().identityDecisions[decision.id]!.error,
+    ).toContain("completed occurrence changed");
+    await expect(h.controller.cancel(decision.id)).rejects.toThrow(
+      "completed occurrence changed",
+    );
+    h.service.stop();
+  });
+
   test.each(["Tasks.md", "Copy.md"])(
     "choosing %s retains the original task and makes the other copy local",
     async (path) => {

@@ -157,7 +157,9 @@
         <strong>{assignment.source.title}</strong>
         <p>
           {assignment.kind === "linked"
-            ? "Existing task"
+            ? decision.before.historical?.[assignment.uid]
+              ? "Completed occurrence"
+              : "Existing task"
             : assignment.kind === "create"
               ? "Separate task"
               : "Local checklist"} · {assignment.source.path}
@@ -230,6 +232,9 @@
       </p>
       {#each Object.entries(review.before.links) as [uid, link] (uid)}<label
           >{link.base?.title ?? link.source.title}
+          {#if review.before.historical?.[uid]}<span class="task-form-context"
+              >Completed occurrence</span
+            >{/if}
           <select
             aria-label={`Note source for ${link.base?.title ?? link.source.title}`}
             disabled={busy}
