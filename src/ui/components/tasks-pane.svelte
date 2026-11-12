@@ -871,7 +871,10 @@
       </div>
     </details>{/if}
 
-  {#if $browserState.restoration}<div class="task-panel-form" role="status">
+  {#if $browserState.restoration && $action?.kind !== "state-recovery"}<div
+      class="task-panel-form"
+      role="status"
+    >
       <p>Saved task tracking needs review.</p>
       <button
         class="task-text-button"
@@ -879,7 +882,7 @@
         >Review tracking</button
       >
     </div>
-  {:else if $browserState.needsTrackingReadback}<div
+  {:else if !$browserState.restoration && $browserState.needsTrackingReadback}<div
       class="task-panel-form"
       role="status"
     >

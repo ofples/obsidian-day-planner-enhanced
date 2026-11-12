@@ -1329,6 +1329,7 @@ describe("custom Tasks panel", () => {
     const h = stateRestoreFixture();
     await vi.waitFor(() => expect(h.target.querySelector('[aria-label="Saved tracking"]')?.textContent).toContain("3 saved commands"));
     expect(h.target.querySelector<HTMLButtonElement>('[aria-label="Refresh tasks"]')?.disabled).toBe(true);
+    expect(h.target.textContent).not.toContain("Saved task tracking needs review");
     const form = h.target.querySelector('form[aria-label="Restore saved task tracking"]')!;
     expect(form.querySelector("details")?.textContent).toContain("separate checkpoint");
     Array.from(form.querySelectorAll<HTMLButtonElement>("button")).find(button => button.textContent === "Cancel")!.click();
