@@ -484,3 +484,10 @@ Cleanup verified all four provider tasks and all three managed events absent or 
 ## Deep-tree performance finding
 
 An isolated installed-view fixture supplied 2,000 tasks with a 1,000-deep chain. It made zero provider calls and preserved registry/cache bytes. Search, grouping and native root collapse worked without horizontal overflow. Initial rendering took approximately 1.7 seconds and produced long main-thread tasks. Native scrolling acceptance remains open. The grouping implementation now memoizes inherited date categories and avoids repeated ancestor-context traversal. A 2,000-deep regression enforces linear property-read work. Four focused files have 192 passes. Full validation has 1,139 passes, one inherited ICS timeout, nine skips and 17 todo cases. Source checks, the strict scorecard and production build pass. A53 remains open pending installed profiling and remaining interaction checks.
+
+
+## Installed task-list rendering and keyboard checks
+
+The shared action menu reduced the same controlled 2,000-task initial render from approximately 1.7 seconds to 1.1 seconds. Native input opened one menu for a cached nested task, focused its available provider link and returned focus to the originating control on Escape. Browser-managed offscreen rendering then reduced initial rendering to approximately 0.48 seconds.
+
+Native scrolling, root folding, End navigation to the final task, Tab navigation back to an offscreen focused root, single-result search and complete forest restoration worked without horizontal overflow. The fixture made zero provider calls and preserved registry/cache bytes and original preferences. Filter clearing and tree expansion still measured approximately 336 ms and 368 ms. Long tasks reached 360 ms. A53 remains open for bounded row creation and repeat native profiling. Full validation has 1,142 passes, one inherited ICS timeout, nine skips and 17 todo cases. Source checks and zero-warning Svelte diagnostics pass.
