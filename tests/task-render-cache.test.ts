@@ -56,8 +56,8 @@ describe("task render cache", () => {
         ?.rows.map((r) => [r.row.task.id, r.hidden]),
     ).toEqual([
       ["parent", false],
-      ["other", false],
       ["child", true],
+      ["other", false],
     ]);
     expect(
       cache
@@ -81,6 +81,31 @@ describe("task render cache", () => {
       .rows.filter((r) => !r.hidden)
       .map((r) => r.row);
     expect(result).toEqual(filtered[0]!.rows);
+  });
+
+  test("falls back to visible canonical order if it differs from the complete forest", () => {
+    const data = snapshot([
+      task("a", null, 0),
+      task("b", null, 1),
+      task("c", null, 2),
+    ]);
+    const complete = logical(data),
+      cache = new TaskRenderCache();
+    cache.project("a", complete, complete, []);
+    const group = complete[0]!;
+    const reordered = [
+      {
+        ...group,
+        rows: [group.rows[2]!, { ...group.rows[0]!, context: true }],
+      },
+    ];
+    const rows = cache.project("a", complete, reordered, [])[0]!.rows;
+    expect(rows.map((r) => [r.row.task.id, r.hidden])).toEqual([
+      ["c", false],
+      ["a", false],
+      ["b", true],
+    ]);
+    expect(rows[1]?.row.context).toBe(true);
   });
 
   test("keeps duplicate ancestor keys separate across project groups and uses filtered context", () => {

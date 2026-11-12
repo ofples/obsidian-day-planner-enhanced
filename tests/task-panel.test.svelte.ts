@@ -900,6 +900,27 @@ describe("custom Tasks panel", () => {
     expect(other.hasAttribute("hidden")).toBe(false);
   });
 
+  test("ordinary folding and filtering retain the mounted row order", () => {
+    const h = render();
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks: [task, { ...task, id: "child", title: "Child", parentId: task.id, order: 2 }, { ...task, id: "other", title: "Other", order: 3 }] } }));
+    flushSync();
+    const rows = Array.from(h.target.querySelectorAll(".task-row-container"));
+    const toggle = h.target.querySelector<HTMLButtonElement>('[aria-label="Toggle subtasks for Shopping"]')!;
+    toggle.click();
+    flushSync();
+    expect(Array.from(h.target.querySelectorAll(".task-row-container"))).toEqual(rows);
+    expect(rows[1]?.hasAttribute("hidden")).toBe(true);
+    toggle.click();
+    flushSync();
+    h.preferences.update(p => ({ ...p, query: "Other" }));
+    flushSync();
+    expect(Array.from(h.target.querySelectorAll(".task-row-container"))).toEqual(rows);
+    expect(rows.map(row => row.hasAttribute("hidden"))).toEqual([true, true, false]);
+    h.preferences.update(p => ({ ...p, query: "" }));
+    flushSync();
+    expect(Array.from(h.target.querySelectorAll(".task-row-container"))).toEqual(rows);
+  });
+
   test("filtering or folding a menu origin closes its menu without reopening it", async () => {
     const h = render();
     h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks: [task, { ...task, id: "child", title: "Child", parentId: task.id }] } }));

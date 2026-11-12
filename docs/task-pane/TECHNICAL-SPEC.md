@@ -243,7 +243,7 @@ The custom Tasks view requests Obsidian's debounced workspace-layout save when i
 
 ## Performance and refresh
 
-Refresh at connection, manual request, pane activation if stale and at a visible-pane interval. Coalesce overlapping refresh calls. Avoid reading all daily-note files during every row render. Use the existing vault index and update affected links incrementally. Keep account snapshots immutable to support Svelte subscriptions. Profile 2,000 active tasks and deep nesting before release. Add virtualization only if measured pane performance requires it.
+Refresh at connection, manual request, pane activation if stale and at a visible-pane interval. Coalesce overlapping refresh calls. Avoid reading all daily-note files during every row render. Use the existing vault index and update affected links incrementally. Keep account snapshots immutable to support Svelte subscriptions. Profile 2,000 active tasks and deep nesting before release. Retain previously displayed keyed rows across filters and folds, while keeping an initially filtered mount limited to its visible rows. Canonical filtered groups determine visible order, context, depth and counts. Prune retained rows against the complete forest and reset on provider, account or grouping changes. Keep retained canonical order when visible rows are a subsequence, suppress hidden rows from layout and focus, and use canonical visible ordering when it differs. Menu ownership includes its originating group and closes when that row becomes hidden. Add virtualization only if measured pane performance requires it.
 
 ## Rollout and rollback
 

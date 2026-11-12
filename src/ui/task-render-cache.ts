@@ -48,13 +48,27 @@ export class TaskRenderCache {
       let mounted = this.mounted.get(id);
       if (!mounted) this.mounted.set(id, (mounted = new Set()));
       for (const row of shown) mounted.add(row.task.id);
-      const shownIds = new Set(shown.map((row) => row.task.id));
-      const hidden =
-        completeById
-          .get(id)
-          ?.rows.filter(
-            (row) => mounted.has(row.task.id) && !shownIds.has(row.task.id),
-          ) ?? [];
+      const shownById = new Map(shown.map((row) => [row.task.id, row]));
+      const retained =
+        completeById.get(id)?.rows.filter((row) => mounted.has(row.task.id)) ??
+        [];
+      let nextShown = 0;
+      for (const row of retained) {
+        if (!shownById.has(row.task.id)) continue;
+        if (shown[nextShown]?.task.id !== row.task.id) break;
+        nextShown++;
+      }
+      if (nextShown === shown.length) {
+        return {
+          id,
+          group,
+          rows: retained.map((row) => ({
+            row: shownById.get(row.task.id) ?? row,
+            hidden: !shownById.has(row.task.id),
+          })),
+        };
+      }
+      const hidden = retained.filter((row) => !shownById.has(row.task.id));
       return {
         id,
         group,
