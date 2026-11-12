@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { deletionTaskTree } from "./deletion-types";
+import { pendingIdentityDecision } from "./identity-types";
 import {
   isOutstanding,
   operationTaskId,
@@ -375,6 +376,7 @@ export function recordExternalTaskOccurrence(
   ]);
   const owned = { provider: snapshot.provider, accountId: snapshot.account.id };
   if (
+    [...ids].some((id) => pendingIdentityDecision(state, owned, id)) ||
     state.operations.some(
       (operation) =>
         operation.provider === owned.provider &&

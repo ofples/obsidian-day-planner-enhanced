@@ -1,4 +1,5 @@
 import { deletionTaskTree, pendingTaskDeletion } from "./deletion-types";
+import { pendingIdentityDecision } from "./identity-types";
 import {
   occurrenceSourceLinks,
   pendingTaskOccurrence,
@@ -71,6 +72,7 @@ export function buildOccurrenceUndoReview(
   if (
     [...ids].some(
       (taskId) =>
+        pendingIdentityDecision(state, record, taskId) ||
         pendingTaskOccurrence(state, record, taskId, id) ||
         pendingTaskDeletion(state, record, taskId),
     ) ||

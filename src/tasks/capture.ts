@@ -29,6 +29,8 @@ export interface CaptureIssue {
   message: string;
   deletionId?: string;
   occurrenceId?: string;
+  linkUid?: string;
+  taskId?: string;
 }
 export interface TaskIdentityIssue {
   path: string;
@@ -212,6 +214,9 @@ export class TaskCapture {
       }
     }
     const previous = Object.fromEntries([
+      ...Object.entries(state.localSources).map(
+        ([uid, value]) => [uid, value.source] as const,
+      ),
       ...historicalTaskLinks(state).map(
         ({ uid, link }) => [uid, link.source] as const,
       ),
@@ -407,6 +412,34 @@ export class TaskCapture {
     return { ...inspection, documents };
   }
 
+  async readCurrentCandidates() {
+    if (!this.ready())
+      throw new TaskReadError(
+        "Wait for note indexing before reviewing task identities.",
+      );
+    const paths = [
+      ...new Set(
+        this.host.paths?.() ??
+          this.host.candidates().map((candidate) => candidate.path),
+      ),
+    ].toSorted();
+    const candidates: CaptureCandidate[] = [];
+    for (const path of paths) {
+      const text = await this.host.read(path);
+      if (text !== null) candidates.push(...parseCaptureCandidates(path, text));
+    }
+    if (
+      !this.ready() ||
+      (this.host.paths &&
+        JSON.stringify([...this.host.paths()].toSorted()) !==
+          JSON.stringify(paths))
+    )
+      throw new TaskReadError(
+        "The note inventory changed. Review task identities again.",
+      );
+    return candidates;
+  }
+
   async missingSource(
     uid: string,
     inspection: Awaited<ReturnType<TaskCapture["inspectCurrentIdentities"]>>,
@@ -462,6 +495,14 @@ export class TaskCapture {
               kind: "identity",
               candidate: issue.candidate,
               message: issue.message,
+              linkUid: issue.uids.find(
+                (uid) => this.service.registry.snapshot().links[uid]?.taskId,
+              ),
+              taskId: issue.uids.flatMap((uid) =>
+                this.service.registry.snapshot().links[uid]?.taskId
+                  ? [this.service.registry.snapshot().links[uid]!.taskId!]
+                  : [],
+              )[0],
             },
           ]
         : [],
@@ -604,6 +645,24 @@ export class TaskCapture {
         delete current.issues[uid];
       });
     }
+    for (const candidate of candidates) {
+      if (
+        !candidate.uid ||
+        !this.service.registry.snapshot().localSources[candidate.uid] ||
+        !(await this.sourceIsCurrent(candidate))
+      )
+        continue;
+      await this.service.registry.change((state) => {
+        const local = state.localSources[candidate.uid!];
+        if (local)
+          local.source = {
+            path: candidate.path,
+            from: candidate.from,
+            raw: candidate.raw,
+            title: candidate.title,
+          };
+      });
+    }
     const links = this.service.registry.snapshot().links;
     const changed = candidates.filter(
       (candidate) =>
@@ -695,6 +754,9 @@ export class TaskCapture {
     );
     if (
       parent &&
+      !(
+        parent.uid && this.service.registry.snapshot().localSources[parent.uid]
+      ) &&
       (parent.uid ||
         parent.tags.some((tag) => tag.name.toLowerCase() === "todoist"))
     ) {

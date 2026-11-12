@@ -8,6 +8,10 @@ import {
 } from "./conflict";
 import { pendingTaskDeletion } from "./deletion-types";
 import {
+  pendingIdentityDecision,
+  identityDecisionCanCancel,
+} from "./identity-types";
+import {
   pendingTaskOccurrence,
   recordTaskOccurrence,
   type TaskOccurrenceRecord,
@@ -46,6 +50,7 @@ export interface TaskBrowserState {
   writable: boolean;
   aliases: Record<string, string>;
   occurrences?: TaskOccurrenceRecord[];
+  identityDecisions?: import("./identity-types").TaskIdentityDecisionView[];
 }
 
 export class TaskService {
@@ -106,14 +111,13 @@ export class TaskService {
   }
 
   publish(patch: Partial<TaskBrowserState> = {}) {
+    const registry = this.registry.snapshot();
     const snapshot = this.cache.snapshot;
-    const owned = this.registry
-      .snapshot()
-      .operations.filter(
-        (operation) =>
-          operation.provider === snapshot?.provider &&
-          operation.accountId === snapshot.account.id,
-      );
+    const owned = registry.operations.filter(
+      (operation) =>
+        operation.provider === snapshot?.provider &&
+        operation.accountId === snapshot.account.id,
+    );
     const operations = owned.filter(isOutstanding);
     const effective = pendingSnapshot(snapshot, operations);
     const deletedIds = new Set(
@@ -158,12 +162,22 @@ export class TaskService {
         snapshot: effective,
         operations,
         completed,
-        occurrences: Object.values(this.registry.snapshot().occurrences).filter(
+        occurrences: Object.values(registry.occurrences).filter(
           (record) =>
             record.provider === snapshot?.provider &&
             record.accountId === snapshot.account.id &&
             record.phase !== "cancelled",
         ),
+        identityDecisions: Object.values(registry.identityDecisions)
+          .filter(
+            (record) =>
+              record.provider === snapshot?.provider &&
+              record.accountId === snapshot.account.id,
+          )
+          .map((record) => ({
+            ...record,
+            cancellable: identityDecisionCanCancel(registry, record),
+          })),
         writable: this.canWrite && current.connected,
         aliases: Object.fromEntries(
           owned
@@ -179,15 +193,17 @@ export class TaskService {
 
   async mutate(
     input: TaskMutation,
-    source?: { uid: string; value: TaskSource },
+    source?: { uid: string; value: TaskSource; decisionId?: string },
     intent?: {
       id: string;
       base: import("./types").ProviderTask;
       provider: string;
       accountId: string;
       reuseCompletion?: boolean;
+      identityDecisionId?: string;
     },
   ): Promise<TaskOperation> {
+    const generation = this.generation;
     const snapshot = this.cache.snapshot;
     if (this.closed || !snapshot || !get(this.state).writable)
       throw new TaskReadError(
@@ -249,6 +265,15 @@ export class TaskService {
         "Refresh this recurring task to load its occurrence before completing it.",
       );
     const operation = await this.registry.change((state) => {
+      if (
+        !this.isCurrent(generation) ||
+        !get(this.state).writable ||
+        this.cache.snapshot?.provider !== snapshot.provider ||
+        this.cache.snapshot.account.id !== snapshot.account.id
+      )
+        throw new TaskReadError(
+          "The task account changed before this edit could be saved.",
+        );
       if (intent) {
         const saved = state.operations.find((item) => item.id === intent.id);
         if (saved) {
@@ -284,6 +309,33 @@ export class TaskService {
           );
         }
       }
+      if (source?.decisionId) {
+        const decision = state.identityDecisions[source.decisionId];
+        const assignment = decision?.assignments.find(
+          (item) => item.uid === source.uid && item.kind === "create",
+        );
+        const parentId = assignment?.parentUid
+          ? state.links[assignment.parentUid]?.taskId
+          : assignment?.draft?.parentId;
+        if (
+          !decision ||
+          decision.phase !== "creating" ||
+          decision.provider !== snapshot.provider ||
+          decision.accountId !== snapshot.account.id ||
+          !assignment?.draft ||
+          mutation.kind !== "create" ||
+          JSON.stringify(source.value) !==
+            JSON.stringify(state.links[source.uid]?.source) ||
+          JSON.stringify(mutation.task) !==
+            JSON.stringify({
+              ...(assignment.effectiveDraft ?? assignment.draft),
+              parentId,
+            })
+        )
+          throw new TaskReadError(
+            "Restore the saved source decision before creating this task.",
+          );
+      }
       if (source) {
         const sameSourceUid = Object.entries(state.links).find(
           ([, link]) =>
@@ -306,7 +358,7 @@ export class TaskService {
           accountId: snapshot.account.id,
           taskId: null,
           source: source.value,
-          noteBase: source.value,
+          noteBase: state.links[source.uid]?.noteBase ?? source.value,
           base: null,
         };
       }
@@ -318,6 +370,45 @@ export class TaskService {
         mutation.kind === "create" ? mutation.task.parentId : mutation.taskId;
       const parentId =
         mutation.kind === "moveParent" ? mutation.parentId : null;
+      if (intent?.identityDecisionId) {
+        const decision = state.identityDecisions[intent.identityDecisionId];
+        if (
+          !decision ||
+          decision.phase !== "creating" ||
+          decision.provider !== owner.provider ||
+          decision.accountId !== owner.accountId ||
+          mutation.kind !== "complete" ||
+          !decision.assignments.some(
+            (item) =>
+              item.kind === "create" &&
+              item.completed &&
+              item.completionId === intent.id &&
+              state.links[item.uid]?.taskId === mutation.taskId,
+          )
+        )
+          throw new TaskReadError(
+            "Restore the saved source decision before completing its copied task.",
+          );
+      }
+      if (
+        (targetId &&
+          pendingIdentityDecision(
+            state,
+            owner,
+            targetId,
+            source?.decisionId ?? intent?.identityDecisionId,
+          )) ||
+        (parentId &&
+          pendingIdentityDecision(
+            state,
+            owner,
+            parentId,
+            source?.decisionId ?? intent?.identityDecisionId,
+          ))
+      )
+        throw new TaskReadError(
+          "Finish this task's saved source decision before editing it.",
+        );
       if (
         (targetId &&
           pendingTaskOccurrence(state, owner, targetId, intent?.id)) ||
@@ -370,6 +461,7 @@ export class TaskService {
         attempts: 0,
         createdAt: new Date().toISOString(),
         sourceUid: source?.uid,
+        identityDecisionId: source?.decisionId ?? intent?.identityDecisionId,
       };
       state.operations.push(saved);
       recordTaskOccurrence(state, snapshot, saved, current.completed);
@@ -514,6 +606,7 @@ export class TaskService {
         undo?.phase !== "provider-pending" ||
         !operation ||
         operation.remoteId ||
+        operation.sentAt ||
         !["pending", "conflict"].includes(operation.status)
       )
         throw new TaskReadError(

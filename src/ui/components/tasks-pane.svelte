@@ -61,6 +61,7 @@
   import TaskPanelDelete from "./task-panel-delete.svelte";
   import TaskPanelDeleted from "./task-panel-deleted.svelte";
   import TaskPanelEditor from "./task-panel-editor.svelte";
+  import TaskPanelIdentity from "./task-panel-identity.svelte";
   import TaskPanelOccurrence from "./task-panel-occurrence.svelte";
   import TaskPanelRoute from "./task-panel-route.svelte";
   import TaskPanelSchedule from "./task-panel-schedule.svelte";
@@ -133,6 +134,32 @@
         )
       : undefined;
   });
+  const pendingIdentities = $derived(
+    ($browserState.identityDecisions ?? []).filter(
+      (record) => record.phase === "creating",
+    ),
+  );
+  const identityHistory = $derived(
+    ($browserState.identityDecisions ?? [])
+      .filter(
+        (record) =>
+          record.phase !== "creating" &&
+          Object.values(record.before.links).some((link) =>
+            (link.base?.title ?? link.source.title)
+              .toLowerCase()
+              .includes($preferences.query.toLowerCase()),
+          ),
+      )
+      .toReversed(),
+  );
+  const selectedIdentity = $derived.by(() => {
+    const current = $action;
+    return current?.kind === "identity-record"
+      ? ($browserState.identityDecisions ?? []).find(
+          (record) => record.id === current.id,
+        )
+      : undefined;
+  });
   const captureState = $derived(capture.state);
   const deletionState = $derived(
     deleter?.state ??
@@ -181,6 +208,11 @@
     new Set([
       ...$browserState.operations.map(operationTaskId),
       ...pendingDeletions.flatMap((item) => item.tasks.map((task) => task.id)),
+      ...pendingIdentities.flatMap((record) =>
+        Object.values(record.before.links).flatMap((link) =>
+          link.taskId ? [link.taskId] : [],
+        ),
+      ),
       ...pendingOccurrences.flatMap((record) =>
         [
           record.before.task,
@@ -195,10 +227,16 @@
       ...$browserState.operations.map(operationTaskId),
       ...pendingDeletions.map((item) => item.taskId),
       ...pendingOccurrences.map((record) => record.before.task.id),
+      ...pendingIdentities.flatMap((record) =>
+        Object.values(record.before.links).flatMap((link) =>
+          link.taskId ? [link.taskId] : [],
+        ),
+      ),
       ...$scheduleState.operations.map((operation) => operation.task.id),
       ...$reconcileState.issues.map((issue) => issue.taskId),
       ...$captureState.issues.map(
-        (issue) => `${issue.candidate.path}:${issue.candidate.from}`,
+        (issue) =>
+          issue.taskId ?? `${issue.candidate.path}:${issue.candidate.from}`,
       ),
     ]).size,
   );
@@ -213,6 +251,7 @@
     $reconcileState.issues.length > 0 ||
       pendingDeletions.some((item) => item.error) ||
       pendingOccurrences.some((item) => item.error || item.undo?.error) ||
+      pendingIdentities.some((item) => item.error) ||
       $captureState.issues.length > 0 ||
       $browserState.operations.some(
         (operation) =>
@@ -635,6 +674,12 @@
                       "Linked task",
                     restoreTagOnCancel: true,
                   })}>Review link</button
+              >{:else if issue.fields.includes("source") && reconciler}<button
+                class="task-text-button"
+                disabled={!$browserState.writable}
+                onclick={() =>
+                  startAction({ kind: "identity", linkUid: issue.linkUid })}
+                >Review task links</button
               >{:else if !issue.fields.some( (field) => ["source", "task", "recurrence"].includes(field), )}<button
                 class="task-text-button"
                 disabled={!$browserState.writable ||
@@ -685,6 +730,12 @@
                     kind: "deleted-record",
                     id: issue.deletionId!,
                   })}>Review saved task</button
+              >{:else if issue.kind === "identity" && issue.linkUid && reconciler}<button
+                class="task-text-button"
+                disabled={!$browserState.writable}
+                onclick={() =>
+                  startAction({ kind: "identity", linkUid: issue.linkUid! })}
+                >Review task links</button
               >{:else if issue.kind === "identity"}<button
                 class="task-text-button"
                 onclick={() => capture.scan()}>Recheck link</button
@@ -759,6 +810,22 @@
               >Review occurrence</button
             >
           </div>{/each}
+        {#each pendingIdentities as record (record.id)}<div
+            class="task-review-row"
+          >
+            <div>
+              <strong
+                >{Object.values(record.before.links)[0]?.base?.title ??
+                  "Task links"}</strong
+              ><small>{record.error ?? "Finishing source decision"}</small>
+            </div>
+            <button
+              class="task-text-button"
+              onclick={() =>
+                startAction({ kind: "identity-record", id: record.id })}
+              >Review task links</button
+            >
+          </div>{/each}
         {#each pendingDeletions as record (record.id)}<div
             class="task-review-row"
           >
@@ -797,6 +864,32 @@
             replaces={$action.replaces}
             saved={actionSaved($action)}
             taskId={$action.task.id}
+          />
+        {:else if $action.kind === "identity" && reconciler}<TaskPanelIdentity
+            cancel={cancelAction}
+            controller={reconciler.identity}
+            linkUid={$action.linkUid}
+            saved={(id: string) => {
+              $action = { kind: "identity-record", id };
+            }}
+            setBusy={(value: boolean) => {
+              busy = value;
+            }}
+            writable={$browserState.writable && !$browserState.loading}
+          />
+        {:else if $action.kind === "identity-record" && reconciler && selectedIdentity}<TaskPanelIdentity
+            cancel={cancelAction}
+            controller={reconciler.identity}
+            decision={selectedIdentity}
+            openNote={openSavedNote}
+            reviewLinks={(linkUid: string) => {
+              $action = { kind: "identity", linkUid };
+            }}
+            saved={() => {}}
+            setBusy={(value: boolean) => {
+              busy = value;
+            }}
+            writable={$browserState.writable && !$browserState.loading}
           />
         {:else if $action.kind === "occurrence"}{#if selectedOccurrence}<TaskPanelOccurrence
               openNote={openSavedNote}
@@ -1148,6 +1241,26 @@
                 onclick={() =>
                   startAction({ kind: "occurrence", id: record.id })}
                 >Details</button
+              >
+            </div>{/each}
+        </details>{/if}
+      {#if identityHistory.length}<details class="task-completed">
+          <summary
+            ><Unlink size={14} />Source decisions<span
+              >{identityHistory.length}</span
+            ></summary
+          >
+          {#each identityHistory as record (record.id)}<div
+              class="task-completed-row"
+            >
+              <span
+                >{Object.values(record.before.links)[0]?.base?.title ??
+                  "Task links"}</span
+              ><button
+                class="task-text-button"
+                onclick={() =>
+                  startAction({ kind: "identity-record", id: record.id })}
+                >Review</button
               >
             </div>{/each}
         </details>{/if}

@@ -19,3 +19,7 @@ export const taskLinkSchema = z.object({
   noteBase: taskSourceSchema.optional(),
   base: taskSchema.nullable(),
 });
+
+export function identitySourceKey(source: TaskSource) {
+  return JSON.stringify([source.path, source.from, source.raw]);
+}

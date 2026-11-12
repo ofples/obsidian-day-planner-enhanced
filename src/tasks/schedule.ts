@@ -12,6 +12,7 @@ import {
 } from "./capture-settings";
 import { pendingTaskDeletion } from "./deletion-types";
 import { TaskDrag } from "./drag";
+import { pendingIdentityDecision } from "./identity-types";
 import {
   matchingOccurrenceUndo,
   occurrenceCompletionVerified,
@@ -192,6 +193,10 @@ export class TaskScheduler {
       provider: snapshot.provider,
       accountId: snapshot.account.id,
     };
+    if (pendingIdentityDecision(state, owner, input.task.id))
+      throw new TaskReadError(
+        "Finish this task's source decision before changing its projection.",
+      );
     if (
       pendingTaskOccurrence(
         state,
@@ -301,6 +306,7 @@ export class TaskScheduler {
       this.assertUndoProjection(current, operation);
       if (
         !this.current(operation) ||
+        pendingIdentityDecision(current, operation, operation.task.id) ||
         pendingTaskOccurrence(
           current,
           operation,
@@ -358,6 +364,18 @@ export class TaskScheduler {
     if (!task || taskId.startsWith("local-"))
       throw new TaskReadError("Refresh this task before scheduling it.");
     const state = this.service.registry.snapshot();
+    if (
+      taskSubtree(snapshot, task).some((item) =>
+        pendingIdentityDecision(
+          state,
+          { provider: snapshot.provider, accountId: snapshot.account.id },
+          item.task.id,
+        ),
+      )
+    )
+      throw new TaskReadError(
+        "Finish this task tree's source decision before scheduling it.",
+      );
     if (
       pendingTaskOccurrence(
         state,
@@ -495,7 +513,10 @@ export class TaskScheduler {
       createdAt: new Date().toISOString(),
     });
     const saved = await this.service.registry.change((current) => {
-      if (pendingTaskOccurrence(current, operation, operation.task.id))
+      if (
+        pendingIdentityDecision(current, operation, operation.task.id) ||
+        pendingTaskOccurrence(current, operation, operation.task.id)
+      )
         throw new TaskReadError(
           "Finish this task's saved occurrence history before scheduling its next occurrence.",
         );

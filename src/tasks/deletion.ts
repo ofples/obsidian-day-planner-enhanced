@@ -7,6 +7,7 @@ import {
   taskDeletionSchema,
   type TaskDeletionRecord,
 } from "./deletion-types";
+import { pendingIdentityDecision } from "./identity-types";
 import { pendingTaskOccurrence } from "./occurrence-types";
 import { isOutstanding, operationAffectsTasks } from "./operations";
 import type { TaskReconciler } from "./reconcile";
@@ -110,6 +111,13 @@ export class TaskDeletionController {
       );
     if (
       tasks.some((task) =>
+        pendingIdentityDecision(
+          state,
+          { provider: snapshot.provider, accountId: snapshot.account.id },
+          task.id,
+        ),
+      ) ||
+      tasks.some((task) =>
         pendingTaskOccurrence(
           state,
           { provider: snapshot.provider, accountId: snapshot.account.id },
@@ -201,6 +209,9 @@ export class TaskDeletionController {
     await this.service.registry.change((state) => {
       if (
         !this.current(fresh.record) ||
+        fresh.record.tasks.some((task) =>
+          pendingIdentityDecision(state, fresh.record, task.id),
+        ) ||
         fresh.record.tasks.some((task) =>
           pendingTaskOccurrence(state, fresh.record, task.id),
         ) ||

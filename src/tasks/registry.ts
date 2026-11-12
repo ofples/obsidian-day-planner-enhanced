@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import { taskDeletionSchema } from "./deletion-types";
+import {
+  identityDecisionSchema,
+  localTaskSourceSchema,
+} from "./identity-types";
 import { taskOccurrenceSchema } from "./occurrence-types";
 import { taskOperationSchema, type TaskOperation } from "./operations";
 import {
@@ -54,7 +58,7 @@ const taskReconcileIssueSchema = z.object({
 export type TaskReconcileIssue = z.infer<typeof taskReconcileIssueSchema>;
 
 const taskRegistrySchema = z.object({
-  version: z.literal(16),
+  version: z.literal(17),
   namespace: z.string().regex(/^[a-f0-9]{32}$/),
   operations: z.array(taskOperationSchema),
   links: z.record(z.string(), taskLinkSchema),
@@ -64,6 +68,8 @@ const taskRegistrySchema = z.object({
   detached: z.record(z.string(), detachedTaskLinkSchema),
   deletions: z.record(z.string(), taskDeletionSchema),
   occurrences: z.record(z.string(), taskOccurrenceSchema),
+  localSources: z.record(z.string(), localTaskSourceSchema).default({}),
+  identityDecisions: z.record(z.string(), identityDecisionSchema).default({}),
 });
 
 const legacyRegistrySchema = taskRegistrySchema.extend({
@@ -83,6 +89,7 @@ const legacyRegistrySchema = taskRegistrySchema.extend({
     z.literal(13),
     z.literal(14),
     z.literal(15),
+    z.literal(16),
   ]),
   schedules: z.array(scheduleOperationSchema).default([]),
   projections: z.record(z.string(), taskProjectionSchema).default({}),
@@ -117,7 +124,7 @@ export class TaskRegistry {
     this.state =
       this.lastSaved === null
         ? {
-            version: 16,
+            version: 17,
             namespace: this.namespace,
             operations: [],
             links: {},
@@ -127,12 +134,14 @@ export class TaskRegistry {
             detached: {},
             deletions: {},
             occurrences: {},
+            localSources: {},
+            identityDecisions: {},
           }
         : taskRegistrySchema.parse(
             legacy.success
               ? {
                   ...legacy.data,
-                  version: 16,
+                  version: 17,
                   links: Object.fromEntries(
                     Object.entries(legacy.data.links).map(([uid, link]) => [
                       uid,

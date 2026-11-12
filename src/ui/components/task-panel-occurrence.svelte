@@ -43,7 +43,8 @@
     record.undo?.phase === "provider-pending" &&
       undoCommand &&
       ["pending", "conflict"].includes(undoCommand.status) &&
-      !undoCommand.remoteId,
+      !undoCommand.remoteId &&
+      !undoCommand.sentAt,
   );
   async function undoAction(kind: "review" | "confirm" | "retry" | "cancel") {
     if (!undoController || busy || !writable) return;

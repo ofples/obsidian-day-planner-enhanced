@@ -17,6 +17,8 @@ import type { TaskDeletionController, TaskDeletionReview } from "../src/tasks/de
 import { taskDeletionSchema } from "../src/tasks/deletion-types";
 import { taskOccurrenceSchema } from "../src/tasks/occurrence-types";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
+import { identitySourceKey, type TaskIdentityRepairController, type TaskIdentityReview } from "../src/tasks/identity-repair";
+import { identityDecisionSchema } from "../src/tasks/identity-types";
 import type { TaskOccurrenceUndoController } from "../src/tasks/occurrence-undo";
 import type { TaskOccurrenceUndoReview } from "../src/tasks/occurrence-undo-plan";
 import type { TaskOperation } from "../src/tasks/operations";
@@ -365,6 +367,215 @@ describe("custom Tasks panel", () => {
       expect(h.target.textContent).toContain("Check saved undo");
       h.button("Retry undo recovery").click();
       expect(h.controller.retry).toHaveBeenCalledWith(record.id);
+    },
+  );
+
+  function identityHarness() {
+    const original = parseCaptureCandidates(
+        "Original.md",
+        "- [ ] Shopping #todoist",
+      )[0]!,
+      copy = parseCaptureCandidates("Copy.md", original.raw)[0]!;
+    const review: TaskIdentityReview = {
+      linkUid: "source",
+      provider: "todoist",
+      accountId: "account",
+      before: {
+        links: {
+          source: {
+            provider: "todoist",
+            accountId: "account",
+            taskId: task.id,
+            base: task,
+            source: original,
+          },
+        },
+        projections: {},
+        localSources: {},
+      },
+      sources: [original, copy],
+      candidates: [original, copy],
+      fingerprint: "initial",
+      cached: false,
+    };
+    const record = identityDecisionSchema.parse({
+      id: crypto.randomUUID(),
+      fingerprint: "decision",
+      provider: "todoist",
+      accountId: "account",
+      before: review.before,
+      assignments: [
+        { uid: "source", kind: "linked", source: original },
+        { uid: "local", kind: "local", source: copy },
+      ],
+      phase: "complete",
+      createdAt: snapshot.fetchedAt,
+    });
+    const controller = {
+      review: vi.fn().mockResolvedValue(review),
+      suggestTree: vi.fn(
+        (_review: TaskIdentityReview, uid: string, key: string) => ({
+          [uid]: key,
+        }),
+      ),
+      confirm: vi.fn().mockResolvedValue({ kind: "saved", id: record.id }),
+      retry: vi.fn(),
+      cancel: vi.fn(),
+    };
+    const reconciler = {
+      state: writable({ issues: [], error: "" }),
+      identity: controller as unknown as TaskIdentityRepairController,
+    } as unknown as TaskReconciler;
+    const h = render({ kind: "identity", linkUid: "source" }, reconciler);
+    const button = (label: string) =>
+      Array.from(h.target.querySelectorAll<HTMLButtonElement>("button")).find(
+        (button) => button.textContent?.trim() === label,
+      )!;
+    return { ...h, review, record, controller, button };
+  }
+
+  test("source repair exposes all three actions and saves an explicit existing-source choice", async () => {
+    const h = identityHarness();
+    h.controller.confirm.mockImplementationOnce(async () => {
+      h.state.update((state) => ({ ...state, identityDecisions: [h.record] }));
+      return { kind: "saved", id: h.record.id };
+    });
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.button("Keep one linked")).toBeTruthy();
+    });
+    expect(h.button("Move link")).toBeTruthy();
+    expect(h.button("Create separate task")).toBeTruthy();
+    h.button("Keep one linked").click();
+    flushSync();
+    const select = h.target.querySelector<HTMLSelectElement>(
+      'select[aria-label="Note source for Shopping"]',
+    )!;
+    expect(select.value).toBe(identitySourceKey(h.review.sources[0]!));
+    expect(select.textContent).toContain("Original.md");
+    expect(select.textContent).toContain("Copy.md");
+    h.target
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => {
+      flushSync();
+      expect(
+        h.target.querySelector('[aria-label="Saved task link decision"]'),
+      ).not.toBeNull();
+    });
+    expect(h.controller.confirm).toHaveBeenCalledWith(h.review, {
+      linked: { source: identitySourceKey(h.review.sources[0]!) },
+      create: [],
+    });
+    expect(h.target.textContent).toContain("Local checklist");
+    expect(h.mutate).not.toHaveBeenCalled();
+  });
+
+  test("separate-task selection preserves the existing link and submits the chosen copy", async () => {
+    const h = identityHarness();
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.button("Create separate task")).toBeTruthy();
+    });
+    h.button("Create separate task").click();
+    flushSync();
+    const inputs = h.target.querySelectorAll<HTMLInputElement>(
+      'fieldset input[type="checkbox"]',
+    );
+    expect(inputs[0]!.disabled).toBe(true);
+    inputs[1]!.click();
+    flushSync();
+    h.target
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => expect(h.controller.confirm).toHaveBeenCalledOnce());
+    expect(h.controller.confirm.mock.calls[0]![1].create).toEqual([
+      identitySourceKey(h.review.sources[1]!),
+    ]);
+  });
+
+  test("a changed source comparison clears choices and saving locks closing", async () => {
+    const h = identityHarness();
+    h.controller.confirm.mockResolvedValueOnce({
+      kind: "changed",
+      review: { ...h.review, fingerprint: "updated" },
+    });
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.button("Keep one linked")).toBeTruthy();
+    });
+    h.button("Keep one linked").click();
+    flushSync();
+    h.target
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() => {
+      flushSync();
+      expect(h.target.textContent).toContain("sources changed");
+    });
+    expect(h.target.querySelector<HTMLSelectElement>("select")!.value).toBe("");
+    let finish!: (value: { kind: string; id: string }) => void;
+    h.controller.confirm.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    h.button("Keep one linked").click();
+    flushSync();
+    h.target
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    flushSync();
+    expect(
+      h.target.querySelector<HTMLButtonElement>(
+        '[aria-label="Close task form"]',
+      )!.disabled,
+    ).toBe(true);
+    press(h.target.querySelector("form")!, "Escape");
+    expect(get(h.action)?.kind).toBe("identity");
+    finish({ kind: "saved", id: h.record.id });
+    await vi.waitFor(() =>
+      expect(h.controller.confirm).toHaveBeenCalledTimes(2),
+    );
+  });
+
+  test.each([true, false])(
+    "saved source recovery uses its durable cancellability value %s",
+    (cancellable) => {
+      const h = identityHarness();
+      const record = identityDecisionSchema.parse({
+        ...h.record,
+        phase: "creating",
+        assignments: [
+          h.record.assignments[0],
+          {
+            uid: "new",
+            kind: "create",
+            source: h.review.sources[1],
+            draft: task,
+          },
+        ],
+        error: "Waiting for source recovery",
+      });
+      h.state.update((state) => ({
+        ...state,
+        identityDecisions: [{ ...record, cancellable }],
+      }));
+      h.action.set({ kind: "identity-record", id: record.id });
+      flushSync();
+      expect(
+        h.target.querySelector('[aria-label="Saved task link decision"]')
+          ?.textContent,
+      ).toContain("Waiting for source recovery");
+      expect(Boolean(h.button("Cancel queued decision"))).toBe(cancellable);
+      if (cancellable) {
+        h.button("Cancel queued decision").click();
+        expect(h.controller.cancel).toHaveBeenCalledWith(record.id);
+      } else {
+        h.button("Retry source recovery").click();
+        expect(h.controller.retry).toHaveBeenCalledWith(record.id);
+      }
     },
   );
 

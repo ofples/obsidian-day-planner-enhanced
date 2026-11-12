@@ -11,6 +11,8 @@ export type TaskPanelAction =
   | { kind: "delete"; task: ProviderTask; replaces?: string }
   | { kind: "deleted-record"; id: string }
   | { kind: "occurrence"; id: string }
+  | { kind: "identity"; linkUid: string }
+  | { kind: "identity-record"; id: string }
   | { kind: "route"; issue: CaptureIssue }
   | { kind: "unschedule"; task: ProviderTask }
   | {

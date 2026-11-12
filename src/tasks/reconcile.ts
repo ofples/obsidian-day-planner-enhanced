@@ -20,6 +20,8 @@ import type {
   TaskConflictValues,
 } from "./conflict";
 import { pendingTaskDeletion } from "./deletion-types";
+import { TaskIdentityRepairController } from "./identity-repair";
+import { pendingIdentityDecision } from "./identity-types";
 import { freezeTaskOccurrences } from "./occurrence-freeze";
 import { observeExternalTaskOccurrences } from "./occurrence-observe";
 import { pendingTaskOccurrence } from "./occurrence-types";
@@ -394,6 +396,7 @@ export function planTaskReconciliation(input: NotePlanInput) {
 
 export class TaskReconciler {
   readonly occurrenceUndo: TaskOccurrenceUndoController;
+  readonly identity: TaskIdentityRepairController;
   readonly state = writable<{ issues: TaskReconcileIssue[]; error: string }>({
     issues: [],
     error: "",
@@ -412,6 +415,12 @@ export class TaskReconciler {
     private readonly scheduler: TaskScheduler,
     private readonly settings: () => TaskCaptureSettings,
   ) {
+    this.identity = new TaskIdentityRepairController(
+      service,
+      capture,
+      settings,
+      () => !this.stopped,
+    );
     this.occurrenceUndo = new TaskOccurrenceUndoController(
       service,
       capture,
@@ -821,6 +830,7 @@ export class TaskReconciler {
     if (!this.current(snapshot)) return;
     if (get(this.capture.state).error)
       throw new TaskReadError(get(this.capture.state).error);
+    await this.identity.resume();
     await this.occurrenceUndo.resume();
     if (!this.current(snapshot)) return;
     snapshot = get(this.service.state).snapshot;
@@ -860,6 +870,7 @@ export class TaskReconciler {
       )
         continue;
       if (
+        pendingIdentityDecision(state, link, link.taskId) ||
         pendingTaskOccurrence(state, link, link.taskId) ||
         pendingTaskDeletion(
           state,

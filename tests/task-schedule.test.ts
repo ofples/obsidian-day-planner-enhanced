@@ -706,6 +706,54 @@ describe("recurring occurrence freezing", () => {
     h.service.stop();
   });
 
+  test.each(["keep", "move"])(
+    "a %s copy decision adopts the chosen note's canonical calendar event",
+    async (mode) => {
+      const { h, projection } = await scheduled();
+      const copyPath = "Daily/2026-11-12.md";
+      h.file(copyPath);
+      h.texts.set(copyPath, "# Day planner\n\n" + projection.source.raw + "\n");
+      await h.syncCalendar();
+      await h.indexNotes();
+      const review = await h.reconciler.identity.review(projection.linkUid);
+      const selected = review.sources.find(
+        (source) =>
+          source.path === (mode === "keep" ? projection.source.path : copyPath),
+      )!;
+      const linked = h.reconciler.identity.suggestTree(
+        review,
+        projection.linkUid,
+        JSON.stringify([selected.path, selected.from, selected.raw]),
+      );
+      const before = structuredClone([...h.texts]);
+      await h.reconciler.identity.confirm(review, { linked, create: [] });
+      expect([...h.texts]).toEqual(before);
+      await h.reconcile();
+      await h.settle();
+      const current = h.scheduler.projection(root.id)!;
+      expect(current.source.path).toBe(selected.path);
+      expect(h.events.size).toBe(2);
+      expect(
+        Date.parse(h.events.get(projection.googleEventId!)!.start!.dateTime!),
+      ).toBe(Date.parse(interval.start));
+      if (mode === "move")
+        expect(current.googleEventId).not.toBe(projection.googleEventId);
+      else expect(current.googleEventId).toBe(projection.googleEventId);
+      expect(
+        h.service.registry.snapshot().links[projection.linkUid]?.taskId,
+      ).toBe(root.id);
+      expect(get(h.capture.state).issues).toEqual([]);
+      expect(get(h.reconciler.state).issues).toEqual([]);
+      await h.restart();
+      await h.reconcile();
+      expect(h.scheduler.projection(root.id)?.googleEventId).toBe(
+        current.googleEventId,
+      );
+      expect(h.events.size).toBe(2);
+      h.service.stop();
+    },
+  );
+
   test.each([1, 3])(
     "an external counter advance of %i freezes the linked occurrence without a provider command",
     async (advance) => {
