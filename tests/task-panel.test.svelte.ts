@@ -1348,6 +1348,9 @@ describe("custom Tasks panel", () => {
     const form = h.target.querySelector("form")!;
     form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
     await vi.waitFor(() => expect(h.restoreTracking).toHaveBeenCalledOnce());
+    h.state.update(state => ({ ...state, restoration: null, needsTrackingReadback: true }));
+    flushSync();
+    expect(h.target.textContent).not.toContain("Tracking restored. Refresh tasks");
     press(form, "Escape");
     expect(get(h.action)?.kind).toBe("state-recovery");
     expect(h.target.querySelector<HTMLButtonElement>('[aria-label="Close task form"]')?.disabled).toBe(true);

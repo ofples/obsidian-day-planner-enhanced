@@ -1,4 +1,5 @@
-import { webcrypto } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
+import type { Plugin } from "obsidian";
 import { get } from "svelte/store";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -7,6 +8,7 @@ import {
   type TaskOperation,
 } from "../src/tasks/operations";
 import { TaskRegistry } from "../src/tasks/registry";
+import { createTaskService } from "../src/tasks/obsidian";
 import { TaskService } from "../src/tasks/service";
 import type {
   ProviderTask,
@@ -145,6 +147,39 @@ async function savedFixture(status: "pending" | "sent" | "complete" = "sent") {
 }
 
 describe("saved task tracking repair", () => {
+  test("the vault adapter verifies an existing content-addressed backup before restoration", async () => {
+    const dir = ".obsidian/plugins/day-planner-enhanced";
+    const content = emptyState();
+    const digest = createHash("sha256")
+      .update(content)
+      .digest("hex")
+      .slice(0, 20);
+    const backupPath = `${dir}/task-state-v19-${digest}.backup.json`;
+    const files = new Map([[backupPath, "Unexpected bytes"]]);
+    const adapter = {
+      exists: async (path: string) => files.has(path),
+      read: async (path: string) => files.get(path)!,
+      write: vi.fn(async (path: string, bytes: string) => {
+        files.set(path, bytes);
+      }),
+    };
+    const service = createTaskService({
+      manifest: { id: "day-planner-enhanced", dir },
+      app: { vault: { configDir: ".obsidian", adapter } },
+    } as unknown as Plugin);
+    const storage = Reflect.get(service, "storage") as TaskStorage;
+    await expect(storage.backupState!(content, 19)).rejects.toThrow(
+      "backup changed",
+    );
+    expect(adapter.write).not.toHaveBeenCalled();
+    files.set(backupPath, content);
+    await storage.backupState!(content, 19);
+    expect(adapter.write).not.toHaveBeenCalled();
+    files.delete(backupPath);
+    await storage.backupState!(content, 19);
+    expect(files.get(backupPath)).toBe(content);
+  });
+
   test("upgrade establishes the original checkpoint before exact-byte legacy migration", async () => {
     const legacy = JSON.stringify(
       { version: 18, namespace, operations: [], links: {} },

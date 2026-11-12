@@ -132,13 +132,13 @@ Use deterministic provider responses for focused regression tests and a real dis
 
 | Evidence | State | Required record |
 | --- | --- | --- |
-| Baseline source | Confirmed | `82ae46ff` equals origin `feat/google-calendar-sync` |
-| New source checks | M4 automatic note/provider reconciliation verified | 792 full-suite passes and one inherited ICS timeout. Source formatting, standard/style lint, TypeScript, Svelte, strict scorecard and production build pass |
+| Baseline source | Confirmed | Original `82ae46ff` remains an ancestor. Baseline hotfix `87de378b` is pushed, merged into the feature and installed in the working vault |
+| New source checks | M5 recovery implemented | 1,178 full-suite passes and one inherited ICS timeout. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass |
 | Inherited ICS timeout | Known baseline issue | `tests/ical.test.ts`, last visible day inclusive case, independently reproduced on upstream previously |
-| Synthetic desktop acceptance | M1 partial | Dockable pane, tree folding, cached/disconnected state, search and details inspected. Exhaustive keyboard/popout checks pending |
-| Live Todoist acceptance | M2 editing and capture verified | Complete account reads, persisted credentials, native creation/edit/project move/subtask/completion/reopen, cursor-leave capture and explicit routing readbacks. All disposable task IDs returned 404 after cleanup. Recurring writes pending |
-| Live Google acceptance | M3 scheduling verified | Stable event IDs across day/week moves, child description and planner color, explicit unschedule deletion and cleanup. Full reconciliation and exact live feed-policy acceptance pending |
-| Working-vault installation | Pending | Matching backup, exact artifact hashes, reload and normal-entry readback |
+| Synthetic desktop acceptance | M6 partial | Custom forms, cached browsing, theme/width checks, source repair and restored-state controls verified. Large-list latency, exhaustive keyboard/IME/popout and real pointer acceptance continue |
+| Live Todoist acceptance | M5 API/native partial | Editing, capture, recurring history/undo, copied identities and fixture cleanup verified. Interrupted-tree repair and restored-state confirmation have native evidence. Historical-copy and undo native controls remain open |
+| Live Google acceptance | M5 readback verified | Stable owned event IDs, intervals, colors, subtask descriptions, exact feed exclusion, exporter collision handling and controlled cleanup verified. Final combined working-vault acceptance remains open |
+| Working-vault installation | Feature pending | Baseline hotfix is installed. Feature acceptance still requires matching backup, exact bundle hashes, reload and normal-entry readback |
 
 A passing focused suite establishes its covered behavior. The release record must state the inherited full-suite failure separately from new regressions. Completion requires the product scenarios above and honest evidence for any remaining external limitation.
 
@@ -498,3 +498,12 @@ Native scrolling, root folding, End navigation to the final task, Tab navigation
 A separate checkpoint journals exact committed/pending registry bytes before provider side effects. Existing supported files initialize it after validation. Restart resolves interrupted known writes. A restored or unreadable registry opens custom review and holds task writes while the latest supported tracking supplies read-only metadata. Confirmation compares both files again, backs up displaced bytes, restores saved tracking and retains a durable fresh-provider-readback requirement. That hold survives another restart. Original pending, transmitted and completed command identities remain available.
 
 Regressions cover pre-write and applied-write failures for intent persistence and restoration, exact legacy backups, missing/malformed registry files, unsupported and foreign formats, malformed checkpoint contents, changed comparisons, backup failure and concurrent replacement, confirmation replay, provider-request-free review and offline fresh-readback recovery. Custom-form cases cover normal entry, Cancel, changed comparison, close/Escape locking, unsupported formats and load/save retry. The four-file subset has 103 passes. Full validation has 1,177 passes, the inherited ICS timeout, nine skips and 17 todo cases. Required source checks, zero-warning Svelte diagnostics, the strict scorecard and production build pass. Installed/native rollback acceptance remains pending. A46 and US-12 remain open for that evidence and the other previously recorded native scenarios.
+
+
+## Installed restored-state acceptance
+
+The isolated installation used a complete plugin backup and matching bundle hashes. A controlled local rollback retained the newer checkpoint while restoring preceding registry bytes. Native review showed the loaded and saved counts, expanded the recovery explanation and cancelled with Escape. Both files stayed exact and the task service made zero provider requests during review.
+
+Native confirmation saved an exact-byte backup and restored the committed tracking. A controlled fresh-readback gate verified durable write suspension, disabled close/Cancel/submit controls and Escape locking. After release, live provider readback completed with zero mutation attempts. Original source/calendar mappings, command UUIDs and all recovery histories were retained. Reload and repeated confirmation reused the same receipt and command identities.
+
+Cleanup removed the local verification record through the canonical registry. Final reload verified exact original registry bytes, matching checkpoint bytes, retained compact receipt, restored pane/calendar preferences, zero pending work, zero source/identity/reconciliation issues and no task-service error. This fixture created no cloud tasks or calendar events. The four-file subset has 104 passes. Full validation has 1,178 passes, the inherited ICS timeout, nine skips and 17 todo cases. Required source checks, zero-warning Svelte diagnostics, strict scorecard and production build pass. This closes installed restored-state follow-through. Historical-copy/undo native controls and remaining M6 acceptance remain open.

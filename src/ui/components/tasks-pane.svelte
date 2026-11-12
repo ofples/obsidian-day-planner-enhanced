@@ -882,7 +882,7 @@
         >Review tracking</button
       >
     </div>
-  {:else if !$browserState.restoration && $browserState.needsTrackingReadback}<div
+  {:else if !$browserState.restoration && $browserState.needsTrackingReadback && $action?.kind !== "state-recovery"}<div
       class="task-panel-form"
       role="status"
     >
