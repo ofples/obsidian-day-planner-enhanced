@@ -427,6 +427,10 @@
   border-radius: 7px;
 }
 
+.dp-task-panel .task-row-container[hidden] {
+  display: none;
+}
+
 .dp-task-panel .task-row-container:hover {
   background: color-mix(in srgb, var(--tp-hover) 55%, transparent);
 }

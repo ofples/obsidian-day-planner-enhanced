@@ -51,6 +51,7 @@
   import type { TaskBrowserState, TaskService } from "../../tasks/service";
   import type { ProviderTask } from "../../tasks/types";
   import type { TaskPanelAction } from "../task-panel-state";
+  import { TaskRenderCache } from "../task-render-cache";
   import "../task-panel.css";
 
   import TaskPanelCalendars from "./task-panel-calendars.svelte";
@@ -193,6 +194,27 @@
   const scheduleState = $derived(scheduler?.state ?? emptySchedule);
   const snapshot = $derived($browserState.snapshot);
   const groups = $derived(snapshot ? taskGroups(snapshot, $preferences) : []);
+  const grouping = $derived($preferences.groupBy);
+  const completeGroups = $derived(
+    snapshot
+      ? taskGroups(snapshot, {
+          groupBy: grouping,
+          query: "",
+          projectId: "",
+          selectedId: null,
+          collapsed: [],
+        })
+      : [],
+  );
+  const rowCache = new TaskRenderCache();
+  const renderedGroups = $derived(
+    rowCache.project(
+      JSON.stringify([snapshot?.provider, snapshot?.account.id, grouping]),
+      completeGroups,
+      groups,
+      $preferences.collapsed,
+    ),
+  );
   const selected = $derived(
     snapshot?.tasks.find((task) => task.id === $preferences.selectedId),
   );
@@ -279,11 +301,12 @@
   const paneId = crypto.randomUUID();
   const menuId = `${paneId}-task-menu`;
   let menuTaskId = $state<string | null>(null);
+  let menuGroupId = $state<string | null>(null);
   const menuTask = $derived(
-    menuTaskId
+    menuTaskId && menuGroupId && !$preferences.collapsed.includes(menuGroupId)
       ? groups
-          .flatMap((group) => group.rows)
-          .find((row) => row.task.id === menuTaskId)?.task
+          .find((group) => group.id === menuGroupId)
+          ?.rows.find((row) => row.task.id === menuTaskId)?.task
       : undefined,
   );
   const menuProjection = $derived(
@@ -309,6 +332,9 @@
   });
   $effect(() => {
     if ($action || showDetails) reviewOpen = false;
+  });
+  $effect(() => {
+    if (menuTaskId && !menuTask) menuTaskId = null;
   });
 
   function toggleGroup(id: string) {
@@ -382,7 +408,7 @@
             ".task-detail-navigation button",
           )
         : (paneElement?.querySelector<HTMLButtonElement>(
-            ".task-selected .task-row",
+            ".task-selected:not([hidden]) .task-row",
           ) ??
           paneElement?.querySelector<HTMLButtonElement>(".task-add-button"));
       const target =
@@ -469,11 +495,13 @@
   }
   async function contextMenu(
     task: ProviderTask,
+    groupId: string,
     event: MouseEvent | KeyboardEvent,
   ) {
     event.preventDefault();
     positionMenu(event);
     const trigger = menuTrigger;
+    menuGroupId = groupId;
     menuTaskId = task.id;
     await tick();
     if (menuTrigger !== trigger || menuTask?.id !== task.id) return;
@@ -1094,165 +1122,172 @@
             >Connect Todoist</button
           >
         </div>
-      {:else if !groups.length}<div class="task-empty">
-          <Search size={25} />
-          <h3>
-            {$preferences.query || $preferences.projectId
-              ? "No matching tasks"
-              : "All clear"}
-          </h3>
-          {#if $preferences.query || $preferences.projectId}<button
-              class="task-text-button"
-              onclick={() => {
-                $preferences = { ...$preferences, query: "", projectId: "" };
-              }}>Clear filters</button
-            >{:else}<p>Your active tasks appear here.</p>{/if}
-        </div>
-      {:else}<div class="task-groups">
-          {#each groups as group (group.id)}<section
+      {:else}{#if !groups.length}<div class="task-empty">
+            <Search size={25} />
+            <h3>
+              {$preferences.query || $preferences.projectId
+                ? "No matching tasks"
+                : "All clear"}
+            </h3>
+            {#if $preferences.query || $preferences.projectId}<button
+                class="task-text-button"
+                onclick={() => {
+                  $preferences = { ...$preferences, query: "", projectId: "" };
+                }}>Clear filters</button
+              >{:else}<p>Your active tasks appear here.</p>{/if}
+          </div>{/if}
+        <div class="task-groups">
+          {#each renderedGroups as renderedGroup (renderedGroup.id)}
+            {@const group = renderedGroup.group}
+            <section
               class="task-group"
-              aria-label={group.label}
+              aria-label={group?.label}
+              hidden={!group}
             >
-              <button
-                class="task-group-heading"
-                aria-expanded={!$preferences.collapsed.includes(group.id)}
-                onclick={() => toggleGroup(group.id)}
-                >{#if $preferences.collapsed.includes(group.id)}<ChevronRight
-                    size={15}
-                  />{:else}<ChevronDown size={15} />{/if}<strong
-                  >{group.label}</strong
-                ><span>{group.count}</span></button
-              >
-              {#if !$preferences.collapsed.includes(group.id)}{#each group.rows as row (row.task.id)}
-                  {@const projection = projectionsByTask.get(row.task.id)}
-                  <div
-                    style:--task-depth={Math.min(row.depth, 6)}
-                    class="task-row-container"
-                    class:task-nested={row.depth > 0}
-                    class:task-selected={selected?.id === row.task.id}
-                  >
-                    {#if row.hasChildren}<button
-                        class="task-tree-toggle task-icon-button"
-                        aria-expanded={!$preferences.collapsed.includes(
-                          `task:${group.id}:${row.task.id}`,
-                        )}
-                        aria-label={`Toggle subtasks for ${row.task.title}`}
-                        onclick={() =>
-                          toggleGroup(`task:${group.id}:${row.task.id}`)}
-                        ><svg
-                          class="lucide-icon lucide"
-                          class:lucide-chevron-down={!$preferences.collapsed.includes(
-                            `task:${group.id}:${row.task.id}`,
-                          )}
-                          class:lucide-chevron-right={$preferences.collapsed.includes(
-                            `task:${group.id}:${row.task.id}`,
-                          )}
-                          aria-hidden="true"
-                          fill="none"
-                          height="13"
-                          stroke="currentColor"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                          stroke-width="2"
-                          viewBox="0 0 24 24"
-                          width="13"
-                          xmlns="http://www.w3.org/2000/svg"
-                          ><path
-                            d={$preferences.collapsed.includes(
-                              `task:${group.id}:${row.task.id}`,
-                            )
-                              ? "m9 18 6-6-6-6"
-                              : "m6 9 6 6 6-6"}
-                          /></svg
-                        ></button
-                      >{/if}
-                    <input
-                      class="task-checkbox"
-                      aria-label={`Complete ${row.task.title}`}
-                      checked={row.task.completed}
-                      disabled={!$browserState.writable ||
-                        pendingIds.has(row.task.id) ||
-                        row.task.id.startsWith("local-")}
-                      onchange={() => completeTask(row.task)}
-                      type="checkbox"
-                    />
-                    <div class="task-row-content">
-                      <button
-                        class="task-row"
-                        class:task-context={row.context}
-                        draggable={!!scheduler &&
-                          $browserState.writable &&
-                          !pendingIds.has(row.task.id)}
-                        onclick={() => chooseTask(row.task)}
-                        oncontextmenu={(event) => contextMenu(row.task, event)}
-                        ondragend={() => scheduler?.drag.cancel()}
-                        ondragstart={(event) => {
-                          if (scheduler && event.dataTransfer)
-                            scheduler.drag.start(row.task, event.dataTransfer);
-                        }}
-                        onkeydown={(event) => {
-                          if (
-                            event.key === "ContextMenu" ||
-                            (event.shiftKey && event.key === "F10")
-                          )
-                            void contextMenu(row.task, event);
-                        }}
-                        ><span class="task-title"
-                          >{row.task.title || "Untitled task"}</span
-                        ></button
-                      >
-                      <div class="task-row-meta">
-                        {#if row.depth === 0}<span class="task-project-chip"
-                            >{projectName(row.task)}</span
-                          >{/if}{#if projection?.interval}<button
-                            class="task-schedule-chip"
-                            onclick={() => revealTask(row.task)}
-                            title="Open schedule"
-                            ><Calendar size={12} />{scheduleLabel(
-                              projection,
-                            )}</button
-                          >{:else if row.task.due}<span class="task-date"
-                            >{dateLabel(row.task)}</span
-                          >{/if}{#if row.task.priority > 1}<span
-                            class="task-priority"
-                            title={`Priority ${5 - row.task.priority}`}
-                            ><Flag size={12} /></span
-                          >{/if}{#if pendingIds.has(row.task.id)}<span
-                            class="task-pending">Pending</span
-                          >{/if}
-                      </div>
-                    </div>
-                    <button
-                      class="task-icon-button task-row-more"
-                      aria-controls={menuId}
-                      aria-haspopup="menu"
-                      aria-label={`Actions for ${row.task.title}`}
-                      onclick={(event) => contextMenu(row.task, event)}
-                      onkeydown={(event) => {
-                        if (event.key === "ArrowDown")
-                          void contextMenu(row.task, event);
-                      }}
+              {#if group}<button
+                  class="task-group-heading"
+                  aria-expanded={!$preferences.collapsed.includes(group.id)}
+                  onclick={() => toggleGroup(group.id)}
+                  >{#if $preferences.collapsed.includes(group.id)}<ChevronRight
+                      size={15}
+                    />{:else}<ChevronDown size={15} />{/if}<strong
+                    >{group.label}</strong
+                  ><span>{group.count}</span></button
+                >
+              {/if}{#each renderedGroup.rows as renderedRow (renderedRow.row.task.id)}
+                {@const row = renderedRow.row}
+                {@const projection = projectionsByTask.get(row.task.id)}
+                <div
+                  style:--task-depth={Math.min(row.depth, 6)}
+                  class="task-row-container"
+                  class:task-nested={row.depth > 0}
+                  class:task-selected={selected?.id === row.task.id}
+                  hidden={renderedRow.hidden}
+                >
+                  {#if row.hasChildren}<button
+                      class="task-tree-toggle task-icon-button"
+                      aria-expanded={!$preferences.collapsed.includes(
+                        `task:${renderedGroup.id}:${row.task.id}`,
+                      )}
+                      aria-label={`Toggle subtasks for ${row.task.title}`}
+                      onclick={() =>
+                        toggleGroup(`task:${renderedGroup.id}:${row.task.id}`)}
                       ><svg
-                        class="lucide-icon lucide lucide-ellipsis"
+                        class="lucide-icon lucide"
+                        class:lucide-chevron-down={!$preferences.collapsed.includes(
+                          `task:${renderedGroup.id}:${row.task.id}`,
+                        )}
+                        class:lucide-chevron-right={$preferences.collapsed.includes(
+                          `task:${renderedGroup.id}:${row.task.id}`,
+                        )}
                         aria-hidden="true"
                         fill="none"
-                        height="16"
+                        height="13"
                         stroke="currentColor"
                         stroke-linecap="round"
                         stroke-linejoin="round"
                         stroke-width="2"
                         viewBox="0 0 24 24"
-                        width="16"
+                        width="13"
                         xmlns="http://www.w3.org/2000/svg"
-                        ><circle cx="12" cy="12" r="1" /><circle
-                          cx="19"
-                          cy="12"
-                          r="1"
-                        /><circle cx="5" cy="12" r="1" /></svg
+                        ><path
+                          d={$preferences.collapsed.includes(
+                            `task:${renderedGroup.id}:${row.task.id}`,
+                          )
+                            ? "m9 18 6-6-6-6"
+                            : "m6 9 6 6 6-6"}
+                        /></svg
+                      ></button
+                    >{/if}
+                  <input
+                    class="task-checkbox"
+                    aria-label={`Complete ${row.task.title}`}
+                    checked={row.task.completed}
+                    disabled={!$browserState.writable ||
+                      pendingIds.has(row.task.id) ||
+                      row.task.id.startsWith("local-")}
+                    onchange={() => completeTask(row.task)}
+                    type="checkbox"
+                  />
+                  <div class="task-row-content">
+                    <button
+                      class="task-row"
+                      class:task-context={row.context}
+                      draggable={!!scheduler &&
+                        $browserState.writable &&
+                        !pendingIds.has(row.task.id)}
+                      onclick={() => chooseTask(row.task)}
+                      oncontextmenu={(event) =>
+                        contextMenu(row.task, renderedGroup.id, event)}
+                      ondragend={() => scheduler?.drag.cancel()}
+                      ondragstart={(event) => {
+                        if (scheduler && event.dataTransfer)
+                          scheduler.drag.start(row.task, event.dataTransfer);
+                      }}
+                      onkeydown={(event) => {
+                        if (
+                          event.key === "ContextMenu" ||
+                          (event.shiftKey && event.key === "F10")
+                        )
+                          void contextMenu(row.task, renderedGroup.id, event);
+                      }}
+                      ><span class="task-title"
+                        >{row.task.title || "Untitled task"}</span
                       ></button
                     >
+                    <div class="task-row-meta">
+                      {#if row.depth === 0}<span class="task-project-chip"
+                          >{projectName(row.task)}</span
+                        >{/if}{#if projection?.interval}<button
+                          class="task-schedule-chip"
+                          onclick={() => revealTask(row.task)}
+                          title="Open schedule"
+                          ><Calendar size={12} />{scheduleLabel(
+                            projection,
+                          )}</button
+                        >{:else if row.task.due}<span class="task-date"
+                          >{dateLabel(row.task)}</span
+                        >{/if}{#if row.task.priority > 1}<span
+                          class="task-priority"
+                          title={`Priority ${5 - row.task.priority}`}
+                          ><Flag size={12} /></span
+                        >{/if}{#if pendingIds.has(row.task.id)}<span
+                          class="task-pending">Pending</span
+                        >{/if}
+                    </div>
                   </div>
-                {/each}{/if}
+                  <button
+                    class="task-icon-button task-row-more"
+                    aria-controls={menuId}
+                    aria-haspopup="menu"
+                    aria-label={`Actions for ${row.task.title}`}
+                    onclick={(event) =>
+                      contextMenu(row.task, renderedGroup.id, event)}
+                    onkeydown={(event) => {
+                      if (event.key === "ArrowDown")
+                        void contextMenu(row.task, renderedGroup.id, event);
+                    }}
+                    ><svg
+                      class="lucide-icon lucide lucide-ellipsis"
+                      aria-hidden="true"
+                      fill="none"
+                      height="16"
+                      stroke="currentColor"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      viewBox="0 0 24 24"
+                      width="16"
+                      xmlns="http://www.w3.org/2000/svg"
+                      ><circle cx="12" cy="12" r="1" /><circle
+                        cx="19"
+                        cy="12"
+                        r="1"
+                      /><circle cx="5" cy="12" r="1" /></svg
+                    ></button
+                  >
+                </div>
+              {/each}
             </section>{/each}
         </div>{/if}
       {#if $browserState.completed.length}<details class="task-completed">

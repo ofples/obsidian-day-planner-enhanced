@@ -551,3 +551,17 @@ A controlled visible Chromium comparison retained all title/control DOM and pass
 Native historical-copy review exposed an unrelated archived child whose saved note baseline overlapped the fresh task tree's path and offsets. The review stopped before a choice was applied. Copy expansion and review now require matching occurrence ownership when collecting descendants. Active links take precedence over retained historical entries sharing their UID, so moving an active link cannot retarget archived navigation. No registry schema change is required.
 
 Regressions cover matching and differing child titles, older-first and newer-first history ordering, Keep/Move/Create choices, active parents, retained same-UID history and restart. Unrelated occurrence records remain exact. Six focused identity/copy/capture/calendar suites have 105 passes. The complete run has 1,224 passes, the inherited inclusive-last-day ICS failure, nine skips and 17 todo cases. Source formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics, strict scorecard and production build pass. The paused disposable native fixture remains available for matching installed review and safe-choice acceptance.
+
+
+## Installed historical-copy acceptance
+
+The matching `1e29bd77` bundle passed native Keep, Move and Create choices for a copied historical parent and child. Review contained exactly that occurrence's two sources. Keep retained the original source bindings. Move retargeted both historical bindings while retaining task, occurrence and Google identities. Create produced a separate checked, nonrecurring parent/child tree. The original recurring tree, completion counter, calendar intervals, colors, subtask descriptions and unrelated occurrence history remained unchanged. Full application reload retained the Create result and the same ownership evidence.
+
+Canonical deletion and owned calendar cleanup removed all four disposable tasks and both managed events. Final readback confirmed zero native calendar echoes, restored original note absence, restored pane/calendar settings, no pending operations or schedules, no source/identity/reconciliation issues and no task-service error. Decision and deletion history remained available. Recurring occurrence Undo and the remaining integrated release checks continue.
+
+
+## Retained task-row rendering
+
+The pane now retains rows that have already been displayed when a filter or fold temporarily hides them. An initially filtered view mounts only its visible rows. Canonical task groups continue to determine visible order, hierarchy, counts and context. The cache prunes removed or moved rows and resets on provider, account or grouping changes. Hidden rows use explicit display suppression. Menus close when their originating group or row becomes hidden, and action-close focus excludes hidden selected rows.
+
+The focused renderer, component and browser subset has 59 passes. Regressions cover cycles, duplicated ancestors across groups, source removal, project moves, account/grouping reset, lazy filtered startup, retained DOM identity, menus and details. Full validation has 1,231 passes, the inherited inclusive-last-day ICS failure, nine skips and 17 todo cases. Formatting, standard/style lint, TypeScript, zero-warning Svelte diagnostics and the strict scorecard pass. One import-order warning in the first standard lint run was corrected and the affected component lint passed without warnings. Installed performance, browser visibility and native keyboard acceptance remain pending.

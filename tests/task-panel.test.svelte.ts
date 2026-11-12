@@ -71,6 +71,7 @@ function render(
   reconciler?: TaskReconciler,
   deleter?: TaskDeletionController,
   scheduler?: TaskScheduler,
+  query = "",
 ) {
   const state = writable<TaskBrowserState>({
     snapshot,
@@ -89,6 +90,7 @@ function render(
     scan: vi.fn(),
   } as unknown as TaskCapture;
   const action = writable(actionValue);
+  const preferences = writable(taskViewStateSchema.parse({ query }));
   const fallbackSettings = vi.fn();
   const retrySchedule = vi.fn();
   const openSavedNote = vi.fn();
@@ -106,7 +108,7 @@ function render(
         scheduler,
         settings: writable(defaultSettingsForTests),
         calendar: { calendars: async () => [] },
-        preferences: writable(taskViewStateSchema.parse({})),
+        preferences,
         captureSettings: fallbackSettings,
         completeTask: vi.fn(),
         reopenTask: vi.fn(),
@@ -118,7 +120,7 @@ function render(
     }),
   );
   flushSync();
-  return { target, state, action, service, mutate, fallbackSettings, capture, retrySchedule, openSavedNote };
+  return { target, state, action, service, mutate, fallbackSettings, capture, retrySchedule, openSavedNote, preferences };
 }
 
 function press(element: EventTarget, key: string, isComposing = false) {
@@ -878,7 +880,61 @@ describe("custom Tasks panel", () => {
     flushSync();
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(chevron.querySelector("path")?.getAttribute("d")).toBe("m9 18 6-6-6-6");
-    expect(h.target.textContent).not.toContain("Child");
+    expect(h.target.querySelector('[aria-label="Complete Child"]')?.closest(".task-row-container")?.hasAttribute("hidden")).toBe(true);
+  });
+
+  test("retains mounted rows across filters without mounting initially hidden results", () => {
+    const h = render(null, undefined, undefined, undefined, "Shopping");
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks: [task, { ...task, id: "other", title: "Other", order: 2 }] } }));
+    flushSync();
+    expect(h.target.querySelectorAll(".task-row-container")).toHaveLength(1);
+    h.preferences.update(p => ({ ...p, query: "" }));
+    flushSync();
+    const other = h.target.querySelector('[aria-label="Complete Other"]')!.closest(".task-row-container")!;
+    h.preferences.update(p => ({ ...p, query: "Shopping" }));
+    flushSync();
+    expect(other.hasAttribute("hidden")).toBe(true);
+    h.preferences.update(p => ({ ...p, query: "" }));
+    flushSync();
+    expect(h.target.querySelector('[aria-label="Complete Other"]')!.closest(".task-row-container")).toBe(other);
+    expect(other.hasAttribute("hidden")).toBe(false);
+  });
+
+  test("filtering or folding a menu origin closes its menu without reopening it", async () => {
+    const h = render();
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks: [task, { ...task, id: "child", title: "Child", parentId: task.id }] } }));
+    flushSync();
+    const trigger = h.target.querySelector<HTMLButtonElement>('[aria-label="Actions for Child"]')!;
+    trigger.click();
+    await vi.waitFor(() => expect(h.target.querySelector('[role="menu"]')).not.toBeNull());
+    h.preferences.update(p => ({ ...p, query: "Shopping" }));
+    flushSync();
+    expect(h.target.querySelector('[role="menu"]')).toBeNull();
+    expect(trigger.closest(".task-row-container")?.hasAttribute("hidden")).toBe(true);
+    h.preferences.update(p => ({ ...p, query: "" }));
+    flushSync();
+    expect(h.target.querySelector('[role="menu"]')).toBeNull();
+    trigger.click();
+    await vi.waitFor(() => expect(h.target.querySelector('[role="menu"]')).not.toBeNull());
+    h.target.querySelector<HTMLButtonElement>('[aria-label="Toggle subtasks for Shopping"]')!.click();
+    flushSync();
+    expect(h.target.querySelector('[role="menu"]')).toBeNull();
+    expect(trigger.closest(".task-row-container")?.hasAttribute("hidden")).toBe(true);
+    h.target.querySelector<HTMLButtonElement>('[aria-label="Toggle subtasks for Shopping"]')!.click();
+    flushSync();
+    expect(h.target.querySelector('[role="menu"]')).toBeNull();
+  });
+
+  test("filtering a selected cached row preserves its details without exposing the row", () => {
+    const h = render();
+    h.state.update(state => ({ ...state, snapshot: { ...snapshot, tasks: [task, { ...task, id: "other", title: "Other" }] } }));
+    flushSync();
+    h.target.querySelector('[aria-label="Actions for Shopping"]')!.closest(".task-row-container")!.querySelector<HTMLButtonElement>(".task-row")!.click();
+    flushSync();
+    h.preferences.update(p => ({ ...p, query: "Other" }));
+    flushSync();
+    expect(h.target.querySelector('[aria-label="Complete Shopping"]')?.closest(".task-row-container")?.hasAttribute("hidden")).toBe(true);
+    expect(h.target.querySelector(".task-details")?.textContent).toContain("Shopping");
   });
 
   test("large lists create one action menu on demand for the current task", async () => {
