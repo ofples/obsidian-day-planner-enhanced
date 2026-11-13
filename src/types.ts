@@ -15,7 +15,11 @@ import type { VaultFacade } from "./service/vault-facade";
 import type { WorkspaceFacade } from "./service/workspace-facade";
 import type { DayPlannerSettings, IcalConfig } from "./settings";
 import type { TaskScheduler } from "./tasks/schedule";
-import type { EditableTimeBlock, PlanTimeBlock } from "./time-block-types";
+import type {
+  EditableTimeBlock,
+  PlanTimeBlock,
+  RemoteTimeBlock,
+} from "./time-block-types";
 import type { ConfirmationModalProps } from "./ui/confirmation-modal";
 import type { OpenNestedItemsEditModal } from "./ui/create-nested-items-edit-modal";
 import { EditMode } from "./ui/hooks/use-edit/types";
@@ -67,6 +71,7 @@ export type Signal<T> = { current: T };
 
 export interface ObsidianContext {
   taskScheduler?: TaskScheduler;
+  editTaskPreview?: (block: RemoteTimeBlock) => void;
   exportSchedule: (day: Moment) => void;
   workspaceFacade: WorkspaceFacade;
   periodicNotes: PeriodicNotes;

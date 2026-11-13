@@ -6,6 +6,7 @@
 
   import LocalTimeBlock from "./local-time-block.svelte";
   import RemoteTimeBlockContent from "./remote-time-block-content.svelte";
+  import TaskCalendarPreviewContent from "./task-calendar-preview-content.svelte";
   import TimeBlockBase from "./time-block-base.svelte";
   import TimeBlockControls from "./time-block-controls.svelte";
 
@@ -33,7 +34,11 @@
     showAllDayStrip={false}
     {timeBlock}
   >
-    <RemoteTimeBlockContent {bottomDecoration} {timeBlock} />
+    {#if timeBlock.taskSource}
+      <TaskCalendarPreviewContent {timeBlock} />
+    {:else}
+      <RemoteTimeBlockContent {bottomDecoration} {timeBlock} />
+    {/if}
   </TimeBlockBase>
 {:else}
   <TimeBlockControls {timeBlock}>

@@ -100,6 +100,26 @@ export class TaskScheduler {
         : fallback;
   }
 
+  previewTask(source: { provider: string; accountId: string; taskId: string }) {
+    const browser = get(this.service.state);
+    const snapshot = browser.snapshot;
+    const task = snapshot?.tasks.find(
+      (item) => item.id === source.taskId && !item.completed,
+    );
+    if (
+      this.stopped ||
+      !browser.writable ||
+      !snapshot ||
+      !task ||
+      snapshot.provider !== source.provider ||
+      snapshot.account.id !== source.accountId
+    )
+      throw new TaskReadError(
+        "Refresh this task's account before editing its calendar preview.",
+      );
+    return task;
+  }
+
   publish() {
     const snapshot = get(this.service.state).snapshot;
     const state = this.service.registry.snapshot();

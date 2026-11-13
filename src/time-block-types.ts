@@ -35,6 +35,7 @@ export interface BaseTimeBlock {
 
 export interface RemoteTimeBlock extends BaseTimeBlock {
   calendarSource?: { kind: "google"; id: string };
+  taskSource?: { provider: string; accountId: string; taskId: string };
   source: "ical";
   calendar: IcalConfig;
   summary: string;

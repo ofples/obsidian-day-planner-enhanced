@@ -139,7 +139,12 @@ export function useColorOverrides({ timeBlock }: UseColorProps) {
     const { colorOverrides } = settingsSignal.current;
 
     return colorOverrides.find((override) =>
-      getOneLineSummary(timeBlock).includes(override.text),
+      (
+        getOneLineSummary(timeBlock) +
+        (timeBlock.source === "ical" && timeBlock.taskSource
+          ? ` ${timeBlock.description ?? ""}`
+          : "")
+      ).includes(override.text),
     );
   });
 

@@ -19,6 +19,7 @@ import type { PeriodicNotes } from "../src/service/periodic-notes";
 import { defaultSettings } from "../src/settings";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 import { TaskCapture } from "../src/tasks/capture";
+import { taskCalendarPreviews } from "../src/tasks/calendar-preview";
 import { TaskDeletionController } from "../src/tasks/deletion";
 import { taskSubtree } from "../src/tasks/browser";
 import { TaskReconciler } from "../src/tasks/reconcile";
@@ -2059,6 +2060,114 @@ describe("verified task deletion", () => {
 });
 
 describe("linked task scheduling", () => {
+  test("an untouched date-only native preview creates no note, event or provider command", async () => {
+    const h = await harness();
+    h.tasks.set(root.id, {
+      ...root,
+      due: { date: "2026-11-11", recurring: false, text: "", timezone: null },
+    });
+    await h.service.refresh();
+    const [preview] = taskCalendarPreviews(
+      get(h.service.state),
+      h.service.registry.snapshot(),
+      defaultSettings,
+    );
+    expect(preview?.isAllDayEvent).toBe(true);
+    expect(h.texts.size).toBe(0);
+    expect(h.events.size).toBe(0);
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.service.registry.snapshot().schedules).toEqual([]);
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("editing a dated native preview materializes one linked note and Google event across restart", async () => {
+    const h = await harness();
+    h.tasks.set(root.id, {
+      ...root,
+      due: {
+        date: "2026-11-11T08:00:00Z",
+        recurring: false,
+        text: "",
+        timezone: "UTC",
+      },
+    });
+    await h.service.refresh();
+    const before = get(h.service.state);
+    const [preview] = taskCalendarPreviews(
+      before,
+      h.service.registry.snapshot(),
+      defaultSettings,
+    );
+    expect(preview?.taskSource).toEqual({
+      provider: "todoist",
+      accountId: "account",
+      taskId: root.id,
+    });
+    expect(h.texts.size).toBe(0);
+    expect(h.events.size).toBe(0);
+    const target = h.scheduler.previewTask(preview!.taskSource!);
+    const nonce = crypto.randomUUID();
+    await Promise.all([
+      h.scheduler.schedule(target.id, interval, nonce),
+      h.scheduler.schedule(target.id, interval, nonce),
+    ]);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const note = h.texts.get(projection.source.path)!;
+    expect(note.match(/Work #todoist/g) ?? []).toHaveLength(1);
+    expect(projection.taskId).toBe(root.id);
+    expect(h.events.size).toBe(1);
+    expect(
+      h.apply.mock.calls.some(([op]) => op.mutation.kind === "create"),
+    ).toBe(false);
+    expect(
+      taskCalendarPreviews(
+        get(h.service.state),
+        h.service.registry.snapshot(),
+        defaultSettings,
+      ).some((block) => block.taskSource?.taskId === root.id),
+    ).toBe(false);
+    await h.restart();
+    await h.settle();
+    expect(h.scheduler.projection(root.id)?.linkUid).toBe(projection.linkUid);
+    expect(h.events.size).toBe(1);
+    expect(
+      h.texts.get(projection.source.path)!.match(/Work #todoist/g) ?? [],
+    ).toHaveLength(1);
+    expect(
+      h.service.registry.snapshot().schedules.filter((op) => op.id === nonce),
+    ).toHaveLength(1);
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("preview materialization rejects foreign accounts, completed tasks and stopped schedulers", async () => {
+    const h = await harness();
+    const source = {
+      provider: "todoist",
+      accountId: "account",
+      taskId: root.id,
+    };
+    expect(() =>
+      h.scheduler.previewTask({ ...source, accountId: "other" }),
+    ).toThrow();
+    expect(() =>
+      h.scheduler.previewTask({ ...source, provider: "other" }),
+    ).toThrow();
+    h.service.state.update((state) => ({
+      ...state,
+      snapshot: { ...state.snapshot!, tasks: [{ ...root, completed: true }] },
+    }));
+    expect(() => h.scheduler.previewTask(source)).toThrow();
+    h.scheduler.stop();
+    expect(() => h.scheduler.previewTask(source)).toThrow();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
   test("an exporter collision retains the local schedule and prevents task-date writes until retry", async () => {
     const h = await harness();
     h.setExportGuardFailure("Todoist is already exporting into this managed calendar.");

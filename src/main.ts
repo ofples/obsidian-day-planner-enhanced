@@ -2,7 +2,7 @@ import "./styles.scss";
 
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
-import { get, type Readable, type Writable } from "svelte/store";
+import { derived, get, type Readable, type Writable } from "svelte/store";
 import { isNotVoid } from "typed-assert";
 
 import {
@@ -76,6 +76,7 @@ import { VaultFacade } from "./service/vault-facade";
 import { WorkspaceFacade } from "./service/workspace-facade";
 import { type DayPlannerSettings, mergeStoredSettings } from "./settings";
 import { registerTaskCalendarDisplay } from "./tasks/calendar-display";
+import { taskCalendarPreviews } from "./tasks/calendar-preview";
 import type { TaskCapture } from "./tasks/capture";
 import { createTaskCapture } from "./tasks/capture-obsidian";
 import type { TaskDeletionController } from "./tasks/deletion";
@@ -131,6 +132,7 @@ import {
 import { runWithNoticeOnError } from "./util/effect";
 import { notifyAboutStartedTimeBlocks } from "./util/notify-about-started-time-blocks";
 import { createBackgroundBatchScheduler } from "./util/scheduler";
+import { isWithDuration } from "./util/time-block-utils";
 
 export default class DayPlanner extends Plugin {
   googleCalendarSync!: GoogleCalendarSync;
@@ -938,6 +940,27 @@ export default class DayPlanner extends Plugin {
       new Notice("Tasks changed externally; edit canceled");
     };
 
+    const calendarBlocks = this.taskScheduler
+      ? derived(
+          [
+            remoteTimeBlocks,
+            this.taskService.state,
+            this.taskScheduler.state,
+            this.settingsStore,
+            localTimeBlocks,
+          ],
+          ([remote, browser, _schedules, settings, local]) => [
+            ...remote,
+            ...taskCalendarPreviews(
+              browser,
+              this.taskService.registry.snapshot(),
+              settings,
+              local,
+            ),
+          ],
+        )
+      : remoteTimeBlocks;
+
     const { isDarkMode, isModPressed, isOnline } = createEnvironmentHooks({
       workspace: this.app.workspace,
     });
@@ -952,7 +975,7 @@ export default class DayPlanner extends Plugin {
         settingsStore: this.settingsStore,
         currentTime,
         pointerDateTime,
-        remoteTimeBlocks,
+        remoteTimeBlocks: calendarBlocks,
         localTimeBlocks,
       });
 
@@ -1103,6 +1126,34 @@ export default class DayPlanner extends Plugin {
 
     const defaultObsidianContext: ObsidianContext = {
       taskScheduler: this.taskScheduler,
+      editTaskPreview: (block) => {
+        const scheduler = this.taskScheduler;
+        if (!scheduler || !block.taskSource)
+          throw new Error("Reconnect this task account before scheduling.");
+        const task = scheduler.previewTask(block.taskSource);
+        const start = block.isAllDayEvent
+          ? block.startTime
+              .clone()
+              .startOf("day")
+              .add(this.getSettings().startHour, "hours")
+          : (block.timelineSegment?.sourceStartTime ?? block.startTime).clone();
+        const duration = block.isAllDayEvent
+          ? scheduler.duration(task, this.getSettings().defaultDurationMinutes)
+          : (block.timelineSegment?.sourceDurationMinutes ??
+            (isWithDuration(block)
+              ? block.durationMinutes
+              : this.getSettings().defaultDurationMinutes));
+        new TaskScheduleModal(
+          this.app,
+          scheduler,
+          task,
+          this.getSettings().defaultDurationMinutes,
+          {
+            start: start.toISOString(),
+            end: start.clone().add(duration, "minutes").toISOString(),
+          },
+        ).open();
+      },
       exportSchedule: (day) => {
         const blocks = get(editContext.getDisplayedTimeBlocksForTimeline(day));
         new ScheduleExportModal(
