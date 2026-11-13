@@ -111,6 +111,7 @@ export const defaultSettings: DayPlannerSettings = {
     clientId: "",
     calendarId: "",
     autoSync: false,
+    syncStartDate: "",
     daysPast: 7,
     daysAhead: 30,
     syncDeletions: false,

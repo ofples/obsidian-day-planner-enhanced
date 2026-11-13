@@ -17,7 +17,12 @@ import {
 } from "./auth";
 import { plannerEventColor, type EventColors } from "./colors";
 import { isTodoistCalendarExport } from "./exporter";
-import { renderSubtasks, withSubtasks } from "./subtasks";
+import {
+  renderSubtasks,
+  withSubtasks,
+  structuredDescription,
+} from "./subtasks";
+import { canonicalSnapshotOf } from "./types";
 import type {
   CalendarApi,
   CalendarSnapshot,
@@ -53,6 +58,7 @@ export class GoogleCalendarApi implements CalendarApi {
     private readonly calendarId: string,
     private readonly namespace: string,
     private readonly canStart: () => boolean = () => true,
+    private readonly canonical = false,
   ) {}
 
   private async request<T>(
@@ -163,11 +169,21 @@ export class GoogleCalendarApi implements CalendarApi {
       throw new Error("Google returned an empty event color palette.");
     const colors = palette.event;
     this.colorForSnapshot = (snapshot) =>
-      plannerEventColor(snapshot, settings, colors);
+      plannerEventColor(
+        this.canonical && snapshot.tags?.length
+          ? {
+              ...snapshot,
+              title: `${snapshot.title} ${snapshot.tags.map((tag) => `#${tag}`).join(" ")}`,
+            }
+          : snapshot,
+        settings,
+        colors,
+      );
   }
 
   async calendars() {
     const calendars: GoogleCalendarInfo[] = [];
+    const pages = new Set<string>();
     let page: string | undefined;
     do {
       const query = new URLSearchParams({ maxResults: "250" });
@@ -178,6 +194,9 @@ export class GoogleCalendarApi implements CalendarApi {
       }>(`users/me/calendarList?${query.toString()}`);
       calendars.push(...(response.items ?? []));
       page = response.nextPageToken;
+      if (page && (pages.has(page) || pages.size >= 1000))
+        throw new Error("Google repeated or exceeded calendar-list pages.");
+      if (page) pages.add(page);
     } while (page);
     return calendars;
   }
@@ -241,6 +260,7 @@ export class GoogleCalendarApi implements CalendarApi {
 
   async list(timeMin: string, timeMax: string) {
     const events: GoogleEvent[] = [];
+    const pages = new Set<string>();
     let page: string | undefined;
     do {
       const params = new URLSearchParams({
@@ -257,8 +277,69 @@ export class GoogleCalendarApi implements CalendarApi {
       }>(`${this.eventsPath()}?${params.toString()}`);
       events.push(...(response.items ?? []));
       page = response.nextPageToken;
+      if (page && (pages.has(page) || pages.size >= 1000))
+        throw new Error("Google repeated or exceeded calendar event pages.");
+      if (page) pages.add(page);
     } while (page);
     return events;
+  }
+
+  /** Read all pages before returning a replacement sync token. */
+  async changes(
+    timeMin: string,
+    timeMax: string,
+    token?: string,
+  ): Promise<{ events: GoogleEvent[]; syncToken: string; reset?: boolean }> {
+    const read = async (syncToken?: string) => {
+      const events: GoogleEvent[] = [];
+      const pages = new Set<string>();
+      let page: string | undefined;
+      do {
+        const params = new URLSearchParams({
+          singleEvents: "true",
+          showDeleted: "true",
+          maxResults: "2500",
+        });
+        if (syncToken) params.set("syncToken", syncToken);
+        else {
+          params.set("timeMin", timeMin);
+          params.set("timeMax", timeMax);
+        }
+        if (page) params.set("pageToken", page);
+        const raw = await this.request<unknown>(
+          `${this.eventsPath()}?${params.toString()}`,
+        );
+        const result = z
+          .object({
+            items: z
+              .array(z.object({ id: z.string().min(1) }).passthrough())
+              .default([]),
+            nextPageToken: z.string().min(1).optional(),
+            nextSyncToken: z.string().min(1).optional(),
+          })
+          .safeParse(raw);
+        if (!result.success)
+          throw new Error("Google returned an invalid calendar sync page.");
+        events.push(...(result.data.items as unknown as GoogleEvent[]));
+        page = result.data.nextPageToken;
+        if (page && (pages.has(page) || pages.size >= 1000))
+          throw new Error("Google repeated or exceeded calendar sync pages.");
+        if (page) pages.add(page);
+        else {
+          if (!result.data.nextSyncToken)
+            throw new Error("Google did not provide a calendar sync token.");
+          return { events, syncToken: result.data.nextSyncToken };
+        }
+      } while (page);
+      throw new Error("Google did not finish calendar synchronization.");
+    };
+    try {
+      return await read(token);
+    } catch (error) {
+      if (token && error instanceof CalendarHttpError && error.status === 410)
+        return { ...(await read()), reset: true };
+      throw error;
+    }
   }
 
   async get(id: string) {
@@ -287,6 +368,18 @@ export class GoogleCalendarApi implements CalendarApi {
     };
   }
 
+  private structuredTags(snapshot: CalendarSnapshot) {
+    const tags = snapshot.tags ?? [];
+    if (tags.some((tag) => !/^[\p{L}\p{M}\p{N}_/-]+$/u.test(tag)))
+      throw new Error("A Day Planner tag is invalid.");
+    const encoded = JSON.stringify(tags);
+    if (new TextEncoder().encode(encoded).length > 1024)
+      throw new Error(
+        "Day Planner tags exceed the Google Calendar metadata limit.",
+      );
+    return encoded;
+  }
+
   async create(
     id: string,
     uid: string,
@@ -294,6 +387,37 @@ export class GoogleCalendarApi implements CalendarApi {
     block?: LocalBlock,
   ) {
     const subtasks = block ? renderSubtasks(block.raw) : "";
+    if (this.canonical) {
+      const tags = this.structuredTags(snapshot);
+      try {
+        return await this.request<GoogleEvent>(this.eventsPath(), "POST", {
+          id,
+          ...this.body(snapshot),
+          ...(snapshot.colorId !== undefined
+            ? { colorId: snapshot.colorId }
+            : {}),
+          description: structuredDescription(
+            snapshot.description ?? "",
+            snapshot.tags ?? [],
+            snapshot.subtasks ?? "",
+          ),
+          extendedProperties: {
+            private: {
+              dayPlannerVault: this.namespace,
+              dayPlannerBlock: uid,
+              dayPlannerSchemaVersion: "3",
+              dayPlannerTags: tags,
+            },
+          },
+        });
+      } catch (error) {
+        if (error instanceof CalendarHttpError && error.status === 409) {
+          const existing = await this.get(id);
+          if (existing) return existing;
+        }
+        throw error;
+      }
+    }
     try {
       return await this.request<GoogleEvent>(this.eventsPath(), "POST", {
         id,
@@ -319,11 +443,87 @@ export class GoogleCalendarApi implements CalendarApi {
   async update(event: GoogleEvent, snapshot: CalendarSnapshot) {
     if (!event.etag)
       throw new Error("Google event has no version; refusing to overwrite it.");
+    if (this.canonical) {
+      const current = canonicalSnapshotOf(event);
+      if (!current)
+        throw new Error(
+          "Google event cannot be represented as a timed planner block.",
+        );
+      const body: Record<string, unknown> = {};
+      if (snapshot.title !== current.title) body.summary = snapshot.title;
+      if (Date.parse(snapshot.start) !== Date.parse(current.start))
+        body.start = { dateTime: snapshot.start };
+      if (Date.parse(snapshot.end) !== Date.parse(current.end))
+        body.end = { dateTime: snapshot.end };
+      if (
+        snapshot.colorId !== undefined &&
+        snapshot.colorId !== current.colorId
+      )
+        body.colorId = snapshot.colorId;
+      const tags = snapshot.tags ?? current.tags ?? [];
+      const subtasks = snapshot.subtasks ?? current.subtasks ?? "";
+      const description = snapshot.description ?? current.description ?? "";
+      if (
+        JSON.stringify(tags) !== JSON.stringify(current.tags) ||
+        subtasks !== current.subtasks ||
+        description !== current.description
+      )
+        body.description = structuredDescription(description, tags, subtasks);
+      const encoded = this.structuredTags({ ...snapshot, tags });
+      if (
+        event.extendedProperties?.private?.["dayPlannerTags"] !== encoded ||
+        event.extendedProperties.private["dayPlannerSchemaVersion"] !== "3"
+      )
+        body.extendedProperties = {
+          private: {
+            ...event.extendedProperties?.private,
+            dayPlannerTags: encoded,
+            dayPlannerSchemaVersion: "3",
+          },
+        };
+      if (!Object.keys(body).length) return event;
+      return this.request<GoogleEvent>(
+        `${this.eventsPath()}/${encodeURIComponent(event.id)}?sendUpdates=none`,
+        "PATCH",
+        body,
+        event.etag,
+      );
+    }
     // PATCH just the mirrored fields; preserve guests, Meet links, location, reminders, description, recurrence, and private properties.
     return this.request<GoogleEvent>(
       `${this.eventsPath()}/${encodeURIComponent(event.id)}?sendUpdates=none`,
       "PATCH",
       this.body(snapshot),
+      event.etag,
+    );
+  }
+
+  async link(event: GoogleEvent, uid: string, snapshot: CalendarSnapshot) {
+    const owner = event.extendedProperties?.private?.["dayPlannerVault"];
+    const existingUid = event.extendedProperties?.private?.["dayPlannerBlock"];
+    if (
+      (owner && owner !== this.namespace) ||
+      (existingUid && existingUid !== uid)
+    )
+      throw new Error(
+        "This Google event is already linked to another planner block.",
+      );
+    if (!event.etag)
+      throw new Error("Google event has no version; refusing to link it.");
+    return this.request<GoogleEvent>(
+      `${this.eventsPath()}/${encodeURIComponent(event.id)}?sendUpdates=none`,
+      "PATCH",
+      {
+        extendedProperties: {
+          private: {
+            ...event.extendedProperties?.private,
+            dayPlannerVault: this.namespace,
+            dayPlannerBlock: uid,
+            dayPlannerSchemaVersion: "3",
+            dayPlannerTags: this.structuredTags(snapshot),
+          },
+        },
+      },
       event.etag,
     );
   }

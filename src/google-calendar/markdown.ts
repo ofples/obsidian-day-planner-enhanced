@@ -3,8 +3,79 @@ import type { Heading, List, ListItem } from "mdast";
 import { fromMarkdown } from "../mdast/mdast";
 import { getTimeFromLine, getTimeRangeMatch } from "../parser/parser";
 import type { DayPlannerSettings } from "../settings";
+import { captureTitle, parseCaptureCandidates } from "../tasks/capture-parser";
 
-import { normalizeTitle, type CalendarSnapshot } from "./types";
+import {
+  normalizeTitle,
+  type CalendarSnapshot,
+  type LocalBlock,
+} from "./types";
+
+export function normalizeLocalSnapshot(block: LocalBlock): CalendarSnapshot {
+  const first = block.raw.split(/\r?\n/)[0] ?? "";
+  const candidate = parseCaptureCandidates(
+    block.path,
+    `- [ ] ${first.replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?/, "")}`,
+  )[0];
+  const tags = candidate?.tags.map((tag) => tag.name) ?? [];
+  const title = candidate
+    ? captureTitle(candidate, new Set(tags))
+    : block.snapshot.title;
+  const root = fromMarkdown(block.raw);
+  const parent = root.children.find((node) => node.type === "list")
+    ?.children[0];
+  const lists = parent?.children.filter((node) => node.type === "list") ?? [];
+  const subtasks = lists
+    .map((node) => {
+      const from = node.position?.start.offset ?? 0;
+      const lineStart = block.raw.lastIndexOf("\n", from - 1) + 1;
+      const indent = block.raw.slice(lineStart, from);
+      return block.raw
+        .slice(from, node.position?.end.offset)
+        .split(/\r?\n/)
+        .map((line, index) =>
+          index && line.startsWith(indent) ? line.slice(indent.length) : line,
+        )
+        .join("\n");
+    })
+    .join("\n");
+  const description = readLocalDescription(block.raw);
+  return { ...block.snapshot, title, tags, subtasks, description };
+}
+
+const descriptionHeading = /^\s*> Calendar description:\s*$/;
+const descriptionEnd = /^\s*> End Calendar description\s*$/;
+function readLocalDescription(raw: string) {
+  const lines = raw.split(/\r?\n/);
+  const index = lines.findIndex((line) => descriptionHeading.test(line));
+  if (index < 0) return "";
+  if (
+    lines.findIndex((line, i) => i > index && descriptionHeading.test(line)) >=
+    0
+  )
+    throw new Error(
+      "Multiple Calendar description sections need review before syncing.",
+    );
+  const result: string[] = [];
+  let ended = false;
+  for (let i = index + 1; i < lines.length; i++) {
+    if (descriptionEnd.test(lines[i]!)) {
+      ended = true;
+      break;
+    }
+    const match = lines[i]!.match(/^\s*> ?(.*)$/);
+    if (!match)
+      throw new Error(
+        "The Calendar description section is incomplete. Review it before syncing.",
+      );
+    result.push(match[1]!);
+  }
+  if (!ended)
+    throw new Error(
+      "The Calendar description section is incomplete. Review it before syncing.",
+    );
+  return result.join("\n");
+}
 
 export const syncMarker = /<!-- dp-gcal:([a-f0-9]{32}) -->/;
 const cancelledMarker = /<!-- dp-gcal-cancelled:[a-f0-9]{32} -->/;
@@ -141,14 +212,71 @@ export function renderBlock(
     );
   }
   // Google event titles are plain text: prevent Markdown/HTML injection into a note.
-  const title = snapshot.title
-    .replace(/[\r\n]+/g, " ")
-    .replace(/<!--.*?-->/g, "")
-    .trim();
+  const title =
+    snapshot.title
+      .replace(/[\r\n]+/g, " ")
+      .replace(/<!--.*?-->/g, "")
+      .trim() +
+    (snapshot.tags?.length
+      ? ` ${snapshot.tags.map((tag) => `#${tag}`).join(" ")}`
+      : "");
   const range = `${start.format(settings.timestampFormat)} - ${end.format(settings.timestampFormat)}`;
+  let remaining = lines.slice(1);
+  if (previous && snapshot.subtasks !== undefined) {
+    const root = fromMarkdown(previous);
+    const parent = root.children.find((node) => node.type === "list")
+      ?.children[0];
+    const ranges = (parent?.children ?? [])
+      .filter((node) => node.type === "list")
+      .map((node) => ({
+        start: node.position?.start.line ?? 0,
+        end: node.position?.end.line ?? 0,
+      }));
+    remaining = remaining.filter(
+      (_, index) =>
+        !ranges.some(
+          (range) => index + 2 >= range.start && index + 2 <= range.end,
+        ),
+    );
+  }
+  if (snapshot.description !== undefined) {
+    if (
+      snapshot.description
+        .split(/\r?\n/)
+        .some((line) => line.trim() === "End Calendar description")
+    )
+      throw new Error(
+        "The Calendar description contains a reserved closing line. Review it before syncing.",
+      );
+    const index = remaining.findIndex((line) => descriptionHeading.test(line));
+    if (index >= 0) {
+      let endIndex = index + 1;
+      while (
+        endIndex < remaining.length &&
+        !descriptionEnd.test(remaining[endIndex]!)
+      )
+        endIndex++;
+      if (endIndex === remaining.length)
+        throw new Error(
+          "The Calendar description section is incomplete. Review it before syncing.",
+        );
+      endIndex++;
+      remaining.splice(index, endIndex - index);
+    }
+  }
   return [
     `${prefix}${range} ${title}${comments ? ` ${comments}` : ""}${blockId}`,
-    ...lines.slice(1),
+    ...remaining,
+    ...(snapshot.description
+      ? [
+          "  > Calendar description:",
+          ...snapshot.description.split(/\r?\n/).map((line) => `  > ${line}`),
+          "  > End Calendar description",
+        ]
+      : []),
+    ...(snapshot.subtasks
+      ? snapshot.subtasks.split(/\r?\n/).map((line) => `  ${line}`)
+      : []),
   ].join(newline);
 }
 

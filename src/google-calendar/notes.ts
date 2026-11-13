@@ -17,6 +17,7 @@ import {
   syncMarker,
   type ParsedBlock,
 } from "./markdown";
+import { isCalendarDateInScope, isCalendarNoteEnabled } from "./scope";
 import {
   sameSnapshot,
   type CalendarNotes,
@@ -91,6 +92,34 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     return !this.edits?.isWriting && this.edits?.revision === this.scanRevision;
   }
 
+  private noteDateInScope(file: TFile) {
+    const day = this.daily.getDateFromFile(file, "day");
+    const cutoff = this.settings.googleCalendar.syncStartDate;
+    if (!cutoff) return true;
+    if (!window.moment(cutoff, "YYYY-MM-DD", true).isValid()) return false;
+    return !day || (day.isValid() && day.format("YYYY-MM-DD") >= cutoff);
+  }
+
+  async canSync(path: string, snapshot: CalendarSnapshot) {
+    if (
+      !isCalendarDateInScope(
+        snapshot,
+        this.settings.googleCalendar.syncStartDate,
+      )
+    )
+      return false;
+    const file = path
+      ? this.app.vault.getAbstractFileByPath(path)
+      : Object.values(this.daily.getAllDailyNotes()).find((candidate) =>
+          this.daily
+            .getDateFromFile(candidate, "day")
+            ?.isSame(window.moment(snapshot.start), "day"),
+        );
+    if (!file) return true;
+    if (!(file instanceof TFile) || !this.noteDateInScope(file)) return false;
+    return isCalendarNoteEnabled(await this.app.vault.read(file));
+  }
+
   async scan(): Promise<LocalBlock[]> {
     this.scanRevision = this.edits?.revision;
     if (!this.notesCurrent())
@@ -104,8 +133,10 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     for (const file of Object.values(this.daily.getAllDailyNotes())) {
       const day = this.daily.getDateFromFile(file, "day");
       if (!day) continue;
+      if (!this.noteDateInScope(file)) continue;
       const date = day.format("YYYY-MM-DD");
       const text = await this.app.vault.read(file);
+      if (!isCalendarNoteEnabled(text)) continue;
       // Keep known IDs discoverable after moving a block outside the sync window.
       const inWindow =
         day.valueOf() >= Date.parse(this.timeMin) &&
@@ -143,10 +174,37 @@ export class ObsidianCalendarNotes implements CalendarNotes {
         snapshot: record.base,
         from: -1,
       };
+    const archived = new Set<string>();
+    const allowedPaths = new Map<string, Promise<boolean>>();
+    for (const [uid, identity] of Object.entries(identities)) {
+      const snapshot = this.state.records[uid]?.base ?? identity.snapshot;
+      if (
+        !isCalendarDateInScope(
+          snapshot,
+          this.settings.googleCalendar.syncStartDate,
+        )
+      ) {
+        archived.add(uid);
+        continue;
+      }
+      let allowed = allowedPaths.get(identity.path);
+      if (!allowed) {
+        allowed = this.canSync(identity.path, snapshot);
+        allowedPaths.set(identity.path, allowed);
+      }
+      if (!(await allowed)) archived.add(uid);
+    }
+    for (const candidate of candidates)
+      if (candidate.uid && archived.has(candidate.uid)) delete candidate.uid;
     // Deleted events keep their tombstones, without claiming another note block.
     for (const [uid, record] of Object.entries(this.state.records))
-      if (record.deleted) delete identities[uid];
-    resolveIdentities(candidates, identities);
+      if (record.deleted && !archived.has(uid)) delete identities[uid];
+    resolveIdentities(
+      candidates,
+      Object.fromEntries(
+        Object.entries(identities).filter(([uid]) => !archived.has(uid)),
+      ),
+    );
     const blocks: LocalBlock[] = [];
     for (const candidate of candidates) {
       const uid =
@@ -162,6 +220,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     const assigned = new Set(blocks.map((block) => block.uid));
     this.missingPaths.clear();
     for (const [uid, identity] of Object.entries(identities)) {
+      if (archived.has(uid)) continue;
       if (assigned.has(uid)) continue;
       if (this.state.records[uid] || this.state.pendingCreate?.uid === uid)
         this.missingPaths.add(identity.path);
@@ -210,7 +269,16 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     const pending = this.state.pendingNoteChange;
     if (!pending) return;
     for (const edit of pending.edits) {
-      const text = await this.app.vault.read(this.file(edit.path));
+      const file = this.file(edit.path);
+      const text = await this.app.vault.read(file);
+      if (
+        !this.noteDateInScope(file) ||
+        !isCalendarNoteEnabled(text) ||
+        !isCalendarNoteEnabled(edit.after)
+      )
+        throw new Error(
+          "A pending calendar recovery is outside sync scope. Review it before syncing.",
+        );
       if (text !== edit.before && text !== edit.after)
         throw new Error(
           `Note changed during calendar recovery: ${edit.path}. Restore the note from history before retrying.`,
@@ -243,6 +311,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
 
   async isUnchanged(block: LocalBlock) {
     if (!this.notesCurrent()) return false;
+    if (!(await this.canSync(block.path, block.snapshot))) return false;
     const file = this.app.vault.getAbstractFileByPath(block.path);
     if (!(file instanceof TFile)) return false;
     const text = await this.app.vault.read(file);
@@ -337,6 +406,13 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     ensurePlanner = false,
     templateRaw?: string,
   ): Promise<CalendarNoteWritePlan> {
+    if (
+      !(await this.canSync(previous?.path ?? "", snapshot)) ||
+      !(await this.canSync("", snapshot))
+    )
+      throw new Error(
+        "This note or date is outside Google Calendar sync scope.",
+      );
     const raw = renderBlock(
       uid,
       snapshot,
@@ -347,6 +423,10 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       window.moment(snapshot.start).startOf("day"),
     );
     const before = await this.app.vault.read(target);
+    if (!this.noteDateInScope(target) || !isCalendarNoteEnabled(before))
+      throw new Error(
+        "This note or date is outside Google Calendar sync scope.",
+      );
     const edits: Array<{ path: string; before: string; after: string }> = [];
     let after: string;
     let from: number;
@@ -408,6 +488,19 @@ export class ObsidianCalendarNotes implements CalendarNotes {
   }
 
   async applyWrite(plan: CalendarNoteWritePlan): Promise<LocalBlock> {
+    if (!(await this.canSync(plan.block.path, plan.block.snapshot)))
+      throw new Error(
+        "This note or date is outside Google Calendar sync scope.",
+      );
+    for (const edit of plan.edits) {
+      const file = this.file(edit.path);
+      if (
+        !this.noteDateInScope(file) ||
+        !isCalendarNoteEnabled(edit.before) ||
+        !isCalendarNoteEnabled(edit.after)
+      )
+        throw new Error("This note is outside Google Calendar sync scope.");
+    }
     if (this.state.pendingNoteChange || this.state.pendingMove)
       throw new Error(
         "Finish the pending calendar note operation before applying another write.",
@@ -423,6 +516,15 @@ export class ObsidianCalendarNotes implements CalendarNotes {
   async applyEdits(
     edits: Array<{ path: string; before: string; after: string }>,
   ) {
+    for (const edit of edits) {
+      const file = this.file(edit.path);
+      if (
+        !this.noteDateInScope(file) ||
+        !isCalendarNoteEnabled(edit.before) ||
+        !isCalendarNoteEnabled(edit.after)
+      )
+        throw new Error("This note is outside Google Calendar sync scope.");
+    }
     if (this.state.pendingNoteChange || this.state.pendingMove)
       throw new Error(
         "Finish the pending note operation before applying another write.",
@@ -435,6 +537,13 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     const pending = this.state.pendingMove;
     if (!pending) return;
     const { source, targetPath, raw } = pending;
+    if (
+      !(await this.canSync(source.path, source.snapshot)) ||
+      !(await this.canSync(targetPath, pending.snapshot))
+    )
+      throw new Error(
+        "A pending calendar move is outside sync scope. Review it before syncing.",
+      );
     const sourceFile = this.file(source.path);
     const targetFile = this.file(targetPath);
     const marker = `<!-- dp-gcal:${source.uid} -->`;
@@ -477,6 +586,8 @@ export class ObsidianCalendarNotes implements CalendarNotes {
   }
 
   async cancel(block: LocalBlock) {
+    if (!(await this.canSync(block.path, block.snapshot)))
+      throw new Error("This note is outside Google Calendar sync scope.");
     await this.app.vault.process(this.file(block.path), (text) => {
       const index = this.locate(text, block);
       if (index < 0) throw new Error("The note changed during sync; retry.");

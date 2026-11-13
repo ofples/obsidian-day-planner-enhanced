@@ -1,18 +1,18 @@
 # Google Calendar two-way sync (development fork)
 
-This fork adds direct Google Calendar API sync to Day Planner Enhanced. It mirrors **titles and start/end times** between top-level timed blocks in daily notes and one writable Google calendar, and applies configurable event colors from the planner. Existing Google events can also appear directly as calendar entries. Daily notes remain ordinary Markdown.
+This fork adds direct Google Calendar API sync to Day Planner Enhanced. It syncs top-level timed daily-note blocks with one writable Google calendar. A configured **Sync start date** enables the Google-canonical mode described below. A blank date retains the legacy title/time sync. Existing Google events can also appear directly as calendar entries. Daily notes remain ordinary Markdown.
 
 This is a development implementation. Automated tests exercise the sync engine, note adapter, REST requests and OAuth callback. Desktop Google consent and live title/time round trips have also been verified with a dedicated calendar. Test your own setup before enabling automatic sync for an important calendar.
 
 ## Existing alternatives checked
 
-| Project | Documented behavior | Fit for existing Day Planner schedules |
-| --- | --- | --- |
-| [Day Planner Enhanced](https://github.com/jagaldol/obsidian-day-planner-enhanced) | Read-only ICS calendars | No outbound or two-way Markdown sync |
-| [Time Blocks](https://github.com/jonmccon/obsidian-time-blocks) | Two-way Google sync for its scheduled blocks | A different planner and scheduling store |
-| [ObsidianGoogleCalendarSync](https://github.com/BJSchmidt/ObsidianGoogleCalendarSync) | Two-way event-per-note sync | Separate event notes and YAML properties |
+| Project                                                                                         | Documented behavior                                        | Fit for existing Day Planner schedules             |
+| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------- |
+| [Day Planner Enhanced](https://github.com/jagaldol/obsidian-day-planner-enhanced)               | Read-only ICS calendars                                    | No outbound or two-way Markdown sync               |
+| [Time Blocks](https://github.com/jonmccon/obsidian-time-blocks)                                 | Two-way Google sync for its scheduled blocks               | A different planner and scheduling store           |
+| [ObsidianGoogleCalendarSync](https://github.com/BJSchmidt/ObsidianGoogleCalendarSync)           | Two-way event-per-note sync                                | Separate event notes and YAML properties           |
 | [Google Calendar and Tasks Sync](https://github.com/namnguyen-code/obsidian-google-sync-bridge) | Imports event/task notes and patches existing Google items | Does not create Google items from local-only notes |
-| [Sasoon's Google Calendar Sync](https://github.com/Sasoon/obsidian-gcal-sync) | One-way task export using dated-task metadata | No Google-to-Day-Planner update path |
+| [Sasoon's Google Calendar Sync](https://github.com/Sasoon/obsidian-gcal-sync)                   | One-way task export using dated-task metadata              | No Google-to-Day-Planner update path               |
 
 No existing drop-in bridge for Day Planner Enhanced's daily-note time ranges was identified in this search. The alternatives above may suit a different workflow; this is not a claim that no other project exists.
 
@@ -25,15 +25,17 @@ No existing drop-in bridge for Day Planner Enhanced's daily-note time ranges was
 5. Create a dedicated Google calendar for the schedule. Copy its **Calendar ID** from Google Calendar → Settings → the calendar → Integrate calendar. This is the calendar ID, not its secret ICS URL.
 6. Build this branch with `npm ci` and `npm run build`. Copy `main.js`, `styles.css` and `manifest.json` into the existing `day-planner-enhanced` plugin folder in a **test vault**, then reload Obsidian. Keep a copy of the previous plugin files outside the vault if replacing an installation.
 7. Open Settings → Day Planner Enhanced → **Google Calendar two-way sync**. Expand **How to set up Google Calendar sync** for inline instructions, official setup links and troubleshooting. Enter the client ID, save the client secret, and enter the target calendar ID. Click **Connect** and finish consent in your browser. Under Google Auth Platform → Data Access, the requested scopes are `https://www.googleapis.com/auth/calendar.events` and `https://www.googleapis.com/auth/calendar.calendarlist.readonly`.
-8. Keep automatic sync off initially. Run **Sync Google Calendar now**. Test both directions with a disposable event, including renaming, resizing, changing days, cancellation, and an offline/restart recovery. Enable automatic sync only after verifying your setup.
+8. Set **Sync start date** to the first local day you want the new mode to manage, or leave it blank to retain legacy behavior. Earlier records remain archived and earlier notes are not rewritten. Keep automatic sync off initially. Use **Sync** in the timeline header or run **Sync Google Calendar now**. Test both directions with a disposable event before enabling automatic sync.
+
+To exclude a note, add either `sync: off` or `sync: false` to its YAML frontmatter. The note is not imported, rewritten, or used to delete its Google event; existing links remain in the sync state. Remove the property and sync again to make the note eligible. This opt-out also applies to notes on or after the start date.
 
 ### Calendar display and colors
 
 - **Show Google calendar events** displays events directly in the planner. **Choose calendars** lets you select calendars, including an empty selection, or follow the selection in Google Calendar. It initially follows Google Calendar's selected calendars. Events refresh when changing planner dates, every minute while connected, and through the timeline menu.
 - New Google events appear as calendar entries by default. **Import new Google events into daily notes** optionally creates tasks for timed events in the dedicated sync calendar. Existing linked note blocks continue syncing in both directions. Events from other displayed calendars are display-only. Linked schedule events are excluded from the calendar overlay to avoid duplicate blocks.
 - **Google color for [rule]** assigns a Google event color to each existing planner color rule. The first matching rule wins. Automatic matching uses the nearest Google palette color to the rule's light-mode color, making the mapping stable across Obsidian themes. **Google color for other schedule blocks** controls the remaining blocks and can automatically match the time-of-day gradient.
-- Google supports a fixed event palette, so arbitrary planner hex colors are approximated. Color changes apply on the next sync, including already linked events. Color-only updates use conditional PATCH requests and do not rewrite note content.
-- **Sync Google Calendar and refresh calendars** in the timeline menu runs two-way schedule sync and refreshes displayed Google and ICS events.
+- Google supports a fixed event palette, so arbitrary planner hex colors are approximated. In Google-canonical mode the mapping sets the initial color for a newly created event; subsequent Google color choices are preserved. In legacy mode mappings continue to apply to linked events on sync.
+- **Sync** in the timeline header runs schedule sync and refreshes displayed Google and ICS events. The timeline menu also provides **Sync**.
 
 With note import enabled, each recurring Google event occurrence in the import window becomes a separate daily-note block. Editing it changes that occurrence. Configure recurring series in Google Calendar.
 
@@ -43,22 +45,22 @@ With note import enabled, each recurring Google event occurrence in the import w
 # Day planner
 
 - [ ] 09:00 - 10:00 Work #work ^existing-id
-    - [ ] Follow-up [[Project]]
+  - [ ] Follow-up [[Project]]
 ```
 
-- Sync identities live in the plugin's `gcal-state.json`. Daily notes stay ordinary Markdown with no generated IDs or tracking comments. Upgrading migrates existing comments into the state file and removes them from notes while retaining Google event links. User-created block IDs remain intact.
+- Sync identities live in the plugin's `gcal-state.json`. Daily notes stay ordinary Markdown with no generated IDs or tracking comments. Existing tracking comments in eligible notes can be migrated into the state file while retaining Google event links; notes outside the configured scope are left untouched. User-created block IDs remain intact.
 - Whole block text, existing block IDs, title/time matches and source positions identify edits and moves. Ambiguous simultaneous rewrites or changed counts of identical duplicate blocks stop before Google writes. Apply and sync smaller edits when resolving such a conflict.
-- Only top-level timed list items under the configured planner heading create calendar events. Their nested lists appear in a **Subtasks** section of the Google event description, preserving hierarchy, child time ranges and checkbox states. Markdown links use their readable labels, and note comments and block IDs are omitted from descriptions. Subtask edits flow from the daily note to Google on each sync, including existing linked events. Google description edits do not update Markdown subtasks.
+- Only top-level timed list items under the configured planner heading create calendar events. In Google-canonical mode, tags and nested Markdown subtasks sync in both directions through an editable Day Planner section of the event description; tags also have private event metadata for reliable matching. The rest of the event description remains editable and is represented in the note. In legacy mode, nested lists are exported to a managed description section; Google edits to that section do not update note subtasks.
 - When optional note import is enabled, Google events in the dedicated calendar are imported as ordinary timed daily-note blocks. The plugin creates daily notes through the existing Daily Notes / Periodic Notes integration, including its templates and date format.
 - Single-start blocks use the planner's configured duration or stretch-to-next setting. Explicit overnight ranges are supported. Timestamps use the device's local timezone and are sent to Google as absolute instants.
-- The initial discovery window defaults to 7 days back and 30 days ahead. Existing linked blocks continue to be reconciled by ID even if moved outside that window. This avoids interpreting a date move as deletion.
+- The discovery window defaults to 7 days back and 30 days ahead. With a start date configured, records whose original synced date precedes it are archived even if an event later moves into the window. The planner can still display older events without syncing their notes.
 - Local title/time changes patch those fields in Google. Remote title/time changes edit only the matching source block. Date moves carry the entire subtree to the destination daily note using a persisted recovery journal.
-- Subtask updates replace only the plugin-owned section of the Google description. Other description content is preserved. Removing all children removes that section. A damaged section stops the update and asks you to remove that section before syncing again. Google descriptions, guests, conferencing links, locations, reminders and recurrence rules are preserved by title/time PATCH requests.
+- In Google-canonical mode the note is a local cache of the managed Google event. Independent field changes merge; when both sides change the same field differently, Google is shown in the note and the Obsidian version is kept as a durable draft. Open the conflict review to choose **Use Obsidian** or **Use Google**. A malformed managed description section stops that event for review. Legacy mode retains its one-way subtask export. Unrelated event fields such as guests, conferencing links, locations, reminders and recurrence rules are preserved by field-specific updates.
 - Checkbox completion has no equivalent on a Google Calendar event; checking a task does not delete or complete its calendar event.
-- A Google cancellation turns its note block into a visibly cancelled, untimed `- [-] Cancelled in Google Calendar: …` entry. Children and the old time range are retained as history.
+- A Google cancellation turns its note block into a visibly cancelled, untimed `- [-] ~~original range and title~~` entry. Children and the old time range are retained as history.
 - **Local deletion propagation is off by default.** When enabled, a clean removal from an existing daily note can delete its unchanged Google event. Stored note snapshots verify the removal. Missing notes, copies elsewhere, changes to unrelated note content, and ambiguous edits prevent deletion and report a conflict.
-- If both sides changed differently since the last successful sync, the plugin preserves both and reports a conflict. Run manual sync to see the conflict details. To resolve it, make the title and times agree on both sides and sync again. Do not remove tracking comments or reset the state file as a conflict-resolution method.
-- Optional background sync runs once per minute while Obsidian is open. Enable it on **one device at a time**. A second device changing the state file stops further saves and requires restarting Obsidian to reload the shared state. This is not a distributed locking system.
+- In legacy mode, a conflicting title/time edit requires review and agreement on both sides before syncing again. Do not reset the state file as a conflict-resolution method.
+- Optional background sync waits for five seconds without edits and also checks periodically while Obsidian is open. Enable it on **one device at a time**. A second device changing the state file stops further saves and requires restarting Obsidian to reload the shared state. This is not a distributed locking system.
 
 ## Supported scope and limitations
 

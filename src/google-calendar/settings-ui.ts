@@ -87,7 +87,7 @@ export function addGoogleCalendarSetupDetails(container: HTMLElement) {
   details.appendChild(note);
   const privacy = document.createElement("p");
   privacy.textContent =
-    "Your refresh token and client secret are saved in Obsidian SecretStorage. Sync talks directly to Google. Linked daily-note blocks sync titles, times and mapped colors with the dedicated calendar. Choose additional calendars for display-only events in the planner. Google consent allows event access across your calendars.";
+    "Your refresh token and client secret are saved in Obsidian SecretStorage. Sync talks directly to Google. A sync start date enables Google-canonical sync for eligible notes; earlier notes remain untouched. Choose additional calendars for display-only events. Google consent allows event access across your calendars.";
   details.appendChild(privacy);
   container.appendChild(details);
 }
@@ -119,7 +119,7 @@ export function googleCalendarSettingDefinitions(
     items: [
       {
         name: "Sync daily-note time blocks",
-        desc: "Sync daily-note titles, times and mapped colors with a dedicated Google calendar. Display existing Google events directly in the planner. Requires Obsidian 1.11.4+.",
+        desc: "Sync eligible daily-note blocks with a dedicated Google calendar. A sync start date enables Google-canonical sync; sync: off or sync: false in note frontmatter excludes that note. Requires Obsidian 1.11.4+.",
         searchable: true,
         render: (setting) => addGoogleCalendarSetupDetails(setting.descEl),
       },
@@ -257,7 +257,7 @@ export function googleCalendarSettingDefinitions(
       ),
       {
         name: "Google color for other schedule blocks",
-        desc: "Automatic match uses the planner's time-of-day gradient when enabled. Colors are applied on the next sync.",
+        desc: "Automatic match uses the planner's time-of-day gradient. In Google-canonical mode this selects the initial color for new events; later Google color changes are preserved.",
         render: (setting) => {
           setting.addDropdown((control) =>
             control
@@ -304,6 +304,22 @@ export function googleCalendarSettingDefinitions(
           },
         }),
       ),
+      {
+        name: "Sync start date",
+        desc: "Enables Google-canonical sync from this local day onward. Earlier records are archived and earlier notes are not rewritten. Leave blank for legacy behavior. Use YYYY-MM-DD.",
+        render: (setting) => {
+          setting.addText((control) =>
+            control
+              .setPlaceholder("YYYY-MM-DD")
+              .setValue(getSettings().googleCalendar.syncStartDate)
+              .onChange((value) => {
+                const date = value.trim();
+                if (!date || window.moment(date, "YYYY-MM-DD", true).isValid())
+                  update({ syncStartDate: date });
+              }),
+          );
+        },
+      },
       {
         name: "Sync local deletions to Google",
         desc: "When enabled, removing a linked block from an existing daily note deletes its unchanged Google event. Missing notes and ambiguous removals are conflicts. Google cancellations are always preserved as cancelled note entries.",

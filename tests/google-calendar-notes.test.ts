@@ -3,7 +3,14 @@ import { TFile, type App } from "obsidian";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
 import { ObsidianCalendarNotes } from "../src/google-calendar/notes";
-import type { CalendarSyncState } from "../src/google-calendar/types";
+import { syncCalendar } from "../src/google-calendar/engine";
+import { structuredDescription } from "../src/google-calendar/subtasks";
+import {
+  canonicalSnapshotOf,
+  type CalendarApi,
+  type CalendarSyncState,
+  type GoogleEvent,
+} from "../src/google-calendar/types";
 import type { PeriodicNotes } from "../src/service/periodic-notes";
 import { defaultSettings } from "../src/settings";
 
@@ -102,6 +109,159 @@ function harness(edits?: { isWriting: boolean; revision: number }) {
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 describe("vault calendar adapter", () => {
+  test("canonical sync round trips through real note scanning and survives restart", async () => {
+    const h = harness();
+    h.settings.googleCalendar.syncStartDate = "2026-11-14";
+    const futurePath = "Daily/2026-11-14.md";
+    h.file(futurePath);
+    h.texts.set(
+      futurePath,
+      "# Day planner\r\n\r\n- [ ] 09:00 - 10:00 Work #work ^kept\r\n    - [ ] Original child\r\n\r\n# Journal\r\nKeep my prose.\r\n",
+    );
+    const historical = h.texts.get(sourcePath);
+    let remote: GoogleEvent | null = null;
+    const api: CalendarApi = {
+      list: async () => (remote ? [remote] : []),
+      get: async () => remote,
+      create: async (id, blockUid, snapshot) => {
+        remote = {
+          id,
+          etag: "created",
+          summary: snapshot.title,
+          start: { dateTime: snapshot.start },
+          end: { dateTime: snapshot.end },
+          description: structuredDescription(
+            snapshot.description ?? "",
+            snapshot.tags ?? [],
+            snapshot.subtasks ?? "",
+          ),
+          extendedProperties: {
+            private: {
+              dayPlannerVault: h.state.namespace,
+              dayPlannerBlock: blockUid,
+              dayPlannerTags: JSON.stringify(snapshot.tags ?? []),
+            },
+          },
+        };
+        return remote;
+      },
+      update: vi.fn(async (event, snapshot) => {
+        expect(canonicalSnapshotOf(event, snapshot)).toEqual(snapshot);
+        return event;
+      }),
+      remove: vi.fn(async () => {}),
+    };
+    const run = () =>
+      syncCalendar({
+        state: h.state,
+        api,
+        notes: h.notes,
+        save: h.save,
+        timeMin: window.moment("2026-11-01").toISOString(),
+        timeMax: window.moment("2026-12-01").toISOString(),
+        importEvents: true,
+        canonical: true,
+      });
+    expect((await run()).conflicts).toEqual([]);
+    const [identity] = Object.keys(h.state.records);
+    const originalEventId = remote!.id;
+    remote = {
+      ...remote!,
+      etag: "google-edited",
+      summary: "Google renamed",
+      colorId: "3",
+      description: structuredDescription(
+        "Google details\nsecond line",
+        ["karma"],
+        "- [x] Updated child\n  - [ ] Grandchild",
+      ),
+      extendedProperties: {
+        private: {
+          ...remote!.extendedProperties?.private,
+          dayPlannerTags: '["karma"]',
+        },
+      },
+    };
+    Object.assign(
+      h.state,
+      JSON.parse(JSON.stringify(h.state)) as CalendarSyncState,
+    );
+    expect((await run()).conflicts).toEqual([]);
+    const pulled = h.texts.get(futurePath)!;
+    expect(pulled).toContain("Google renamed #karma ^kept");
+    expect(pulled).toContain("Updated child");
+    expect(pulled).toContain("Google details");
+    expect(pulled).toContain("Keep my prose.");
+    expect(pulled).not.toContain("dp-gcal");
+    expect((await run()).conflicts).toEqual([]);
+    expect(h.texts.get(futurePath)).toBe(pulled);
+    expect(Object.keys(h.state.records)).toEqual([identity]);
+    expect(h.state.records[identity!]?.eventId).toBe(originalEventId);
+    expect(h.texts.get(sourcePath)).toBe(historical);
+    expect(api.remove).not.toHaveBeenCalled();
+  });
+  test("archived identities cannot be reassigned to matching future tasks", async () => {
+    const h = harness();
+    h.settings.googleCalendar.syncStartDate = "2026-11-14";
+    const oldSnapshot = {
+      title: "Work #work",
+      start: window.moment("2026-11-11 09:00").toISOString(),
+      end: window.moment("2026-11-11 10:00").toISOString(),
+    };
+    const oldIdentity = {
+      path: sourcePath,
+      from: 15,
+      raw: original.replace(` ${marker}`, ""),
+      snapshot: oldSnapshot,
+    };
+    h.state.records[uid] = {
+      eventId: "old-event",
+      path: sourcePath,
+      base: oldSnapshot,
+    };
+    h.state.identities = { [uid]: oldIdentity };
+    const futurePath = "Daily/2026-11-14.md";
+    h.file(futurePath);
+    h.texts.set(futurePath, `# Day planner\r\n\r\n${oldIdentity.raw}\r\n`);
+    const blocks = await h.notes.scan();
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]?.uid).not.toBe(uid);
+    expect(h.state.identities[uid]).toEqual(oldIdentity);
+    expect(h.texts.get(sourcePath)).toContain(marker);
+  });
+  test("never scans or rewrites pre-cutover and opted-out notes", async () => {
+    const h = harness();
+    h.settings.googleCalendar.syncStartDate = "2026-11-14";
+    const historical = h.texts.get(sourcePath)!;
+    const optedPath = "Daily/2026-11-14.md";
+    const opted = `---\r\nsync: off\r\n---\r\n# Day planner\r\n- [ ] 09:00 - 10:00 Private ${marker}\r\n`;
+    h.file(optedPath);
+    h.texts.set(optedPath, opted);
+    expect(await h.notes.scan()).toEqual([]);
+    expect(h.texts.get(sourcePath)).toBe(historical);
+    expect(h.texts.get(optedPath)).toBe(opted);
+    const snapshot = {
+      title: "Private",
+      start: window.moment("2026-11-14 09:00").toISOString(),
+      end: window.moment("2026-11-14 10:00").toISOString(),
+    };
+    expect(await h.notes.canSync(optedPath, snapshot)).toBe(false);
+    expect(await h.notes.canSync("", snapshot)).toBe(false);
+    await expect(
+      h.notes.applyEdits([
+        { path: sourcePath, before: historical, after: historical + "changed" },
+      ]),
+    ).rejects.toThrow("outside Google Calendar sync scope");
+    await expect(
+      h.notes.applyEdits([
+        { path: optedPath, before: opted, after: opted + "changed" },
+      ]),
+    ).rejects.toThrow("outside Google Calendar sync scope");
+    await expect(h.notes.write(uid, snapshot)).rejects.toThrow(
+      "outside Google Calendar sync scope",
+    );
+    expect(h.texts.get(optedPath)).toBe(opted);
+  });
   test("restoring a missing note retains the saved children while using Google title and time", async () => {
     const h = harness();
     h.texts.set(sourcePath, "# Day planner\r\n\r\n# Journal\r\nUntouched.\r\n");

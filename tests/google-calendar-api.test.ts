@@ -42,6 +42,81 @@ beforeEach(() => {
 });
 
 describe("Google REST transport", () => {
+  test("canonical linking checks ownership and metadata bounds before writing", async () => {
+    const token = vi.fn(async () => "test-access-token");
+    const api = new GoogleCalendarApi(
+      { token } as unknown as GoogleCalendarAuth,
+      "client",
+      "calendar",
+      "namespace",
+      () => true,
+      true,
+    );
+    await expect(
+      api.link(
+        {
+          ...event,
+          extendedProperties: { private: { dayPlannerVault: "other" } },
+        },
+        "uid",
+        snapshot,
+      ),
+    ).rejects.toThrow("already linked");
+    await expect(
+      api.create("id", "uid", { ...snapshot, tags: ["a".repeat(1100)] }),
+    ).rejects.toThrow("metadata limit");
+    expect(requestUrl).not.toHaveBeenCalled();
+    vi.mocked(requestUrl).mockResolvedValue(response(200, event));
+    await api.link(event, "uid", { ...snapshot, tags: ["work"] });
+    const arg = vi.mocked(requestUrl).mock.calls[0]![0] as {
+      body: string;
+      headers: Record<string, string>;
+    };
+    expect(arg.headers["If-Match"]).toBe(event.etag);
+    expect(JSON.parse(arg.body).extendedProperties.private).toMatchObject({
+      dayPlannerVault: "namespace",
+      dayPlannerBlock: "uid",
+      dayPlannerTags: '["work"]',
+      dayPlannerSchemaVersion: "3",
+    });
+  });
+  test("canonical updates patch only changed fields and retain conditional version", async () => {
+    const token = vi.fn(async () => "test-access-token");
+    const api = new GoogleCalendarApi(
+      { token } as unknown as GoogleCalendarAuth,
+      "client",
+      "calendar",
+      "namespace",
+      () => true,
+      true,
+    );
+    const existing = {
+      ...event,
+      summary: snapshot.title,
+      description:
+        "Details\n\n--- Day Planner fields ---\nTags: #work\nSubtasks:\n- [ ] Child\n--- End Day Planner fields ---",
+      extendedProperties: {
+        private: { dayPlannerTags: '["work"]', dayPlannerSchemaVersion: "3" },
+      },
+    };
+    vi.mocked(requestUrl).mockResolvedValue(response(200, existing));
+    await api.update(existing, {
+      ...snapshot,
+      end: "2026-11-11T06:00:00.000Z",
+      tags: ["work"],
+      subtasks: "- [ ] Child",
+      description: "Details",
+      colorId: null,
+    });
+    const arg = vi.mocked(requestUrl).mock.calls[0]![0] as {
+      body: string;
+      headers: Record<string, string>;
+    };
+    expect(JSON.parse(arg.body)).toEqual({
+      end: { dateTime: "2026-11-11T06:00:00.000Z" },
+    });
+    expect(arg.headers["If-Match"]).toBe(existing.etag);
+  });
   const block: LocalBlock = {
     uid: "block",
     path: "Daily/2026-11-11.md",

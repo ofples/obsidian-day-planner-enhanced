@@ -1,4 +1,8 @@
+import { syncCanonicalCalendar } from "./canonical-engine";
+import { normalizeLocalSnapshot } from "./markdown";
 import {
+  canonicalSnapshotOf,
+  sameCanonicalSnapshot,
   sameSnapshot,
   snapshotOf,
   type CalendarApi,
@@ -16,6 +20,112 @@ export interface SyncResult {
   conflicts: string[];
   reviewable: CalendarConflict[];
   missingLocal: MissingLocalConflict[];
+  deletedRemote: DeletedRemoteConflict[];
+}
+
+export interface DeletedRemoteConflict {
+  uid: string;
+  path: string;
+  eventId: string;
+  mine: CalendarSnapshot;
+  raw: string;
+  currentRaw: string;
+  detectedAt: string;
+}
+
+/** Resolve a remote deletion only after the user explicitly chooses an outcome. */
+export async function resolveDeletedRemoteConflict(
+  conflict: DeletedRemoteConflict,
+  choice: "restore" | "accept",
+  state: CalendarSyncState,
+  api: CalendarApi,
+  notes: CalendarNotes,
+  save: () => Promise<void>,
+) {
+  const record = state.records[conflict.uid];
+  const draft = record?.pendingConflict;
+  if (
+    !record ||
+    record.deleted ||
+    record.path !== conflict.path ||
+    record.eventId !== conflict.eventId ||
+    !draft ||
+    !draft.fields.includes("deletion") ||
+    draft.detectedAt !== conflict.detectedAt ||
+    draft.raw !== conflict.raw ||
+    !sameCanonicalSnapshot(draft.mine, conflict.mine)
+  )
+    throw new Error("This conflict changed. Sync again before resolving it.");
+  if (state.pendingCreate)
+    throw new Error(
+      "Another calendar export is pending. Finish it before resolving this conflict.",
+    );
+  if (notes.canSync && !(await notes.canSync(conflict.path, conflict.mine)))
+    throw new Error("This note is outside calendar sync scope.");
+  const local = (await notes.scan()).find(
+    (block) => block.uid === conflict.uid,
+  );
+  if (
+    !local ||
+    local.path !== conflict.path ||
+    local.raw !== conflict.currentRaw ||
+    !(await notes.isUnchanged(local))
+  )
+    throw new Error("The note changed. Sync again before resolving it.");
+  const oldEvent = await api.get(conflict.eventId);
+  if (oldEvent && oldEvent.status !== "cancelled")
+    throw new Error(
+      "The Google event returned. Sync again before resolving it.",
+    );
+  if (choice === "accept") {
+    await notes.cancel(local);
+    record.deleted = true;
+    delete record.pendingConflict;
+    await save();
+    return;
+  }
+  const eventId = crypto.randomUUID().replace(/-/g, "");
+  state.pendingCreate = {
+    uid: conflict.uid,
+    path: conflict.path,
+    snapshot: draft.mine,
+    eventId,
+    currentRaw: local.raw,
+  };
+  await save();
+  const created = await api.create(eventId, conflict.uid, draft.mine, local);
+  if (
+    created.id !== eventId ||
+    !isCanonicalOwned(created, state.namespace, conflict.uid)
+  )
+    throw new Error(
+      "Google did not confirm ownership of the restored event. Sync again.",
+    );
+  const confirmed = canonicalSnapshotOf(created, draft.mine);
+  if (!confirmed || !sameCanonicalSnapshot(confirmed, draft.mine))
+    throw new Error("Google did not confirm the restored event. Sync again.");
+  if (
+    local.raw !== draft.raw ||
+    !sameCanonicalSnapshot(
+      { ...normalizeLocalSnapshot(local), colorId: draft.mine.colorId },
+      draft.mine,
+    )
+  ) {
+    const restored = await notes.write(
+      conflict.uid,
+      confirmed,
+      local,
+      draft.raw,
+    );
+    record.path = restored.path;
+  }
+  record.eventId = eventId;
+  record.base = confirmed;
+  record.remoteEtag = created.etag;
+  record.remoteUpdated = created.updated;
+  delete record.pendingConflict;
+  delete state.pendingCreate;
+  await save();
 }
 
 export interface MissingLocalConflict {
@@ -36,13 +146,17 @@ export async function resolveMissingLocalConflict(
   save: () => Promise<void>,
 ) {
   const record = state.records[conflict.uid];
+  const same =
+    record?.base.tags !== undefined ? sameCanonicalSnapshot : sameSnapshot;
+  if (notes.canSync && !(await notes.canSync(conflict.path, conflict.base)))
+    throw new Error("This note is outside calendar sync scope.");
   if (
     !record ||
     record.deleted ||
     record.pendingDelete ||
     record.path !== conflict.path ||
     record.eventId !== conflict.remote.id ||
-    !sameSnapshot(record.base, conflict.base)
+    !same(record.base, conflict.base)
   )
     throw new Error("This conflict changed. Sync again before resolving it.");
   const assertMissing = async () => {
@@ -57,15 +171,22 @@ export async function resolveMissingLocalConflict(
     !remote ||
     !remote.etag ||
     remote.etag !== conflict.remote.etag ||
-    !isOwned(remote, state.namespace, conflict.uid)
+    !(record.base.tags !== undefined
+      ? isCanonicalOwned(remote, state.namespace, conflict.uid)
+      : isOwned(remote, state.namespace, conflict.uid))
   )
     throw new Error(
       "Google changed or ownership could not be verified. Sync again.",
     );
-  const snapshot = snapshotOf(remote, "");
-  if (!snapshot || !sameSnapshot(snapshot, conflict.remoteSnapshot))
+  const canonical = record.base.tags !== undefined;
+  const snapshot = canonical
+    ? canonicalSnapshotOf(remote, record.base)
+    : snapshotOf(remote, "");
+  if (!snapshot || !same(snapshot, conflict.remoteSnapshot))
     throw new Error("Google changed. Sync again before resolving it.");
   await assertMissing();
+  if (notes.canSync && !(await notes.canSync("", snapshot)))
+    throw new Error("The Google event is outside calendar sync scope.");
   if (choice === "restore") {
     const restored = await notes.write(
       conflict.uid,
@@ -99,6 +220,9 @@ export interface CalendarConflict {
   remote: GoogleEvent;
   remoteSnapshot: CalendarSnapshot;
   base: CalendarSnapshot;
+  mine?: CalendarSnapshot;
+  fields?: string[];
+  detectedAt?: string;
 }
 
 /** Resolve only the exact versions shown to the user; never advance a stale baseline. */
@@ -111,15 +235,30 @@ export async function resolveCalendarConflict(
   save: () => Promise<void>,
 ) {
   const record = state.records[conflict.uid];
+  const same =
+    record?.base.tags !== undefined ? sameCanonicalSnapshot : sameSnapshot;
   if (
     !record ||
     record.deleted ||
     record.eventId !== conflict.remote.id ||
-    !sameSnapshot(record.base, conflict.base)
+    !same(record.base, conflict.base)
   )
     throw new Error("This conflict changed. Sync again before resolving it.");
+  if (notes.canSync && !(await notes.canSync(record.path, record.base)))
+    throw new Error("This note is outside calendar sync scope.");
+  const canonical = record.base.tags !== undefined;
   const blocks = await notes.scan();
-  const local = blocks.find((block) => block.uid === conflict.uid);
+  const scanned = blocks.find((block) => block.uid === conflict.uid);
+  const local =
+    scanned && canonical
+      ? {
+          ...scanned,
+          snapshot: {
+            ...normalizeLocalSnapshot(scanned),
+            colorId: record.base.colorId,
+          },
+        }
+      : scanned;
   if (
     !local ||
     local.path !== conflict.local.path ||
@@ -131,29 +270,46 @@ export async function resolveCalendarConflict(
   if (
     !remote ||
     remote.etag !== conflict.remote.etag ||
-    !isOwned(remote, state.namespace, conflict.uid)
+    !(record.base.tags !== undefined
+      ? isCanonicalOwned(remote, state.namespace, conflict.uid)
+      : isOwned(remote, state.namespace, conflict.uid))
   )
     throw new Error(
       "Google changed or ownership could not be verified. Sync again.",
     );
-  const snapshot = snapshotOf(remote, "");
-  if (!snapshot || !sameSnapshot(snapshot, conflict.remoteSnapshot))
+  const snapshot = canonical
+    ? canonicalSnapshotOf(remote, record.base)
+    : snapshotOf(remote, "");
+  if (!snapshot || !same(snapshot, conflict.remoteSnapshot))
     throw new Error("Google changed. Sync again before resolving it.");
   if (!(await notes.isUnchanged(local)))
     throw new Error("The note changed. Sync again before resolving it.");
+  const desired =
+    choice === "note" ? (conflict.mine ?? local.snapshot) : snapshot;
+  if (notes.canSync && !(await notes.canSync("", desired)))
+    throw new Error("The selected event is outside calendar sync scope.");
   if (choice === "note") {
-    const updated = await api.update(remote, local.snapshot);
-    const verified = snapshotOf(updated, "");
-    if (!verified || !sameSnapshot(verified, local.snapshot))
+    const updated = await api.update(remote, desired);
+    const verified = canonical
+      ? canonicalSnapshotOf(updated, desired)
+      : snapshotOf(updated, "");
+    if (!verified || !same(verified, desired))
       throw new Error(
         "Google did not confirm the selected note version. Sync again.",
       );
+    if (canonical && !same(local.snapshot, desired)) {
+      const cached = await notes.write(conflict.uid, desired, local);
+      record.path = cached.path;
+    }
     record.base = verified;
+    record.remoteEtag = updated.etag;
+    record.remoteUpdated = updated.updated;
   } else {
     const updated = await notes.write(conflict.uid, snapshot, local);
     record.path = updated.path;
     record.base = snapshot;
   }
+  delete record.pendingConflict;
   await save();
 }
 
@@ -177,6 +333,7 @@ export async function recoverCalendarProjection({
 }) {
   const record = state.records[uid];
   if (record?.deleted) return;
+  if (record?.base.tags !== undefined) return;
   const eventId = record?.eventId ?? exportId(state.namespace, uid);
   const event = await api.get(eventId);
   if (!event) return;
@@ -202,7 +359,7 @@ export async function recoverCalendarProjection({
   await save();
 }
 
-function exportId(namespace: string, uid: string) {
+export function exportId(namespace: string, uid: string) {
   return `dp${namespace}${uid}`;
 }
 
@@ -215,7 +372,19 @@ export function isOwned(event: GoogleEvent, namespace: string, uid: string) {
   );
 }
 
-async function importUid(namespace: string, eventId: string) {
+export function isCanonicalOwned(
+  event: GoogleEvent,
+  namespace: string,
+  uid: string,
+) {
+  const properties = event.extendedProperties?.private;
+  return (
+    properties?.["dayPlannerVault"] === namespace &&
+    properties["dayPlannerBlock"] === uid
+  );
+}
+
+export async function importUid(namespace: string, eventId: string) {
   const hash = await crypto.subtle.digest(
     "SHA-256",
     new TextEncoder().encode(`${namespace}:${eventId}`),
@@ -235,6 +404,7 @@ export async function syncCalendar({
   timeMin,
   timeMax,
   importEvents = true,
+  canonical = false,
 }: {
   state: CalendarSyncState;
   api: CalendarApi;
@@ -243,7 +413,18 @@ export async function syncCalendar({
   timeMin: string;
   timeMax: string;
   importEvents?: boolean;
+  canonical?: boolean;
 }): Promise<SyncResult> {
+  if (canonical)
+    return syncCanonicalCalendar({
+      state,
+      api,
+      notes,
+      save,
+      timeMin,
+      timeMax,
+      importEvents,
+    });
   const result: SyncResult = {
     pushed: 0,
     pulled: 0,
@@ -251,10 +432,13 @@ export async function syncCalendar({
     conflicts: [],
     reviewable: [],
     missingLocal: [],
+    deletedRemote: [],
   };
   // Resolve a lost DELETE response before assigning identities. A block
   // restored in the meantime can then be exported with a fresh ID.
   for (const record of Object.values(state.records)) {
+    if (notes.canSync && !(await notes.canSync(record.path, record.base)))
+      continue;
     if (!record.pendingDelete) continue;
     const remote = await api.get(record.eventId);
     if (remote && remote.status !== "cancelled") continue;
@@ -275,6 +459,10 @@ export async function syncCalendar({
   // Finish an interrupted import even when the event has since left the window.
   if (state.pendingImport) {
     const pending = state.pendingImport;
+    if (notes.canSync && !(await notes.canSync("", pending.snapshot)))
+      throw new Error(
+        "A pending calendar import is outside sync scope. Review it before syncing.",
+      );
     const local =
       byUid.get(pending.uid) ??
       (await notes.write(pending.uid, pending.snapshot));
@@ -295,6 +483,10 @@ export async function syncCalendar({
   const byEvent = new Map(events.map((event) => [event.id, event]));
   if (state.pendingCreate) {
     const { uid, path, snapshot } = state.pendingCreate;
+    if (notes.canSync && !(await notes.canSync(path, snapshot)))
+      throw new Error(
+        "A pending calendar export is outside sync scope. Review it before syncing.",
+      );
     const eventId = exportId(state.namespace, uid);
     const remote = byEvent.get(eventId) ?? (await api.get(eventId));
     if (remote) {
@@ -327,6 +519,8 @@ export async function syncCalendar({
 
   for (const [uid, record] of Object.entries(state.records)) {
     if (record.deleted) continue;
+    if (notes.canSync && !(await notes.canSync(record.path, record.base)))
+      continue;
     const local = byUid.get(uid);
     let descriptionBlock = local;
     const remote =
@@ -337,6 +531,12 @@ export async function syncCalendar({
     // Google may omit the summary of a time-only block.
     const untitled = owned ? "" : undefined;
     const remoteSnapshot = remote && snapshotOf(remote, untitled);
+    if (
+      remoteSnapshot &&
+      notes.canSync &&
+      !(await notes.canSync("", remoteSnapshot))
+    )
+      continue;
     const localChanged = local && !sameSnapshot(local.snapshot, record.base);
     const remoteChanged =
       remoteSnapshot && !sameSnapshot(remoteSnapshot, record.base);
@@ -458,6 +658,8 @@ export async function syncCalendar({
   }
 
   for (const local of locals) {
+    if (notes.canSync && !(await notes.canSync(local.path, local.snapshot)))
+      continue;
     if (state.records[local.uid]) continue;
     if (pendingImportUids.has(local.uid)) continue;
     if (local.snapshot.start < timeMin || local.snapshot.start >= timeMax)
@@ -512,6 +714,8 @@ export async function syncCalendar({
     )
       continue;
     const snapshot = snapshotOf(event);
+    if (snapshot && notes.canSync && !(await notes.canSync("", snapshot)))
+      continue;
     if (!snapshot && event.start?.dateTime && event.status !== "cancelled") {
       result.conflicts.push(
         `${event.summary ?? event.id} — event times must be valid and aligned to whole minutes`,

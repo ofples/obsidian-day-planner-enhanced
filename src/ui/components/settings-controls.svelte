@@ -32,7 +32,7 @@
       setting
         .setName("Automatic sync")
         .setDesc(
-          "Choose calendars, event display and color mappings in the full Day Planner settings.",
+          `Choose calendars, event display and color mappings in the full Day Planner settings.${$settings.googleCalendar.syncStartDate ? ` Sync starts ${$settings.googleCalendar.syncStartDate}.` : ""} Notes with sync: off are excluded.`,
         )
         .addToggle((control) =>
           control

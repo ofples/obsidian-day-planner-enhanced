@@ -71,6 +71,7 @@ async function setup(
         on: vi.fn(() => ({})),
         adapter: { exists: async () => true, read: async () => disk, write },
         getMarkdownFiles: readNotes,
+        getAbstractFileByPath: () => null,
       },
     },
     manifest: {

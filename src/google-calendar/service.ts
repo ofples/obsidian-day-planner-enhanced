@@ -13,23 +13,34 @@ import { GoogleCalendarApi } from "./api";
 import { GoogleCalendarAuth } from "./auth";
 import {
   isOwned,
+  isCanonicalOwned,
   recoverCalendarProjection,
   resolveCalendarConflict,
+  resolveDeletedRemoteConflict,
   resolveMissingLocalConflict,
   syncCalendar,
   type CalendarConflict,
+  type DeletedRemoteConflict,
   type MissingLocalConflict,
 } from "./engine";
 import { ObsidianCalendarNotes } from "./notes";
+import { isCalendarDateInScope } from "./scope";
 import type { CalendarSyncState } from "./types";
 import type { LocalBlock } from "./types";
-import { sameSnapshot, snapshotOf, type CalendarSnapshot } from "./types";
+import {
+  canonicalSnapshotOf,
+  sameCanonicalSnapshot,
+  sameSnapshot,
+  snapshotOf,
+  type CalendarSnapshot,
+} from "./types";
 import { googleEventsToBlocks, visibleGoogleCalendars } from "./view";
 
 export interface GoogleCalendarSettings {
   clientId: string;
   calendarId: string;
   autoSync: boolean;
+  syncStartDate: string;
   daysPast: number;
   daysAhead: number;
   syncDeletions: boolean;
@@ -44,6 +55,10 @@ const snapshotSchema = z.object({
   title: z.string(),
   start: z.iso.datetime(),
   end: z.iso.datetime(),
+  tags: z.array(z.string()).optional(),
+  colorId: z.string().nullable().optional(),
+  subtasks: z.string().optional(),
+  description: z.string().optional(),
 });
 const blockSchema = z.object({
   uid: z.string(),
@@ -70,10 +85,38 @@ const stateSchema = z.object({
       base: snapshotSchema,
       deleted: z.boolean().optional(),
       pendingDelete: z.boolean().optional(),
+      pendingConflict: z
+        .object({
+          mine: snapshotSchema,
+          raw: z.string(),
+          currentRaw: z.string().optional(),
+          fields: z.array(z.string()),
+          detectedAt: z.string(),
+        })
+        .optional(),
+      remoteEtag: z.string().optional(),
+      remoteUpdated: z.string().optional(),
     }),
   ),
   identities: z.record(z.string(), identitySchema).optional(),
   documents: z.record(z.string(), z.string()).optional(),
+  eventCache: z
+    .object({
+      timeMin: z.string(),
+      timeMax: z.string(),
+      syncToken: z.string().min(1),
+      events: z.array(
+        z.custom<import("./types").GoogleEvent>((value) =>
+          Boolean(
+            value &&
+              typeof value === "object" &&
+              "id" in value &&
+              typeof value.id === "string",
+          ),
+        ),
+      ),
+    })
+    .optional(),
   pendingNoteChange: z
     .object({
       edits: z.array(
@@ -87,7 +130,13 @@ const stateSchema = z.object({
     .object({ uid: z.string(), eventId: z.string(), snapshot: snapshotSchema })
     .optional(),
   pendingCreate: z
-    .object({ uid: z.string(), path: z.string(), snapshot: snapshotSchema })
+    .object({
+      uid: z.string(),
+      path: z.string(),
+      snapshot: snapshotSchema,
+      eventId: z.string().optional(),
+      currentRaw: z.string().optional(),
+    })
     .optional(),
   pendingMove: z
     .object({
@@ -127,6 +176,7 @@ export class GoogleCalendarSync {
   private conflicts: string[] = [];
   private reviewable: CalendarConflict[] = [];
   private missingLocal: MissingLocalConflict[] = [];
+  private deletedRemote: DeletedRemoteConflict[] = [];
 
   private queueAutomaticSync() {
     if (this.stopped || !this.getSettings().googleCalendar.autoSync) return;
@@ -321,6 +371,15 @@ export class GoogleCalendarSync {
   }
 
   async syncProjection(uid: string, snapshot: CalendarSnapshot) {
+    if (
+      !isCalendarDateInScope(
+        snapshot,
+        this.getSettings().googleCalendar.syncStartDate,
+      )
+    )
+      throw new Error(
+        "This schedule is before the Google Calendar sync start date.",
+      );
     if (this.busy || this.stopped)
       throw new Error(
         "Calendar sync is busy. The scheduled task is saved for retry.",
@@ -355,6 +414,14 @@ export class GoogleCalendarSync {
     path: string,
     base?: CalendarSnapshot,
   ) {
+    if (
+      !isCalendarDateInScope(
+        base ?? snapshot,
+        this.getSettings().googleCalendar.syncStartDate,
+      ) ||
+      !(await this.noteContext().notes.canSync(path, snapshot))
+    )
+      throw new Error("This schedule is outside Google Calendar sync scope.");
     if (this.busy || this.stopped)
       throw new Error(
         "Calendar sync is busy. Recovering this export is saved for retry.",
@@ -389,6 +456,15 @@ export class GoogleCalendarSync {
     snapshot: CalendarSnapshot,
     path: string,
   ) {
+    const baseline = this.state.records[uid]?.base ?? snapshot;
+    if (
+      !isCalendarDateInScope(
+        baseline,
+        this.getSettings().googleCalendar.syncStartDate,
+      ) ||
+      !(await this.noteContext().notes.canSync(path, snapshot))
+    )
+      throw new Error("This schedule is outside Google Calendar sync scope.");
     if (this.busy || this.stopped)
       throw new Error(
         "Calendar sync is busy. Removing this schedule is saved for retry.",
@@ -406,15 +482,27 @@ export class GoogleCalendarSync {
       const eventId = record?.eventId ?? `dp${this.state.namespace}${uid}`;
       const event = await api.get(eventId);
       if (event && event.status !== "cancelled") {
+        const canonical = record?.base.tags !== undefined;
+        if (canonical && !isCanonicalOwned(event, this.state.namespace, uid))
+          throw new Error(
+            "Review this event's calendar ownership before removing the schedule.",
+          );
         if (!record && !isOwned(event, this.state.namespace, uid))
           throw new Error(
             "Review this event's calendar ownership before removing the schedule.",
           );
-        const current = snapshotOf(
-          event,
-          isOwned(event, this.state.namespace, uid) ? "" : undefined,
-        );
-        if (!current || !sameSnapshot(current, record?.base ?? snapshot))
+        const current = canonical
+          ? canonicalSnapshotOf(event, record!.base)
+          : snapshotOf(
+              event,
+              isOwned(event, this.state.namespace, uid) ? "" : undefined,
+            );
+        if (
+          !current ||
+          !(canonical
+            ? sameCanonicalSnapshot(current, record!.base)
+            : sameSnapshot(current, record?.base ?? snapshot))
+        )
           throw new Error(
             "This event changed in Google Calendar. Review the changes before removing its schedule.",
           );
@@ -562,6 +650,7 @@ export class GoogleCalendarSync {
         config.calendarId.trim(),
         this.state.namespace,
         () => !this.stopped,
+        Boolean(config.syncStartDate),
       );
       const canonicalId = await this.validateManagedCalendar(api);
       await api.usePlannerColors(settings);
@@ -577,10 +666,12 @@ export class GoogleCalendarSync {
         timeMin,
         timeMax,
         importEvents: config.importEventsToNotes,
+        canonical: Boolean(config.syncStartDate),
       });
       this.conflicts = result.conflicts;
       this.reviewable = result.reviewable;
       this.missingLocal = result.missingLocal;
+      this.deletedRemote = result.deletedRemote;
       this.lastError = "";
       if (!automatic) {
         new Notice(
@@ -669,19 +760,93 @@ export class GoogleCalendarSync {
       restore.addEventListener("click", () => void choose("restore"));
       remove.addEventListener("click", () => void choose("remove"));
     }
+    for (const conflict of this.deletedRemote) {
+      const section = modal.contentEl.createDiv();
+      section.createEl("h3", { text: conflict.mine.title || "Untitled event" });
+      section.createEl("p", {
+        text: `Google deleted this event. Your Obsidian draft is saved in ${conflict.path}.`,
+      });
+      section.createEl("pre", { text: conflict.raw });
+      const restore = section.createEl("button", {
+        text: "Restore Obsidian draft to Google",
+      });
+      const accept = section.createEl("button", {
+        text: "Accept Google deletion",
+      });
+      const choose = async (choice: "restore" | "accept") => {
+        if (this.busy || this.stopped) return;
+        restore.disabled = true;
+        accept.disabled = true;
+        this.busy = true;
+        this.syncing.set(true);
+        try {
+          const api = this.api();
+          await this.validateManagedCalendar(api);
+          await resolveDeletedRemoteConflict(
+            conflict,
+            choice,
+            this.state,
+            api,
+            this.noteContext().notes,
+            () => this.save(),
+          );
+          this.deletedRemote = this.deletedRemote.filter(
+            (item) => item.uid !== conflict.uid,
+          );
+          modal.close();
+          new Notice(
+            "Calendar deletion resolved. Sync to review remaining changes.",
+          );
+        } catch (error) {
+          this.report(error);
+          restore.disabled = false;
+          accept.disabled = false;
+        } finally {
+          this.busy = false;
+          this.syncing.set(false);
+        }
+      };
+      restore.addEventListener("click", () => void choose("restore"));
+      accept.addEventListener("click", () => void choose("accept"));
+    }
     for (const conflict of this.reviewable) {
       const section = modal.contentEl.createDiv();
       section.createEl("h3", { text: conflict.local.path });
       const describe = (snapshot: CalendarSnapshot) =>
-        `${snapshot.title} — ${snapshot.start} to ${snapshot.end}`;
-      section.createEl("p", {
-        text: `Note: ${describe(conflict.local.snapshot)}`,
-      });
+        `${snapshot.title} — ${window.moment(snapshot.start).format("ddd D MMM, HH:mm")} to ${window.moment(snapshot.end).format("ddd D MMM, HH:mm")}`;
+      const mine = conflict.mine ?? conflict.local.snapshot;
+      section.createEl("p", { text: `Obsidian: ${describe(mine)}` });
       section.createEl("p", {
         text: `Google: ${describe(conflict.remoteSnapshot)}`,
       });
-      const noteButton = section.createEl("button", { text: "Keep note" });
-      const googleButton = section.createEl("button", { text: "Keep Google" });
+      const fields: Array<[string, keyof CalendarSnapshot]> = [
+        ["Title", "title"],
+        ["Start", "start"],
+        ["End", "end"],
+        ["Tags", "tags"],
+        ["Subtasks", "subtasks"],
+        ["Color", "colorId"],
+        ["Description", "description"],
+      ];
+      for (const [label, field] of fields) {
+        const mineValue = mine[field],
+          theirs = conflict.remoteSnapshot[field];
+        if (
+          JSON.stringify(mineValue) !== JSON.stringify(theirs) &&
+          field !== "title" &&
+          field !== "start" &&
+          field !== "end"
+        )
+          section.createEl("p", {
+            text: `${label}: Obsidian ${Array.isArray(mineValue) ? mineValue.join(", ") : String(mineValue ?? "—")} | Google ${Array.isArray(theirs) ? theirs.join(", ") : String(theirs ?? "—")}`,
+          });
+      }
+      if (conflict.remote.updated)
+        section.createEl("p", {
+          text: `Google updated ${window.moment(conflict.remote.updated).format("D MMM, HH:mm:ss")}`,
+        });
+      const noteButton = section.createEl("button", { text: "Use Obsidian" });
+      const googleButton = section.createEl("button", { text: "Use Google" });
       const choose = async (choice: "note" | "google") => {
         if (this.busy || this.stopped) {
           new Notice("Wait for calendar sync to finish, then retry.");
@@ -731,6 +896,7 @@ export class GoogleCalendarSync {
       calendarId.trim(),
       this.state.namespace,
       () => !this.stopped,
+      Boolean(this.getSettings().googleCalendar.syncStartDate),
     );
   }
 

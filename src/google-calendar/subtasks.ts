@@ -6,6 +6,85 @@ import { exportPlainText } from "../util/schedule-export";
 export const subtasksStart = "<!-- day-planner-subtasks:start -->";
 export const subtasksEnd = "<!-- day-planner-subtasks:end -->";
 
+export const structuredStart = "--- Day Planner fields ---";
+export const structuredEnd = "--- End Day Planner fields ---";
+
+function validateStructuredSubtasks(value: string) {
+  if (!value.trim()) return;
+  const tree = fromMarkdown(value);
+  if (
+    !tree.children.length ||
+    tree.children.some((node) => node.type !== "list")
+  )
+    throw new Error(
+      "The Google Calendar subtasks must be a Markdown list. Review them before syncing.",
+    );
+}
+
+/** The editable section uses Markdown, so checkbox state and nesting survive a round trip. */
+export function structuredDescription(
+  description: string,
+  tags: string[],
+  subtasks: string,
+) {
+  validateStructuredSubtasks(subtasks);
+  if (
+    description.includes(structuredStart) ||
+    description.includes(structuredEnd)
+  )
+    throw new Error(
+      "The description contains reserved Day Planner markers. Review it before syncing.",
+    );
+  const section = [
+    structuredStart,
+    `Tags: ${tags.map((tag) => `#${tag}`).join(" ")}`,
+    "Subtasks:",
+    subtasks,
+    structuredEnd,
+  ].join("\n");
+  return description ? `${description}\n\n${section}` : section;
+}
+
+export function readStructuredDescription(value: string) {
+  const start = value.indexOf(structuredStart);
+  const end = value.indexOf(structuredEnd);
+  if (start < 0 && end < 0) return null;
+  if (
+    start < 0 ||
+    end < start ||
+    value.indexOf(structuredStart, start + 1) >= 0 ||
+    value.indexOf(structuredEnd, end + 1) >= 0
+  )
+    throw new Error(
+      "The Day Planner fields in the Google description are malformed. Review them before syncing.",
+    );
+  const content = value
+    .slice(start + structuredStart.length, end)
+    .replace(/^\r?\n/, "")
+    .replace(/\r?\n$/, "");
+  const match = content.match(
+    /^Tags:\s*([^\r\n]*)\r?\nSubtasks:\s*(?:\r?\n|$)([\s\S]*)$/,
+  );
+  if (!match)
+    throw new Error(
+      "The Day Planner fields in the Google description are malformed. Review them before syncing.",
+    );
+  const tagLine = match[1]!.trim();
+  const tags = tagLine ? tagLine.split(/\s+/) : [];
+  if (tags.some((tag) => !/^#[\p{L}\p{M}\p{N}_/-]+$/u.test(tag)))
+    throw new Error(
+      "The Day Planner tags in Google Calendar are invalid. Review them before syncing.",
+    );
+  const prefix = value.slice(0, start).replace(/\r?\n\r?\n$/, "");
+  const suffix = value.slice(end + structuredEnd.length);
+  validateStructuredSubtasks(match[2]!);
+  return {
+    tags: tags.map((tag) => tag.slice(1)),
+    subtasks: match[2]!,
+    description: prefix + suffix,
+  };
+}
+
 function escapeHtml(text: string) {
   return text
     .replace(/&/g, "&amp;")

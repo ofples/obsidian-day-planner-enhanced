@@ -9,6 +9,18 @@ import {
 } from "../src/settings";
 
 describe("settings migration", () => {
+  test("defaults calendar cutover to legacy mode and preserves an explicit start date", () => {
+    expect(defaultSettings.googleCalendar.syncStartDate).toBe("");
+    expect(mergeStoredSettings(null).googleCalendar.syncStartDate).toBe("");
+    expect(
+      mergeStoredSettings({ googleCalendar: { syncStartDate: "2030-01-15" } })
+        .googleCalendar.syncStartDate,
+    ).toBe("2030-01-15");
+    expect(
+      mergeStoredSettings({ googleCalendar: { calendarId: "existing" } })
+        .googleCalendar.syncStartDate,
+    ).toBe("");
+  });
   test("defaults tagged capture and preserves account-scoped routing", () => {
     expect(mergeStoredSettings(null).taskCapture).toEqual({
       enabled: true,

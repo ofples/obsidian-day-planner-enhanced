@@ -1,12 +1,19 @@
+import { readStructuredDescription } from "./subtasks";
+
 export interface CalendarSnapshot {
   title: string;
   start: string;
   end: string;
+  tags?: string[];
+  colorId?: string | null;
+  subtasks?: string;
+  description?: string;
 }
 
 export interface GoogleEvent {
   id: string;
   etag: string;
+  updated?: string;
   status?: string;
   summary?: string;
   colorId?: string;
@@ -50,6 +57,15 @@ export interface SyncRecord {
   base: CalendarSnapshot;
   deleted?: boolean;
   pendingDelete?: boolean;
+  pendingConflict?: {
+    mine: CalendarSnapshot;
+    raw: string;
+    currentRaw?: string;
+    fields: string[];
+    detectedAt: string;
+  };
+  remoteEtag?: string;
+  remoteUpdated?: string;
 }
 
 export interface CalendarSyncState {
@@ -59,13 +75,25 @@ export interface CalendarSyncState {
   records: Record<string, SyncRecord>;
   identities?: Record<string, LocalIdentity>;
   documents?: Record<string, string>;
+  eventCache?: {
+    timeMin: string;
+    timeMax: string;
+    syncToken: string;
+    events: GoogleEvent[];
+  };
   pendingNoteChange?: {
     edits: Array<{ path: string; before: string; after: string }>;
     identities: Record<string, LocalIdentity>;
     documents: Record<string, string>;
   };
   pendingImport?: { uid: string; eventId: string; snapshot: CalendarSnapshot };
-  pendingCreate?: { uid: string; path: string; snapshot: CalendarSnapshot };
+  pendingCreate?: {
+    uid: string;
+    path: string;
+    snapshot: CalendarSnapshot;
+    eventId?: string;
+    currentRaw?: string;
+  };
   pendingMove?: {
     source: LocalBlock;
     targetPath: string;
@@ -75,6 +103,16 @@ export interface CalendarSyncState {
 }
 
 export interface CalendarApi {
+  changes?(
+    timeMin: string,
+    timeMax: string,
+    token?: string,
+  ): Promise<{ events: GoogleEvent[]; syncToken: string; reset?: boolean }>;
+  link?(
+    event: GoogleEvent,
+    uid: string,
+    snapshot: CalendarSnapshot,
+  ): Promise<GoogleEvent>;
   list(timeMin: string, timeMax: string): Promise<GoogleEvent[]>;
   get(id: string): Promise<GoogleEvent | null>;
   create(
@@ -93,6 +131,7 @@ export interface CalendarApi {
 }
 
 export interface CalendarNotes {
+  canSync?(path: string, snapshot: CalendarSnapshot): Promise<boolean>;
   scan(): Promise<LocalBlock[]>;
   isUnchanged(block: LocalBlock): Promise<boolean>;
   canDelete(record: SyncRecord, uid: string, owned?: boolean): Promise<boolean>;
@@ -103,6 +142,19 @@ export interface CalendarNotes {
     templateRaw?: string,
   ): Promise<LocalBlock>;
   cancel(block: LocalBlock): Promise<void>;
+}
+
+export function sameCanonicalSnapshot(
+  a: CalendarSnapshot,
+  b: CalendarSnapshot,
+) {
+  return (
+    sameSnapshot(a, b) &&
+    JSON.stringify(a.tags ?? []) === JSON.stringify(b.tags ?? []) &&
+    (a.colorId ?? null) === (b.colorId ?? null) &&
+    (a.subtasks ?? "") === (b.subtasks ?? "") &&
+    (a.description ?? "") === (b.description ?? "")
+  );
 }
 
 export function normalizeTitle(title: string) {
@@ -132,6 +184,52 @@ export function snapshotOf(
     title: normalizeTitle(event.summary ?? untitled),
     start: new Date(start).toISOString(),
     end: new Date(end).toISOString(),
+  };
+}
+
+export function canonicalSnapshotOf(
+  event: GoogleEvent,
+  base?: CalendarSnapshot,
+): CalendarSnapshot | null {
+  const snapshot = snapshotOf(event, "");
+  if (!snapshot) return null;
+  const fields = readStructuredDescription(event.description ?? "");
+  let tags = fields?.tags ?? [];
+  if (event.extendedProperties?.private?.["dayPlannerTags"]) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(event.extendedProperties.private["dayPlannerTags"]!);
+    } catch {
+      throw new Error("Google Calendar returned invalid Day Planner tags.");
+    }
+    if (
+      !Array.isArray(parsed) ||
+      parsed.some(
+        (tag) =>
+          typeof tag !== "string" || !/^[\p{L}\p{M}\p{N}_/-]+$/u.test(tag),
+      )
+    )
+      throw new Error("Google Calendar returned invalid Day Planner tags.");
+    const metadata = parsed as string[];
+    if (!fields) tags = metadata;
+    else if (
+      base?.tags &&
+      JSON.stringify(metadata) !== JSON.stringify(fields.tags)
+    ) {
+      if (JSON.stringify(fields.tags) === JSON.stringify(base.tags))
+        tags = metadata;
+      else if (JSON.stringify(metadata) !== JSON.stringify(base.tags))
+        throw new Error(
+          "Google Calendar tags changed in two different places. Review them before syncing.",
+        );
+    }
+  }
+  return {
+    ...snapshot,
+    tags,
+    colorId: event.colorId ?? null,
+    subtasks: fields?.subtasks ?? "",
+    description: fields?.description ?? event.description ?? "",
   };
 }
 
