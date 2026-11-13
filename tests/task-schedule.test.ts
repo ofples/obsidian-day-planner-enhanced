@@ -4058,6 +4058,381 @@ describe("linked task scheduling", () => {
     h.service.stop();
   });
 
+  test("nesting a scheduled task appends its whole subtree under a plain timeline block and removes its separate event", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const original = h.scheduler.projection(root.id)!;
+    const beforeLinks = h.service.registry.snapshot().links;
+    const childLink = Object.entries(beforeLinks).find(
+      ([, link]) => link.taskId === child.id,
+    )![0];
+    const due = structuredClone(h.tasks.get(root.id)?.due);
+    const writes = h.apply.mock.calls.length;
+    const path = "Daily/2026-11-12.md";
+    const before =
+      "# Day planner\r\n- 09:00 - 09:30 Admin\r\n  - [ ] Existing\r\n    - [ ] Existing nested\r\n- 10:00 - 11:00 Next\r\n";
+    h.file(path);
+    h.texts.set(path, before);
+    const nonce = crypto.randomUUID();
+    await h.scheduler.nest(
+      root.id,
+      { path, line: 1, text: "09:00 - 09:30 Admin" },
+      nonce,
+    );
+    await h.settle();
+    await h.scheduler.nest(
+      root.id,
+      { path, line: 1, text: "09:00 - 09:30 Admin" },
+      nonce,
+    );
+    const text = h.texts.get(path)!;
+    expect(text).toContain("  - [ ] Existing\r\n    - [ ] Existing nested");
+    expect(text.indexOf("Existing nested")).toBeLessThan(
+      text.indexOf("Work #todoist"),
+    );
+    expect(text.indexOf("Work #todoist")).toBeLessThan(text.indexOf("Child"));
+    expect(text.indexOf("Child")).toBeLessThan(
+      text.indexOf("10:00 - 11:00 Next"),
+    );
+    const insertedRows = parseCaptureCandidates(path, text);
+    const insertedRoot = insertedRows.find((item) =>
+      item.title.startsWith("Work"),
+    )!;
+    expect(
+      insertedRows.find((item) => item.title === "Child")?.parentFrom,
+    ).toBe(insertedRoot.from);
+    expect(text.replace(/\r\n/g, "")).not.toContain("\n");
+    expect(h.scheduler.projection(root.id)).toMatchObject({
+      linkUid: original.linkUid,
+      interval: null,
+      source: { path },
+    });
+    expect(h.service.registry.snapshot().links[childLink]?.taskId).toBe(
+      child.id,
+    );
+    expect(h.tasks.get(child.id)?.parentId).toBe(root.id);
+    expect(h.tasks.get(root.id)?.due).toEqual(due);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    expect(h.events.has(original.googleEventId!)).toBe(false);
+    expect(
+      h.service.registry.snapshot().schedules.filter((op) => op.id === nonce),
+    ).toHaveLength(1);
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("concurrent duplicate nest delivery reuses the same saved nonce", async () => {
+    const h = await harness();
+    const path = "Daily/2026-11-12.md";
+    h.file(path);
+    h.texts.set(path, "# Day planner\n- 09:00 - 09:30 Admin\n");
+    const nonce = crypto.randomUUID();
+    await Promise.all([
+      h.scheduler.nest(
+        root.id,
+        { path, line: 1, text: "09:00 - 09:30 Admin" },
+        nonce,
+      ),
+      h.scheduler.nest(
+        root.id,
+        { path, line: 1, text: "09:00 - 09:30 Admin" },
+        nonce,
+      ),
+    ]);
+    await h.settle();
+    expect(
+      h.service.registry.snapshot().schedules.filter((op) => op.id === nonce),
+    ).toHaveLength(1);
+    expect(h.texts.get(path)!.match(/Work #todoist/g)).toHaveLength(1);
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test.each([
+    ["- [ ] 09:00 - 09:30 Admin", "09:00 - 09:30 Admin"],
+    ["1. 09:00 - 09:30 Admin", "09:00 - 09:30 Admin"],
+  ])(
+    "nesting accepts existing checkbox or numbered parents: %s",
+    async (header, text) => {
+      const h = await harness();
+      const path = "Daily/2026-11-12.md";
+      h.file(path);
+      h.texts.set(
+        path,
+        `# Day planner\n${header}\n   - [ ] Existing\n- 10:00 - 11:00 Next\n`,
+      );
+      await h.scheduler.nest(root.id, { path, line: 1, text });
+      await h.settle();
+      const result = h.texts.get(path)!;
+      expect(result.indexOf("Existing")).toBeLessThan(
+        result.indexOf("Work #todoist"),
+      );
+      expect(result.indexOf("Work #todoist")).toBeLessThan(
+        result.indexOf("10:00 - 11:00 Next"),
+      );
+      const parsed = parseCaptureCandidates(path, result);
+      const inserted = parsed.find((item) => item.title.startsWith("Work"))!;
+      const nested = parsed.find((item) => item.title === "Child")!;
+      expect(nested.parentFrom).toBe(inserted.from);
+      expect(result.slice(0, result.indexOf(header))).toBe("# Day planner\n");
+      expect(result).toContain("- 10:00 - 11:00 Next\n");
+      h.scheduler.stop();
+      h.service.stop();
+    },
+  );
+
+  test("nesting under a nested timeline block retains grandchild depth and all three link identities", async () => {
+    const h = await harness();
+    const grandchild: ProviderTask = {
+      ...child,
+      id: "grandchild",
+      title: "Grandchild",
+      parentId: child.id,
+      order: 3,
+    };
+    h.tasks.set(grandchild.id, grandchild);
+    await h.service.refresh();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const originalLinks: Record<string, string> = Object.fromEntries(
+      Object.entries(h.service.registry.snapshot().links).flatMap(
+        ([uid, link]) => (link.taskId ? [[link.taskId, uid]] : []),
+      ),
+    );
+    const path = "Daily/2026-11-12.md";
+    const before =
+      "# Day planner\n- Outer\n  - 09:00 - 09:30 Admin\n    - [ ] Existing\n- 10:00 - 11:00 Next\n";
+    h.file(path);
+    h.texts.set(path, before);
+    await h.scheduler.nest(root.id, {
+      path,
+      line: 2,
+      text: "09:00 - 09:30 Admin",
+    });
+    await h.settle();
+    const result = h.texts.get(path)!;
+    const candidates = parseCaptureCandidates(path, result);
+    const movedRoot = candidates.find((item) => item.title.startsWith("Work"))!;
+    const movedChild = candidates.find((item) => item.title === "Child")!;
+    const movedGrandchild = candidates.find(
+      (item) => item.title === "Grandchild",
+    )!;
+    expect(movedChild.parentFrom).toBe(movedRoot.from);
+    expect(movedGrandchild.parentFrom).toBe(movedChild.from);
+    expect(result.indexOf("Existing")).toBeLessThan(
+      result.indexOf("Work #todoist"),
+    );
+    expect(result.indexOf("Grandchild")).toBeLessThan(
+      result.indexOf("10:00 - 11:00 Next"),
+    );
+    for (const [taskId, uid] of Object.entries(originalLinks))
+      expect(h.service.registry.snapshot().links[uid!]?.taskId).toBe(taskId);
+    expect(h.tasks.get(grandchild.id)?.parentId).toBe(child.id);
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test.each([true, false])(
+    "same-note nesting preserves source identities when source precedes destination: %s",
+    async (sourceFirst) => {
+      const h = await harness();
+      const grandchild: ProviderTask = {
+        ...child,
+        id: "grandchild",
+        title: "Grandchild",
+        parentId: child.id,
+        order: 3,
+      };
+      h.tasks.set(grandchild.id, grandchild);
+      await h.service.refresh();
+      await h.scheduler.schedule(root.id, interval);
+      await h.settle();
+      const projection = h.scheduler.projection(root.id)!;
+      const originalLinks: Record<string, string> = Object.fromEntries(
+        Object.entries(h.service.registry.snapshot().links).flatMap(
+          ([uid, link]) => (link.taskId ? [[link.taskId, uid]] : []),
+        ),
+      );
+      const path = projection.source.path;
+      const old = h.texts.get(path)!;
+      const target = "- 12:00 - 12:30 Admin\n";
+      const before = sourceFirst
+        ? old + target
+        : old.replace("# Day planner\n", `# Day planner\n${target}`);
+      h.texts.set(path, before);
+      const line = before
+        .split("\n")
+        .findIndex((value) => value === target.trimEnd());
+      await h.scheduler.nest(root.id, {
+        path,
+        line,
+        text: "12:00 - 12:30 Admin",
+      });
+      await h.settle();
+      const result = h.texts.get(path)!;
+      const rows = parseCaptureCandidates(path, result);
+      const movedRoot = rows.find((item) => item.title.startsWith("Work"))!;
+      const movedChild = rows.find((item) => item.title === "Child")!;
+      const movedGrandchild = rows.find((item) => item.title === "Grandchild")!;
+      expect(movedChild.parentFrom).toBe(movedRoot.from);
+      expect(movedGrandchild.parentFrom).toBe(movedChild.from);
+      for (const [taskId, uid] of Object.entries(originalLinks)) {
+        const link = h.service.registry.snapshot().links[uid!]!;
+        expect(link.taskId).toBe(taskId);
+        expect(
+          result.slice(
+            link.source.from,
+            link.source.from + link.source.raw.length,
+          ),
+        ).toBe(link.source.raw);
+      }
+      expect(h.scheduler.projection(root.id)?.linkUid).toBe(projection.linkUid);
+      expect(h.tasks.get(grandchild.id)?.parentId).toBe(child.id);
+      h.scheduler.stop();
+      h.service.stop();
+    },
+  );
+
+  test("moving an already nested tree keeps its links and supports bidirectional title and completion edits", async () => {
+    const h = await harness();
+    const grandchild: ProviderTask = {
+      ...child,
+      id: "grandchild",
+      title: "Grandchild",
+      parentId: child.id,
+      order: 3,
+    };
+    h.tasks.set(grandchild.id, grandchild);
+    await h.service.refresh();
+    const path = "Daily/2026-11-12.md";
+    h.file(path);
+    h.texts.set(
+      path,
+      "# Day planner\n- 09:00 - 09:30 First\n- 10:00 - 10:30 Second\n",
+    );
+    await h.scheduler.nest(root.id, {
+      path,
+      line: 1,
+      text: "09:00 - 09:30 First",
+    });
+    await h.settle();
+    const originalLinks: Record<string, string> = Object.fromEntries(
+      Object.entries(h.service.registry.snapshot().links).flatMap(
+        ([uid, link]) => (link.taskId ? [[link.taskId, uid]] : []),
+      ),
+    );
+    const line = h.texts
+      .get(path)!
+      .split("\n")
+      .findIndex((value) => value.includes("10:00 - 10:30 Second"));
+    await h.scheduler.nest(root.id, {
+      path,
+      line,
+      text: "10:00 - 10:30 Second",
+    });
+    await h.settle();
+    let text = h.texts.get(path)!;
+    const rows = parseCaptureCandidates(path, text);
+    const movedRoot = rows.find((item) => item.title.startsWith("Work"))!;
+    const movedChild = rows.find((item) => item.title === "Child")!;
+    expect(movedChild.parentFrom).toBe(movedRoot.from);
+    expect(rows.find((item) => item.title === "Grandchild")?.parentFrom).toBe(
+      movedChild.from,
+    );
+    for (const [taskId, uid] of Object.entries(originalLinks))
+      expect(h.service.registry.snapshot().links[uid!]?.taskId).toBe(taskId);
+    text = text.replace("- [ ] Work #todoist", "- [x] Local title #todoist");
+    h.texts.set(path, text);
+    await h.reconcile();
+    expect(h.tasks.get(root.id)).toMatchObject({
+      title: "Local title",
+      completed: true,
+    });
+    h.tasks.set(root.id, {
+      ...h.tasks.get(root.id)!,
+      title: "Remote title",
+      completed: false,
+    });
+    await h.service.refresh();
+    await h.reconcile();
+    expect(h.texts.get(path)).toContain("- [ ] Remote title #todoist");
+    expect(h.tasks.get(grandchild.id)?.parentId).toBe(child.id);
+    h.scheduler.stop();
+    h.service.stop();
+    h.reconciler.stop();
+  });
+
+  test("nesting rejects a stale parent and cannot place a task within its own subtree", async () => {
+    const h = await harness();
+    await h.scheduler.schedule(root.id, interval);
+    await h.settle();
+    const projection = h.scheduler.projection(root.id)!;
+    const path = projection.source.path;
+    const original = h.texts.get(path)!;
+    const lines = original.split(/\r?\n/);
+    const parentLine = lines.findIndex((line) =>
+      line.includes("Work #todoist"),
+    );
+    const childLine = lines.findIndex((line) => line.includes("Child"));
+    const writes = h.apply.mock.calls.length;
+    await expect(
+      h.scheduler.nest(root.id, {
+        path,
+        line: parentLine,
+        text: "Not the current header",
+      }),
+    ).rejects.toThrow();
+    await expect(
+      h.scheduler.nest(root.id, {
+        path,
+        line: parentLine,
+        text: lines[parentLine]!.replace(/^\s*[-*+]\s+(?:\[[^\]]\]\s*)?/, ""),
+      }),
+    ).rejects.toThrow();
+    await expect(
+      h.scheduler.nest(root.id, {
+        path,
+        line: childLine,
+        text: lines[childLine]!.replace(/^\s*[-*+]\s+(?:\[[^\]]\]\s*)?/, ""),
+      }),
+    ).rejects.toThrow();
+    expect(h.texts.get(path)).toBe(original);
+    expect(h.scheduler.projection(root.id)?.linkUid).toBe(projection.linkUid);
+    expect(h.apply).toHaveBeenCalledTimes(writes);
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("a changed target after a saved nest plan stays untouched and the operation remains recoverable", async () => {
+    const h = await harness();
+    const path = "Daily/2026-11-12.md";
+    const before = "# Day planner\n- 09:00 - 09:30 Admin\n";
+    h.file(path);
+    h.texts.set(path, before);
+    h.setFailPath(path);
+    const operation = await h.scheduler.nest(root.id, {
+      path,
+      line: 1,
+      text: "09:00 - 09:30 Admin",
+    });
+    await h.settle();
+    const changed = "# Day planner\n- 09:00 - 09:30 Changed\n";
+    h.texts.set(path, changed);
+    h.setFailPath("");
+    await h.restart();
+    await h.settle();
+    expect(h.texts.get(path)).toBe(changed);
+    expect(
+      h.service.registry
+        .snapshot()
+        .schedules.find((op) => op.id === operation.id)?.phase,
+    ).not.toBe("complete");
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
   test("resolving a provider date conflict moves its saved schedule without replaying that command", async () => {
     const h = await harness();
     h.tasks.set(root.id, {

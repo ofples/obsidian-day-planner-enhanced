@@ -9,7 +9,67 @@ import {
   taskAccountSettings,
   type TaskCaptureSettings,
 } from "./capture-settings";
-import type { ProviderTask, TaskSnapshot } from "./types";
+import { TaskReadError, type ProviderTask, type TaskSnapshot } from "./types";
+
+export function subtaskInsertTarget(
+  before: string,
+  target: { path: string; line: number; text: string },
+) {
+  const pending: Nodes[] = [fromMarkdown(before)];
+  while (pending.length) {
+    const node = pending.pop()!;
+    if (
+      node.type === "listItem" &&
+      node.position?.start.line === target.line + 1
+    ) {
+      const from = node.position.start.offset!;
+      const offset = node.position.end.offset!;
+      const raw = before.slice(from, offset);
+      const first = raw.split(/\r?\n/)[0]!;
+      const text = first
+        .replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?/, "")
+        .trim();
+      const lineStart = before.lastIndexOf("\n", from - 1) + 1;
+      if (
+        text !== target.text.split(/\r?\n/)[0]?.trim() ||
+        !getTimeRangeMatch(first) ||
+        !/^[ \t]*$/.test(before.slice(lineStart, from)) ||
+        !taskDropAllowed(before, from)
+      )
+        break;
+      return {
+        path: target.path,
+        offset,
+        before,
+        parent: { path: target.path, from, raw, title: text },
+      };
+    }
+    if ("children" in node) pending.push(...node.children);
+  }
+  throw new TaskReadError(
+    "This block changed. Refresh the timeline before adding a subtask.",
+  );
+}
+
+/** Source ranges start at the list marker, while continuation lines retain
+ * their original indentation. Move the whole subtree with those offsets. */
+export function indentTaskSubtree(
+  raw: string,
+  sourceIndent: string,
+  destinationIndent: string,
+  newline: string,
+) {
+  return raw
+    .split(/\r?\n/)
+    .map(
+      (line, index) =>
+        destinationIndent +
+        (index > 0 && line.startsWith(sourceIndent)
+          ? line.slice(sourceIndent.length)
+          : line),
+    )
+    .join(newline);
+}
 
 export function taskInlineMarkdown(title: string) {
   let text = toMarkdown({

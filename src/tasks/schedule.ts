@@ -28,7 +28,12 @@ import {
 } from "./operations";
 import { rewriteTaskNote } from "./reconcile-markdown";
 import type { TaskLink, TaskRegistryState } from "./registry";
-import { newTaskMarkdown, scheduleNoteTitle } from "./schedule-markdown";
+import {
+  indentTaskSubtree,
+  newTaskMarkdown,
+  scheduleNoteTitle,
+  subtaskInsertTarget,
+} from "./schedule-markdown";
 import {
   scheduleIntervalSchema,
   intervalForTaskDate,
@@ -139,6 +144,40 @@ export class TaskScheduler {
     id: string = crypto.randomUUID(),
   ) {
     return this.enqueue(taskId, { kind: "insert", ...target }, id);
+  }
+
+  async nest(
+    taskId: string,
+    parent: { path: string; line: number; text: string },
+    id: string = crypto.randomUUID(),
+  ) {
+    await this.host.flush([parent.path]);
+    const before = await this.host.read(parent.path);
+    const repeated = this.service.registry
+      .snapshot()
+      .schedules.find((operation) => operation.id === id);
+    if (repeated) {
+      if (
+        repeated.task.id !== taskId ||
+        repeated.target.kind !== "insert" ||
+        repeated.target.parent?.path !== parent.path ||
+        repeated.target.before.slice(0, repeated.target.parent.from).split("\n")
+          .length !==
+          parent.line + 1 ||
+        repeated.target.parent.title !== parent.text.split(/\r?\n/)[0]?.trim()
+      )
+        throw new TaskReadError(
+          "This saved drop belongs to another task block.",
+        );
+      return this.enqueue(taskId, repeated.target, id);
+    }
+    if (before === null)
+      throw new TaskReadError("The destination note is missing.");
+    return this.enqueue(
+      taskId,
+      { kind: "insert", ...subtaskInsertTarget(before, parent) },
+      id,
+    );
   }
 
   unschedule(taskId: string) {
@@ -348,9 +387,10 @@ export class TaskScheduler {
 
   private async enqueue(
     taskId: string,
-    target: ScheduleOperation["target"],
+    input: ScheduleOperation["target"],
     id: string,
   ) {
+    const target = scheduleOperationSchema.shape.target.parse(input);
     await this.pending;
     const browser = get(this.service.state),
       snapshot = browser.snapshot;
@@ -436,6 +476,21 @@ export class TaskScheduler {
       );
     const linked = projection ? state.links[projection.linkUid] : links[0]?.[1];
     const previous = linked?.source ?? projection?.source;
+    if (
+      target.kind === "insert" &&
+      target.parent &&
+      previous?.path === target.path
+    ) {
+      const from = locateSource(target.before, previous);
+      if (
+        from < 0 ||
+        (target.parent.from >= from &&
+          target.parent.from < from + previous.raw.length)
+      )
+        throw new TaskReadError(
+          "A task cannot be added inside itself or its subtasks.",
+        );
+    }
     const linkUid =
       projection?.linkUid ??
       links[0]?.[0] ??
@@ -1366,10 +1421,33 @@ export class TaskScheduler {
     path: string,
     from: number,
     raw: string,
+    nesting?: {
+      sourceText: string;
+      destinationText: string;
+      sourceIndent: string;
+      indent: string;
+    },
   ) {
-    const parsed = parseCaptureCandidates(path, raw);
+    const previousFrom =
+      operation.previous && nesting
+        ? locateSource(nesting.sourceText, operation.previous)
+        : 0;
+    const parsed = nesting
+      ? parseCaptureCandidates(path, nesting.destinationText).filter(
+          (candidate) =>
+            candidate.from >= from && candidate.to <= from + raw.length,
+        )
+      : parseCaptureCandidates(path, raw);
     const old = operation.previous
-      ? parseCaptureCandidates(operation.previous.path, operation.previous.raw)
+      ? parseCaptureCandidates(
+          operation.previous.path,
+          nesting?.sourceText ?? operation.previous.raw,
+        ).filter(
+          (candidate) =>
+            !nesting ||
+            (candidate.from >= previousFrom &&
+              candidate.to <= previousFrom + operation.previous!.raw.length),
+        )
       : [];
     const state = this.service.registry.snapshot();
     return parsed.flatMap((candidate, index) => {
@@ -1381,13 +1459,24 @@ export class TaskScheduler {
               (child) => child.id === operation.generatedTaskIds[index],
             );
       if (task && !uid) uid = crypto.randomUUID().replace(/-/g, "");
-      if (!task && operation.previous && old[index]?.raw === candidate.raw) {
+      const oldRaw = old[index]?.raw;
+      const comparable =
+        nesting && oldRaw
+          ? indentTaskSubtree(
+              oldRaw,
+              nesting.sourceIndent,
+              nesting.indent,
+              raw.includes("\r\n") ? "\r\n" : "\n",
+            ).trimStart()
+          : oldRaw;
+      if (!task && operation.previous && comparable === candidate.raw) {
         const matched = Object.entries(state.links).find(
           ([, link]) =>
             link.provider === operation.provider &&
             link.accountId === operation.accountId &&
             link.source.path === operation.previous!.path &&
-            link.source.from === operation.previous!.from + old[index]!.from &&
+            link.source.from ===
+              operation.previous!.from + old[index]!.from - previousFrom &&
             link.source.raw === old[index]!.raw,
         );
         if (matched?.[1].base) {
@@ -1402,7 +1491,7 @@ export class TaskScheduler {
               task,
               source: {
                 path,
-                from: from + candidate.from,
+                from: nesting ? candidate.from : from + candidate.from,
                 raw: candidate.raw,
                 title: candidate.title,
               },
@@ -1423,7 +1512,10 @@ export class TaskScheduler {
         " " +
         lines[0]!.slice(range.endIndex).trimStart()
       ).trimEnd();
-    const raw = lines.join(operation.raw.includes("\r\n") ? "\r\n" : "\n");
+    let raw = lines.join(operation.raw.includes("\r\n") ? "\r\n" : "\n");
+    let nesting:
+      | { sourceText: string; sourceIndent: string; indent: string }
+      | undefined;
     const edits: NonNullable<ScheduleOperation["plan"]>["edits"] = [];
     const target = operation.target;
     const path =
@@ -1433,6 +1525,41 @@ export class TaskScheduler {
       throw new TaskProjectionConflict(
         "The destination note is missing. Restore it before moving this task.",
       );
+    if (target.kind === "insert" && target.parent) {
+      const parent = target.parent;
+      if (
+        parent.path !== path ||
+        locateSource(before, parent) !== parent.from ||
+        target.offset !== parent.from + parent.raw.length
+      )
+        throw new TaskProjectionConflict(
+          "The parent block changed before adding its subtask.",
+        );
+      const lineStart = before.lastIndexOf("\n", parent.from - 1) + 1;
+      const indent =
+        before.slice(lineStart, parent.from) +
+        parent.raw.match(/^(?:[-*+]|\d+[.)])[ \t]+/)![0].replace(/[^\t]/g, " ");
+      const source = operation.previous
+        ? operation.previous.path === path
+          ? before
+          : await this.host.read(operation.previous.path)
+        : "";
+      const sourceFrom =
+        operation.previous && source !== null
+          ? locateSource(source, operation.previous)
+          : 0;
+      if (source === null || sourceFrom < 0)
+        throw new TaskProjectionConflict(
+          "The linked task changed before adding it as a subtask.",
+        );
+      const sourceIndent = source.slice(
+        source.lastIndexOf("\n", sourceFrom - 1) + 1,
+        sourceFrom,
+      );
+      const newline = before.includes("\r\n") ? "\r\n" : "\n";
+      raw = indentTaskSubtree(raw, sourceIndent, indent, newline);
+      nesting = { sourceText: source, sourceIndent, indent };
+    }
     let after = before,
       from = operation.previous?.from ?? 0;
     if (target.kind === "insert") {
@@ -1455,8 +1582,9 @@ export class TaskScheduler {
           before.slice(index + operation.previous.raw.length);
         if (offset > index) offset -= operation.previous.raw.length;
       }
-      const prefix = offset && after[offset - 1] !== "\n" ? "\n" : "";
-      const suffix = after[offset] === "\n" ? "" : "\n";
+      const newline = before.includes("\r\n") ? "\r\n" : "\n";
+      const prefix = offset && after[offset - 1] !== "\n" ? newline : "";
+      const suffix = /^\r?\n/.test(after.slice(offset)) ? "" : newline;
       from = offset + prefix.length;
       after =
         after.slice(0, offset) + prefix + raw + suffix + after.slice(offset);
@@ -1491,7 +1619,13 @@ export class TaskScheduler {
     }
     return {
       edits,
-      links: this.planLinks(operation, path, from, raw),
+      links: this.planLinks(
+        operation,
+        path,
+        from,
+        raw,
+        nesting && { ...nesting, destinationText: after },
+      ),
       interval:
         operation.unlink || operation.repairCaptureTag
           ? (operation.previousInterval ?? null)

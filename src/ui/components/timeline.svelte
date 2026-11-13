@@ -92,8 +92,12 @@
     taskScheduler?.drag.state ?? readable<ProviderTask | null>(null);
   let taskDropPreview: { start: Moment; end: Moment; title: string } | null =
     $state(null);
+  let subtaskDropTarget: string | null = $state(null);
   $effect(() => {
-    if (!$draggedTask) taskDropPreview = null;
+    if (!$draggedTask) {
+      taskDropPreview = null;
+      subtaskDropTarget = null;
+    }
   });
 
   function taskIntervalAt(event: DragEvent) {
@@ -126,7 +130,51 @@
       return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
+    subtaskDropTarget = null;
     taskDropPreview = taskIntervalAt(event);
+  }
+
+  function subtaskDragOver(event: DragEvent, id: string) {
+    if (
+      !event.dataTransfer?.types.includes(taskDragMime) ||
+      !taskScheduler?.drag.current()
+    )
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    taskDropPreview = null;
+    subtaskDropTarget = id;
+  }
+
+  async function dropSubtask(
+    event: DragEvent,
+    block: {
+      path: string;
+      position: { start: { line: number } };
+      text: string;
+    },
+  ) {
+    if (!event.dataTransfer?.types.includes(taskDragMime) || !taskScheduler)
+      return;
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      const drop = taskScheduler.drag.accept(event.dataTransfer);
+      await taskScheduler.nest(
+        drop.task.id,
+        { path: block.path, line: block.position.start.line, text: block.text },
+        drop.id,
+      );
+    } catch (error) {
+      new Notice(
+        error instanceof Error ? error.message : "Could not add this subtask.",
+      );
+    } finally {
+      taskScheduler.drag.cancel();
+      subtaskDropTarget = null;
+      taskDropPreview = null;
+    }
   }
 
   async function dropTask(event: DragEvent) {
@@ -464,6 +512,23 @@
                 {getBlockProps(timeBlock, settingsSignal.current)}
               {/snippet}
             </UnscheduledTimeBlock>
+            {#if $draggedTask && (timeBlock.source === "dailyNoteDate" || timeBlock.source === "tasksPluginProp")}
+              <div
+                class="task-subtask-drop-target"
+                class:active={subtaskDropTarget === timeBlock.id}
+                aria-label="Add task as subtask"
+                ondragenter={(event) => subtaskDragOver(event, timeBlock.id)}
+                ondragleave={() => {
+                  if (subtaskDropTarget === timeBlock.id)
+                    subtaskDropTarget = null;
+                }}
+                ondragover={(event) => subtaskDragOver(event, timeBlock.id)}
+                ondrop={(event) => dropSubtask(event, timeBlock)}
+                role="group"
+              >
+                <span>Add as subtask</span>
+              </div>
+            {/if}
           </PositionedTimeBlock>
         {/each}
       </div>
@@ -508,6 +573,46 @@
 <!-- eslint-enable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Re-enable scorecard compatibility suppressions after this file. -->
 
 <style>
+  .task-subtask-drop-target {
+    position: absolute;
+    z-index: 20;
+    top: var(--time-block-top);
+    left: calc(var(--time-block-left) + var(--time-block-width) / 2);
+
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+
+    box-sizing: border-box;
+    width: calc(var(--time-block-width) / 2);
+    height: var(--time-block-height);
+    padding: 0 6px;
+
+    background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
+    border: 1px dashed var(--interactive-accent);
+  }
+
+  .task-subtask-drop-target.active {
+    background: color-mix(in srgb, var(--interactive-accent) 30%, transparent);
+    outline: 1px solid var(--interactive-accent);
+  }
+
+  .task-subtask-drop-target span {
+    pointer-events: none;
+
+    overflow: hidden;
+
+    padding: 1px 4px;
+
+    font-size: var(--font-smallest);
+    color: var(--text-normal);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    background: var(--background-primary);
+    border-radius: 3px;
+  }
+
   .task-drop-preview {
     pointer-events: none;
 

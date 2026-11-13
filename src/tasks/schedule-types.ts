@@ -77,6 +77,7 @@ export const scheduleOperationSchema = z
         path: z.string(),
         offset: z.number().int().nonnegative(),
         before: z.string(),
+        parent: taskSourceSchema.optional(),
       }),
       z.object({ kind: z.literal("unschedule") }),
       z.object({
