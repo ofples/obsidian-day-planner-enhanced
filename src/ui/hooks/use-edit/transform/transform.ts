@@ -4,6 +4,7 @@ import { isNotVoid } from "typed-assert";
 import type { DayPlannerSettings } from "../../../../settings";
 import { type EditableTimeBlock } from "../../../../time-block-types";
 import type { PointerDateTime } from "../../../../types";
+import { containsLockedTask, isLocked } from "../../../../util/task-lock";
 import * as t from "../../../../util/time-block-utils";
 import { EditMode, type EditOperation } from "../types";
 
@@ -56,6 +57,7 @@ export function transform(
   settings: DayPlannerSettings,
   pointerDateTime: PointerDateTime,
 ) {
+  if (isLocked(operation.timeBlock)) return baseline;
   const result = baseline.slice();
 
   const isInBaseline = baseline.find(
@@ -74,6 +76,7 @@ export function transform(
   );
 
   if (pointerDateTime.type === "date") {
+    if (containsLockedTask(operation.timeBlock)) return baseline;
     // Untimed plain list items are not indexed as all-day plan entries, so
     // persist converted blocks as tasks while preserving checkbox statuses.
     const needsTaskStatus =
@@ -121,6 +124,20 @@ export function transform(
     getEditInteraction(operation.mode),
     settings.minimalDurationMinutes * 60,
   );
+
+  // A push or shrink is atomic: never alter a locked neighbor indirectly.
+  if (
+    transformed.some((block) => {
+      const original = idToTimeBlockLookup.get(block.id);
+      return (
+        original &&
+        ((containsLockedTask(original) &&
+          block.start !== original.startTime.unix()) ||
+          (isLocked(original) && block.end !== t.getEndTime(original).unix()))
+      );
+    })
+  )
+    return baseline;
 
   return transformed.map((it) => {
     const timeBlock = idToTimeBlockLookup.get(it.id);

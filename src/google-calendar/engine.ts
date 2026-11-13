@@ -14,6 +14,147 @@ export interface SyncResult {
   pulled: number;
   deleted: number;
   conflicts: string[];
+  reviewable: CalendarConflict[];
+  missingLocal: MissingLocalConflict[];
+}
+
+export interface MissingLocalConflict {
+  uid: string;
+  path: string;
+  remote: GoogleEvent;
+  remoteSnapshot: CalendarSnapshot;
+  base: CalendarSnapshot;
+}
+
+/** Explicitly resolve a missing local block without weakening automatic deletion. */
+export async function resolveMissingLocalConflict(
+  conflict: MissingLocalConflict,
+  choice: "restore" | "remove",
+  state: CalendarSyncState,
+  api: CalendarApi,
+  notes: CalendarNotes,
+  save: () => Promise<void>,
+) {
+  const record = state.records[conflict.uid];
+  if (
+    !record ||
+    record.deleted ||
+    record.pendingDelete ||
+    record.path !== conflict.path ||
+    record.eventId !== conflict.remote.id ||
+    !sameSnapshot(record.base, conflict.base)
+  )
+    throw new Error("This conflict changed. Sync again before resolving it.");
+  const assertMissing = async () => {
+    if ((await notes.scan()).some((block) => block.uid === conflict.uid))
+      throw new Error(
+        "The note task has returned. Sync again before resolving it.",
+      );
+  };
+  await assertMissing();
+  const remote = await api.get(record.eventId);
+  if (
+    !remote ||
+    !remote.etag ||
+    remote.etag !== conflict.remote.etag ||
+    !isOwned(remote, state.namespace, conflict.uid)
+  )
+    throw new Error(
+      "Google changed or ownership could not be verified. Sync again.",
+    );
+  const snapshot = snapshotOf(remote, "");
+  if (!snapshot || !sameSnapshot(snapshot, conflict.remoteSnapshot))
+    throw new Error("Google changed. Sync again before resolving it.");
+  await assertMissing();
+  if (choice === "restore") {
+    const restored = await notes.write(
+      conflict.uid,
+      snapshot,
+      undefined,
+      state.identities?.[conflict.uid]?.raw || undefined,
+    );
+    record.path = restored.path;
+    record.base = snapshot;
+    await save();
+    return;
+  }
+  record.pendingDelete = true;
+  await save();
+  try {
+    await assertMissing();
+  } catch (error) {
+    delete record.pendingDelete;
+    await save();
+    throw error;
+  }
+  await api.remove(remote);
+  record.deleted = true;
+  delete record.pendingDelete;
+  await save();
+}
+
+export interface CalendarConflict {
+  uid: string;
+  local: LocalBlock;
+  remote: GoogleEvent;
+  remoteSnapshot: CalendarSnapshot;
+  base: CalendarSnapshot;
+}
+
+/** Resolve only the exact versions shown to the user; never advance a stale baseline. */
+export async function resolveCalendarConflict(
+  conflict: CalendarConflict,
+  choice: "note" | "google",
+  state: CalendarSyncState,
+  api: CalendarApi,
+  notes: CalendarNotes,
+  save: () => Promise<void>,
+) {
+  const record = state.records[conflict.uid];
+  if (
+    !record ||
+    record.deleted ||
+    record.eventId !== conflict.remote.id ||
+    !sameSnapshot(record.base, conflict.base)
+  )
+    throw new Error("This conflict changed. Sync again before resolving it.");
+  const blocks = await notes.scan();
+  const local = blocks.find((block) => block.uid === conflict.uid);
+  if (
+    !local ||
+    local.path !== conflict.local.path ||
+    local.raw !== conflict.local.raw ||
+    !(await notes.isUnchanged(local))
+  )
+    throw new Error("The note changed. Sync again before resolving it.");
+  const remote = await api.get(record.eventId);
+  if (
+    !remote ||
+    remote.etag !== conflict.remote.etag ||
+    !isOwned(remote, state.namespace, conflict.uid)
+  )
+    throw new Error(
+      "Google changed or ownership could not be verified. Sync again.",
+    );
+  const snapshot = snapshotOf(remote, "");
+  if (!snapshot || !sameSnapshot(snapshot, conflict.remoteSnapshot))
+    throw new Error("Google changed. Sync again before resolving it.");
+  if (!(await notes.isUnchanged(local)))
+    throw new Error("The note changed. Sync again before resolving it.");
+  if (choice === "note") {
+    const updated = await api.update(remote, local.snapshot);
+    const verified = snapshotOf(updated, "");
+    if (!verified || !sameSnapshot(verified, local.snapshot))
+      throw new Error(
+        "Google did not confirm the selected note version. Sync again.",
+      );
+    record.base = verified;
+  } else {
+    const updated = await notes.write(conflict.uid, snapshot, local);
+    record.path = updated.path;
+    record.base = snapshot;
+  }
+  await save();
 }
 
 /** Recover an owned write's baseline before a newer projection supersedes it. */
@@ -108,6 +249,8 @@ export async function syncCalendar({
     pulled: 0,
     deleted: 0,
     conflicts: [],
+    reviewable: [],
+    missingLocal: [],
   };
   // Resolve a lost DELETE response before assigning identities. A block
   // restored in the meantime can then be exported with a fresh ID.
@@ -234,10 +377,26 @@ export async function syncCalendar({
         conflict(
           "local deletion is disabled or the removed block could not be verified",
         );
+        if (owned && remote.etag)
+          result.missingLocal.push({
+            uid,
+            path: record.path,
+            remote,
+            remoteSnapshot,
+            base: { ...record.base },
+          });
         continue;
       }
       if (remoteChanged) {
         conflict("note block was removed while Google was edited");
+        if (owned && remote.etag)
+          result.missingLocal.push({
+            uid,
+            path: record.path,
+            remote,
+            remoteSnapshot,
+            base: { ...record.base },
+          });
         continue;
       }
       record.pendingDelete = true;
@@ -257,6 +416,14 @@ export async function syncCalendar({
       conflict(
         "both sides changed; make title and times match on both sides, then sync again",
       );
+      if (owned)
+        result.reviewable.push({
+          uid,
+          local,
+          remote,
+          remoteSnapshot,
+          base: { ...record.base },
+        });
       continue;
     }
     if (localChanged && !remoteChanged) {

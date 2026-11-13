@@ -50,6 +50,11 @@ function normalizeDocument(value: string) {
     .trim();
 }
 
+function struckCancellation(value: string) {
+  const match = value.trim().match(/^(.*?)(\s+\^[\w-]+)?$/);
+  return `~~${match?.[1] ?? value.trim()}~~${match?.[2] ?? ""}`;
+}
+
 function untrackedTasks(text: string) {
   return text
     .split(/\r?\n/)
@@ -105,7 +110,11 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       const inWindow =
         day.valueOf() >= Date.parse(this.timeMin) &&
         day.valueOf() < Date.parse(this.timeMax);
-      const cleaned = stripSyncMarkers(text);
+      const cleaned = stripSyncMarkers(text).replace(
+        /^([ \t]*[-*+][ \t]+\[-\][ \t]*)Cancelled in Google Calendar:[ \t]*([^\r\n]+)$/gm,
+        (_line, prefix: string, value: string) =>
+          `${prefix}${struckCancellation(value)}`,
+      );
       scannedDocuments[file.path] = cleaned;
       const legacy = parseBlocks(text, date, this.settings);
       const parsed = parseBlocks(cleaned, date, this.settings);
@@ -314,8 +323,11 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     uid: string,
     snapshot: CalendarSnapshot,
     previous?: LocalBlock,
+    templateRaw?: string,
   ): Promise<LocalBlock> {
-    return this.applyWrite(await this.prepareWrite(uid, snapshot, previous));
+    return this.applyWrite(
+      await this.prepareWrite(uid, snapshot, previous, false, templateRaw),
+    );
   }
 
   async prepareWrite(
@@ -474,7 +486,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       const range = first
         .replace(syncMarker, "")
         .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?/, "");
-      lines[0] = `- [-] Cancelled in Google Calendar: ${range.trim()}`;
+      lines[0] = `- [-] ${struckCancellation(range)}`;
       return (
         text.slice(0, index) +
         lines.join(block.raw.includes("\r\n") ? "\r\n" : "\n") +

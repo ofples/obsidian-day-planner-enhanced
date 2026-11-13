@@ -2,6 +2,10 @@
 .day-planner-tasks-view {
   container-type: inline-size;
   overflow: hidden;
+  padding: 0 !important;
+}
+
+.workspace-leaf-content[data-type="planner-tasks"] > .view-content {
   padding: 0;
 }
 
@@ -972,6 +976,7 @@
 .dp-task-panel .task-state-summary {
   display: grid;
   gap: 4px;
+
   padding: 12px;
 
   background: var(--tp-surface);
@@ -1069,7 +1074,9 @@
   display: flex;
   gap: 8px;
   align-items: center;
+
   margin: 12px 0 0;
+
   color: var(--tp-warning);
 }
 

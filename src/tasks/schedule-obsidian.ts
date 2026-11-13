@@ -29,6 +29,18 @@ export function createTaskScheduler(
       }
     },
     settings: () => get(settings).taskCapture,
+    linkedSync: () => get(settings).experimentalTodoistSync === true,
+    readImports: async () => {
+      const path = `${plugin.manifest.dir}/task-imports.json`;
+      return (await app.vault.adapter.exists(path))
+        ? app.vault.adapter.read(path)
+        : null;
+    },
+    writeImports: (value) =>
+      app.vault.adapter.write(
+        `${plugin.manifest.dir}/task-imports.json`,
+        value,
+      ),
     reveal: async (source) => {
       const file = app.vault.getFileByPath(source.path);
       const text = file ? await app.vault.read(file) : null;
@@ -48,6 +60,7 @@ export function createTaskScheduler(
   let ready = false;
   app.workspace.onLayoutReady(() => {
     ready = true;
+    void scheduler.importer.initialize();
     void scheduler.resume();
   });
   let previous = get(service.state).snapshot;

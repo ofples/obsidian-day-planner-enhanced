@@ -2,7 +2,14 @@ import "./styles.scss";
 
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
-import { derived, get, type Readable, type Writable } from "svelte/store";
+import {
+  derived,
+  get,
+  readable,
+  writable,
+  type Readable,
+  type Writable,
+} from "svelte/store";
 import { isNotVoid } from "typed-assert";
 
 import {
@@ -79,9 +86,14 @@ import { registerTaskCalendarDisplay } from "./tasks/calendar-display";
 import { taskCalendarPreviews } from "./tasks/calendar-preview";
 import type { TaskCapture } from "./tasks/capture";
 import { createTaskCapture } from "./tasks/capture-obsidian";
+import {
+  parseCaptureCandidates,
+  type CaptureCandidate,
+} from "./tasks/capture-parser";
 import type { TaskDeletionController } from "./tasks/deletion";
 import { createTaskDeletionController } from "./tasks/deletion-obsidian";
 import { taskDragMime } from "./tasks/drag";
+import { NoteTaskDrag } from "./tasks/note-drag";
 import { createTaskService } from "./tasks/obsidian";
 import type { TaskReconciler } from "./tasks/reconcile";
 import { createTaskReconciler } from "./tasks/reconcile-obsidian";
@@ -91,6 +103,7 @@ import {
   taskDropUsesPlanner,
 } from "./tasks/schedule-markdown";
 import { createTaskScheduler } from "./tasks/schedule-obsidian";
+import { taskOccurrenceKey } from "./tasks/schedule-types";
 import type { TaskService } from "./tasks/service";
 import { createGetTasksApi } from "./tasks-plugin";
 import type { EditableTimeBlock, RemoteTimeBlock } from "./time-block-types";
@@ -103,6 +116,7 @@ import { EditMode } from "./ui/hooks/use-edit/types";
 import { useTimeBlocks } from "./ui/hooks/use-time-blocks";
 import { createLogEntryEditModalOpener } from "./ui/log-entry-edit-modal";
 import MultiDayView from "./ui/multi-day-view";
+import { PlannerConnectionsModal } from "./ui/planner-connections-modal";
 import { DayPlannerReleaseNotesView } from "./ui/release-notes";
 import { ScheduleExportModal } from "./ui/schedule-export-modal";
 import { DayPlannerSettingsTab } from "./ui/settings-tab";
@@ -141,6 +155,8 @@ export default class DayPlanner extends Plugin {
   taskScheduler?: TaskScheduler;
   taskReconciler?: TaskReconciler;
   taskDeleter?: TaskDeletionController;
+  private noteTaskDrag?: NoteTaskDrag;
+  private noteTaskCandidates: Readable<CaptureCandidate[]> = readable([]);
   getSettings!: () => DayPlannerSettings;
   private settingsStore!: Writable<DayPlannerSettings>;
   private workspaceFacade!: WorkspaceFacade;
@@ -280,10 +296,40 @@ export default class DayPlanner extends Plugin {
     });
 
     this.initSettingsStore({ initialSettings, dispatch });
-    this.taskService = createTaskService(this);
+    this.taskService = createTaskService(
+      this,
+      () => this.getSettings().experimentalTodoistSync === true,
+    );
     let tasksReady = false;
     try {
       await this.taskService.initialize();
+      this.noteTaskDrag = new NoteTaskDrag(
+        this.taskService.registry.snapshot().namespace,
+      );
+      this.register(() => this.noteTaskDrag?.cancel());
+      this.noteTaskCandidates = readable<CaptureCandidate[]>([], (set) => {
+        let previous: unknown;
+        let timer: ReturnType<typeof setTimeout>;
+        const publish = () => {
+          const entries = store.getState().tracker.captureEntries;
+          if (entries !== previous) {
+            previous = entries;
+            set(Object.values(entries).flat());
+          }
+        };
+        publish();
+        const stop = store.subscribe(() => {
+          clearTimeout(timer);
+          timer = setTimeout(publish, 50);
+        });
+        return () => {
+          clearTimeout(timer);
+          stop();
+        };
+      });
+      this.register(
+        this.settingsStore.subscribe(() => this.taskService.publish()),
+      );
       this.taskCapture = createTaskCapture(
         this,
         this.taskService,
@@ -413,6 +459,9 @@ export default class DayPlanner extends Plugin {
             this.settingsStore,
             this.googleCalendarSync,
             this.taskDeleter,
+            this.noteTaskCandidates,
+            this.noteTaskDrag,
+            () => this.openConnections(),
           ),
       );
     this.addCommand({
@@ -483,6 +532,7 @@ export default class DayPlanner extends Plugin {
             return;
           }
           if (
+            this.getSettings().experimentalTodoistSync &&
             scheduler.projection(task.id)?.interval &&
             !(await askForConfirmation({
               app: this.app,
@@ -492,7 +542,7 @@ export default class DayPlanner extends Plugin {
             }))
           )
             return;
-          await scheduler.insert(
+          await scheduler.insertFromPane(
             task.id,
             { path: view.file.path, offset, before },
             id,
@@ -588,6 +638,14 @@ export default class DayPlanner extends Plugin {
       this.taskService,
       this.googleCalendarSync,
       this.settingsStore,
+    ).open();
+  }
+
+  openConnections() {
+    new PlannerConnectionsModal(
+      this.app,
+      this.taskService,
+      this.googleCalendarSync,
     ).open();
   }
 
@@ -948,15 +1006,50 @@ export default class DayPlanner extends Plugin {
             this.taskScheduler.state,
             this.settingsStore,
             localTimeBlocks,
+            this.taskScheduler.importer.imports,
           ],
-          ([remote, browser, _schedules, settings, local]) => [
+          ([remote, browser, _schedules, settings, local, imports]) => [
             ...remote,
             ...taskCalendarPreviews(
               browser,
               this.taskService.registry.snapshot(),
               settings,
               local,
-            ),
+            ).filter((block) => {
+              const task = browser.snapshot?.tasks.find(
+                (item) => item.id === block.taskSource?.taskId,
+              );
+              if (!task || !browser.snapshot) return true;
+              const key = JSON.stringify([
+                browser.snapshot.provider,
+                browser.snapshot.account.id,
+                task.id,
+                taskOccurrenceKey(task),
+              ]);
+              const saved = imports[key];
+              if (!saved) return true;
+              const source = saved.uid
+                ? this.googleCalendarSync.importedSource(saved.uid)
+                : saved;
+              if (!source) return true;
+              const matches =
+                store
+                  .getState()
+                  .tracker.captureEntries[
+                    source.path
+                  ]?.filter((item) => item.raw === source.raw) ?? [];
+              const candidate = matches.length === 1 ? matches[0] : undefined;
+              return (
+                !candidate ||
+                !local.some(
+                  (item) =>
+                    item.source !== "unwritten" &&
+                    item.path === source.path &&
+                    candidate.from >= item.position.start.offset &&
+                    candidate.from < item.position.end.offset,
+                )
+              );
+            }),
           ],
         )
       : remoteTimeBlocks;
@@ -1088,11 +1181,19 @@ export default class DayPlanner extends Plugin {
         sourcePath,
       });
 
+    const manualSyncing = writable(false);
+    const googleSyncing = derived(
+      [manualSyncing, this.googleCalendarSync.syncing],
+      (values) => values.some(Boolean),
+    );
     const reSync = () => {
+      if (get(manualSyncing)) return;
+      manualSyncing.set(true);
       dispatch(icalRefreshRequested());
       void (async () => {
         if (this.taskCapture && this.taskService.registry) {
-          await this.taskCapture.scan();
+          if (this.getSettings().experimentalTodoistSync)
+            await this.taskCapture.scan();
           await this.taskService.refresh(true);
           await this.taskDeleter?.resume();
           await this.taskScheduler?.resume();
@@ -1101,14 +1202,16 @@ export default class DayPlanner extends Plugin {
         if (this.getSettings().googleCalendar.clientId)
           await this.googleCalendarSync.run();
         await this.taskReconciler?.scan();
-      })().catch(
-        (error: unknown) =>
-          new Notice(
-            error instanceof Error
-              ? error.message
-              : "Could not finish calendar and task sync.",
-          ),
-      );
+      })()
+        .catch(
+          (error: unknown) =>
+            new Notice(
+              error instanceof Error
+                ? error.message
+                : "Could not finish calendar and task sync.",
+            ),
+        )
+        .finally(() => manualSyncing.set(false));
     };
     const openNestedItemsEditModal = createNestedItemsEditModalCreator(
       this.app,
@@ -1125,6 +1228,47 @@ export default class DayPlanner extends Plugin {
     };
 
     const defaultObsidianContext: ObsidianContext = {
+      noteTaskDrag: this.noteTaskDrag,
+      googleSyncing,
+      openReviewSyncConflicts: () => this.googleCalendarSync.reviewConflicts(),
+      toggleTaskLock: async (block) => {
+        if (block.source === "unwritten") return;
+        const file = this.app.vault.getFileByPath(block.path);
+        if (!file) throw new Error("The task note is missing.");
+        const text = await this.app.vault.read(file);
+        const first = text.split(/\r?\n/)[block.position.start.line];
+        if (
+          first === undefined ||
+          first
+            .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?/, "")
+            .trim() !== block.text.split(/\r?\n/)[0]?.trim()
+        )
+          throw new Error(
+            "This task changed. Refresh before toggling its lock.",
+          );
+        const tags =
+          parseCaptureCandidates("", `- [ ] ${first}`)[0]?.tags.filter(
+            (tag) => tag.name.toLowerCase() === "locked",
+          ) ?? [];
+        let updated = first;
+        if (tags.length)
+          for (const tag of tags.toReversed()) {
+            const from = tag.from - 6;
+            updated =
+              updated.slice(0, updated[from - 1] === " " ? from - 1 : from) +
+              updated.slice(tag.to - 6);
+          }
+        else {
+          const index = first.match(/\s+\^[\w-]+\s*$/)?.index ?? first.length;
+          updated =
+            first.slice(0, index).trimEnd() + " #locked" + first.slice(index);
+        }
+        await editLine({
+          path: block.path,
+          position: { line: block.position.start.line, col: 0 },
+          contents: updated,
+        });
+      },
       taskScheduler: this.taskScheduler,
       editTaskPreview: (block) => {
         const scheduler = this.taskScheduler;

@@ -100,6 +100,7 @@ export interface CalendarNotes {
     uid: string,
     snapshot: CalendarSnapshot,
     previous?: LocalBlock,
+    templateRaw?: string,
   ): Promise<LocalBlock>;
   cancel(block: LocalBlock): Promise<void>;
 }

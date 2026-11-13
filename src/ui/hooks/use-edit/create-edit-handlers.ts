@@ -12,6 +12,7 @@ import type {
 } from "../../../time-block-types";
 import type { PointerDateTime } from "../../../types";
 import { getMinutesSinceMidnight } from "../../../util/moment";
+import { containsLockedTask, isLocked } from "../../../util/task-lock";
 import * as t from "../../../util/time-block-utils";
 
 import type { EditOperation } from "./types";
@@ -63,6 +64,7 @@ export function createEditHandlers({
     dragOriginClientY?: number,
     dragOriginMinutes?: number,
   ) {
+    if (isLocked(timeBlock)) return;
     const pointerDay = get(pointerDateTime).dateTime;
 
     isNotVoid(pointerDay, "Day cannot be undefined on edit");
@@ -80,7 +82,7 @@ export function createEditHandlers({
     mode: EditMode,
     dragOriginClientY?: number,
   ) {
-    if (get(editOperation)) {
+    if (containsLockedTask(timeBlock) || get(editOperation)) {
       return;
     }
 
@@ -111,6 +113,7 @@ export function createEditHandlers({
   function handleUnscheduledTimeBlockGripMouseDown(
     timeBlock: EditableTimeBlock,
   ) {
+    if (containsLockedTask(timeBlock)) return;
     if (timeBlock.source === "unwritten") {
       throw new Error(
         "Invariant violation: an unwritten time block cannot be unscheduled",

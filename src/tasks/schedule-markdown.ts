@@ -11,7 +11,7 @@ import {
 } from "./capture-settings";
 import { TaskReadError, type ProviderTask, type TaskSnapshot } from "./types";
 
-export function subtaskInsertTarget(
+export function noteTaskSource(
   before: string,
   target: { path: string; line: number; text: string },
 ) {
@@ -23,8 +23,7 @@ export function subtaskInsertTarget(
       node.position?.start.line === target.line + 1
     ) {
       const from = node.position.start.offset!;
-      const offset = node.position.end.offset!;
-      const raw = before.slice(from, offset);
+      const raw = before.slice(from, node.position.end.offset!);
       const first = raw.split(/\r?\n/)[0]!;
       const text = first
         .replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?/, "")
@@ -32,23 +31,32 @@ export function subtaskInsertTarget(
       const lineStart = before.lastIndexOf("\n", from - 1) + 1;
       if (
         text !== target.text.split(/\r?\n/)[0]?.trim() ||
-        !getTimeRangeMatch(first) ||
         !/^[ \t]*$/.test(before.slice(lineStart, from)) ||
         !taskDropAllowed(before, from)
       )
         break;
-      return {
-        path: target.path,
-        offset,
-        before,
-        parent: { path: target.path, from, raw, title: text },
-      };
+      return { path: target.path, from, raw, title: text };
     }
     if ("children" in node) pending.push(...node.children);
   }
   throw new TaskReadError(
     "This block changed. Refresh the timeline before adding a subtask.",
   );
+}
+
+export function subtaskInsertTarget(
+  before: string,
+  target: { path: string; line: number; text: string },
+) {
+  const parent = noteTaskSource(before, target);
+  if (!getTimeRangeMatch(parent.raw.split(/\r?\n/)[0] ?? ""))
+    throw new TaskReadError("Choose a timed schedule block for this subtask.");
+  return {
+    path: target.path,
+    offset: parent.from + parent.raw.length,
+    before,
+    parent,
+  };
 }
 
 /** Source ranges start at the list marker, while continuation lines retain

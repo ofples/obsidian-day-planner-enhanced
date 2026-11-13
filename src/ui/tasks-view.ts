@@ -6,19 +6,23 @@ import {
 } from "obsidian";
 import { mount, unmount } from "svelte";
 import { get, writable, type Writable } from "svelte/store";
+import type { Readable } from "svelte/store";
 
 import type { GoogleCalendarSync } from "../google-calendar/service";
 import type { DayPlannerSettings } from "../settings";
 import { taskViewStateSchema } from "../tasks/browser";
 import type { TaskCapture } from "../tasks/capture";
+import type { CaptureCandidate } from "../tasks/capture-parser";
 import type { TaskDeletionController } from "../tasks/deletion";
+import type { NoteTaskDrag } from "../tasks/note-drag";
 import type { TaskReconciler } from "../tasks/reconcile";
 import type { TaskScheduler } from "../tasks/schedule";
 import type { TaskService } from "../tasks/service";
 import { TaskReadError, type ProviderTask } from "../tasks/types";
 
-import TasksPane from "./components/tasks-pane.svelte";
+import TasksPane from "./components/task-pane-root.svelte";
 import type { TaskPanelAction } from "./task-panel-state";
+import { TaskScheduleModal } from "./task-schedule-modal";
 
 export const viewTypeTasks = "planner-tasks";
 
@@ -40,6 +44,9 @@ export class TasksView extends ItemView {
     private readonly calendar?: Pick<GoogleCalendarSync, "calendars"> &
       Partial<Pick<GoogleCalendarSync, "resetForUserRetry">>,
     private readonly deleter?: TaskDeletionController,
+    private readonly noteTasks?: Readable<CaptureCandidate[]>,
+    private readonly noteDrag?: NoteTaskDrag,
+    private readonly openConnections?: () => void,
   ) {
     super(leaf);
   }
@@ -98,6 +105,24 @@ export class TasksView extends ItemView {
         settings: this.settings,
         calendar: this.calendar,
         deleter: this.deleter,
+        noteTasks: this.noteTasks,
+        noteDrag: this.noteDrag,
+        openConnections: this.openConnections,
+        scheduleImported: (task: ProviderTask) => {
+          if (this.scheduler)
+            new TaskScheduleModal(
+              this.app,
+              this.scheduler,
+              task,
+              this.defaultDuration(),
+            ).open();
+        },
+        openNote: (path: string, line: number) =>
+          handle(
+            this.app.workspace.openLinkText(path, "", false, {
+              eState: { line },
+            }),
+          ),
         openSavedNote: (path: string) =>
           handle(this.app.workspace.openLinkText(path, "", false)),
         revealTask: (task: ProviderTask) => {

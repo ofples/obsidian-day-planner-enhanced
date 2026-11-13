@@ -14,6 +14,7 @@ import type { PeriodicNotes } from "./service/periodic-notes";
 import type { VaultFacade } from "./service/vault-facade";
 import type { WorkspaceFacade } from "./service/workspace-facade";
 import type { DayPlannerSettings, IcalConfig } from "./settings";
+import type { NoteTaskDrag } from "./tasks/note-drag";
 import type { TaskScheduler } from "./tasks/schedule";
 import type {
   EditableTimeBlock,
@@ -70,6 +71,10 @@ export type PointerDateTime = {
 export type Signal<T> = { current: T };
 
 export interface ObsidianContext {
+  noteTaskDrag?: NoteTaskDrag;
+  toggleTaskLock?: (block: EditableTimeBlock) => Promise<void>;
+  googleSyncing?: Readable<boolean>;
+  openReviewSyncConflicts?: () => void;
   taskScheduler?: TaskScheduler;
   editTaskPreview?: (block: RemoteTimeBlock) => void;
   exportSchedule: (day: Moment) => void;

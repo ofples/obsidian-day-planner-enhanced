@@ -19,6 +19,7 @@ export interface CaptureTag {
 }
 
 export interface CaptureCandidate extends TaskSource {
+  insideTimedBlock?: boolean;
   line: number;
   to: number;
   completed: boolean;
@@ -92,12 +93,15 @@ export function parseCaptureCandidates(
   );
   const masked = protectWikilinks(maskComments(withoutProperties));
   const result: CaptureCandidate[] = [];
-  const pending: { node: Nodes; parentFrom?: number }[] = [
-    { node: fromMarkdown(masked) },
-  ];
+  const pending: {
+    node: Nodes;
+    parentFrom?: number;
+    timedAncestor?: boolean;
+  }[] = [{ node: fromMarkdown(masked) }];
   while (pending.length) {
-    const { node, parentFrom } = pending.pop()!;
+    const { node, parentFrom, timedAncestor } = pending.pop()!;
     let parent = parentFrom;
+    let timed = timedAncestor;
     if (node.type === "listItem") {
       const from = node.position?.start.offset;
       const to = node.position?.end.offset;
@@ -108,6 +112,7 @@ export function parseCaptureCandidates(
         paragraph?.type === "paragraph"
       ) {
         const raw = text.slice(from, to);
+        timed ||= Boolean(getTimeRangeMatch(raw.split(/\r?\n/)[0] ?? ""));
         const status = raw.match(
           /^(?:[-*+]|\d+[.)])\s+\[([^\]])\](?:\s|$)/,
         )?.[1];
@@ -127,6 +132,7 @@ export function parseCaptureCandidates(
               from + (raw.split(/\r?\n/)[0]?.length ?? 0),
             ),
             parentFrom,
+            ...(timedAncestor ? { insideTimedBlock: true } : {}),
           };
           candidate.title = captureTitle(candidate, new Set(["todoist"]));
           result.push(candidate);
@@ -136,7 +142,7 @@ export function parseCaptureCandidates(
     }
     if ("children" in node)
       for (const child of node.children.toReversed())
-        pending.push({ node: child, parentFrom: parent });
+        pending.push({ node: child, parentFrom: parent, timedAncestor: timed });
   }
   return result;
 }

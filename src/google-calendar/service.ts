@@ -1,4 +1,5 @@
 import { Modal, Notice, Platform, type App, type Plugin } from "obsidian";
+import { writable } from "svelte/store";
 import { z } from "zod";
 
 import { selectSortedDedupedVisibleDays } from "../redux/date-ranges-slice";
@@ -10,7 +11,15 @@ import type { DayPlannerSettings } from "../settings";
 
 import { GoogleCalendarApi } from "./api";
 import { GoogleCalendarAuth } from "./auth";
-import { isOwned, recoverCalendarProjection, syncCalendar } from "./engine";
+import {
+  isOwned,
+  recoverCalendarProjection,
+  resolveCalendarConflict,
+  resolveMissingLocalConflict,
+  syncCalendar,
+  type CalendarConflict,
+  type MissingLocalConflict,
+} from "./engine";
 import { ObsidianCalendarNotes } from "./notes";
 import type { CalendarSyncState } from "./types";
 import type { LocalBlock } from "./types";
@@ -99,6 +108,39 @@ export class GoogleCalendarSync {
   private lastError = "";
   private viewGeneration = 0;
 
+  /** Last verified note identity for a managed calendar block. */
+  importedSource(uid: string) {
+    if (this.state.records[uid]?.deleted) return undefined;
+    const identity = this.state.identities?.[uid];
+    if (!identity || identity.from < 0) return undefined;
+    return {
+      uid,
+      path: identity.path,
+      from: identity.from,
+      raw: identity.raw,
+      title: identity.snapshot.title,
+    };
+  }
+  readonly syncing = writable(false);
+  private automaticTimer?: number;
+  private readonly composing = new Set<Document>();
+  private conflicts: string[] = [];
+  private reviewable: CalendarConflict[] = [];
+  private missingLocal: MissingLocalConflict[] = [];
+
+  private queueAutomaticSync() {
+    if (this.stopped || !this.getSettings().googleCalendar.autoSync) return;
+    window.clearTimeout(this.automaticTimer);
+    this.automaticTimer = window.setTimeout(() => {
+      if (this.stopped) return;
+      if (this.composing.size || this.edits?.isWriting || this.busy) {
+        this.queueAutomaticSync();
+        return;
+      }
+      void this.run(true);
+    }, 5_000);
+  }
+
   constructor(
     private readonly plugin: Plugin,
     private readonly daily: PeriodicNotes,
@@ -145,6 +187,41 @@ export class GoogleCalendarSync {
         void this.connect();
       },
     });
+    this.plugin.registerEvent(
+      this.app.workspace.on("editor-change", () => this.queueAutomaticSync()),
+    );
+    this.plugin.registerEvent(
+      this.app.vault.on("modify", () => {
+        if (!this.busy) this.queueAutomaticSync();
+      }),
+    );
+    const watched = new Set<Document>();
+    const unwatch: Array<() => void> = [];
+    const watch = (doc: Document) => {
+      if (watched.has(doc)) return;
+      watched.add(doc);
+      const start = () => this.composing.add(doc);
+      const end = () => {
+        if (this.composing.delete(doc)) this.queueAutomaticSync();
+      };
+      doc.addEventListener("compositionstart", start, true);
+      doc.addEventListener("compositionend", end, true);
+      doc.addEventListener("blur", end, true);
+      unwatch.push(() => {
+        doc.removeEventListener("compositionstart", start, true);
+        doc.removeEventListener("compositionend", end, true);
+        doc.removeEventListener("blur", end, true);
+      });
+    };
+    watch(activeDocument);
+    this.app.workspace.iterateAllLeaves((leaf) =>
+      watch(leaf.view.containerEl.ownerDocument),
+    );
+    this.plugin.registerEvent(
+      this.app.workspace.on("window-open", (_, popout) =>
+        watch(popout.document),
+      ),
+    );
     this.plugin.addCommand({
       id: "google-calendar-sync",
       name: "Sync Google Calendar now",
@@ -164,12 +241,15 @@ export class GoogleCalendarSync {
           this.getSettings().googleCalendar.autoSync &&
           !this.stopped
         )
-          void this.run(true);
+          this.queueAutomaticSync();
         else void this.refreshView();
       }, 60_000),
     );
     this.plugin.register(() => {
       this.stopped = true;
+      window.clearTimeout(this.automaticTimer);
+      unwatch.forEach((remove) => remove());
+      this.composing.clear();
       this.viewGeneration++;
       this.store.dispatch(googleTimeBlocksUpdated([]));
       this.auth.stop();
@@ -354,12 +434,29 @@ export class GoogleCalendarSync {
     }
   }
 
-  async connect() {
+  isConnected() {
+    try {
+      const auth = Reflect.get(this, "auth") as GoogleCalendarAuth | undefined;
+      return auth?.isConnected() ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  async connect(raiseErrors = false) {
+    window.clearTimeout(this.automaticTimer);
     if (!this.resetForUserRetry()) {
+      if (raiseErrors)
+        throw new Error("Google Calendar is waiting for its retry deadline.");
       new Notice("Google Calendar is waiting for its retry deadline.");
       return;
     }
-    if (this.busy) {
+    const deadline = Date.now() + 30_000;
+    while (this.busy && !this.stopped && Date.now() < deadline)
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+    if (this.stopped || this.busy) {
+      if (raiseErrors)
+        throw new Error("A calendar operation is already running.");
       new Notice("A calendar operation is already running.");
       return;
     }
@@ -373,6 +470,7 @@ export class GoogleCalendarSync {
         "Google Calendar connected. Choose a target calendar and run Sync Google Calendar now.",
       );
     } catch (error) {
+      if (raiseErrors) throw error;
       this.report(error);
     } finally {
       this.busy = false;
@@ -447,6 +545,7 @@ export class GoogleCalendarSync {
       return;
     }
     this.busy = true;
+    this.syncing.set(true);
     try {
       const settings = this.getSettings();
       const config = settings.googleCalendar;
@@ -479,29 +578,150 @@ export class GoogleCalendarSync {
         timeMax,
         importEvents: config.importEventsToNotes,
       });
+      this.conflicts = result.conflicts;
+      this.reviewable = result.reviewable;
+      this.missingLocal = result.missingLocal;
       this.lastError = "";
-      if (!automatic || result.conflicts.length) {
+      if (!automatic) {
         new Notice(
           `Google Calendar: ${result.pushed} pushed, ${result.pulled} pulled, ${result.deleted} cancelled/deleted, ${result.conflicts.length} conflicts.`,
           8000,
         );
       }
       if (result.conflicts.length && !automatic) {
-        const modal = new Modal(this.app);
-        modal.titleEl.setText("Google Calendar sync conflicts");
-        for (const conflict of result.conflicts)
-          modal.contentEl.createEl("p", { text: conflict });
-        modal.open();
+        this.reviewConflicts();
       }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : "Calendar sync failed.";
-      if (!automatic || message !== this.lastError) this.report(error);
+      const readiness =
+        /note edit|notes changed during calendar scanning/i.test(message);
+      if (!automatic || (!readiness && message !== this.lastError))
+        this.report(error);
+      if (automatic && readiness) this.queueAutomaticSync();
       this.lastError = message;
     } finally {
       this.busy = false;
+      this.syncing.set(false);
       await this.refreshView();
     }
+  }
+
+  reviewConflicts() {
+    const modal = new Modal(this.app);
+    modal.titleEl.setText("Google Calendar sync conflicts");
+    if (!this.conflicts.length)
+      modal.contentEl.createEl("p", {
+        text: "No conflicts found. Run Sync to check again.",
+      });
+    for (const conflict of this.conflicts)
+      modal.contentEl.createEl("p", { text: conflict });
+    if (this.conflicts.length)
+      modal.contentEl.createEl("p", {
+        text: "For conflicts without a choice below, review the listed note and Google event, then run Sync again.",
+      });
+    for (const conflict of this.missingLocal) {
+      const section = modal.contentEl.createDiv();
+      section.createEl("h3", { text: conflict.path });
+      section.createEl("p", {
+        text: `The note task is missing. Google: ${conflict.remoteSnapshot.title} — ${conflict.remoteSnapshot.start} to ${conflict.remoteSnapshot.end}`,
+      });
+      const restore = section.createEl("button", { text: "Restore to note" });
+      const remove = section.createEl("button", {
+        text: "Remove Google event",
+      });
+      const choose = async (choice: "restore" | "remove") => {
+        if (this.busy || this.stopped) {
+          new Notice("Wait for calendar sync to finish, then retry.");
+          return;
+        }
+        restore.disabled = true;
+        remove.disabled = true;
+        this.busy = true;
+        this.syncing.set(true);
+        try {
+          const api = this.api();
+          await this.validateManagedCalendar(api);
+          await resolveMissingLocalConflict(
+            conflict,
+            choice,
+            this.state,
+            api,
+            this.noteContext().notes,
+            () => this.save(),
+          );
+          this.missingLocal = this.missingLocal.filter(
+            (item) => item.uid !== conflict.uid,
+          );
+          modal.close();
+          new Notice(
+            "Calendar conflict resolved. Sync again to review remaining conflicts.",
+          );
+        } catch (error) {
+          this.report(error);
+          restore.disabled = false;
+          remove.disabled = false;
+        } finally {
+          this.busy = false;
+          this.syncing.set(false);
+        }
+      };
+      restore.addEventListener("click", () => void choose("restore"));
+      remove.addEventListener("click", () => void choose("remove"));
+    }
+    for (const conflict of this.reviewable) {
+      const section = modal.contentEl.createDiv();
+      section.createEl("h3", { text: conflict.local.path });
+      const describe = (snapshot: CalendarSnapshot) =>
+        `${snapshot.title} — ${snapshot.start} to ${snapshot.end}`;
+      section.createEl("p", {
+        text: `Note: ${describe(conflict.local.snapshot)}`,
+      });
+      section.createEl("p", {
+        text: `Google: ${describe(conflict.remoteSnapshot)}`,
+      });
+      const noteButton = section.createEl("button", { text: "Keep note" });
+      const googleButton = section.createEl("button", { text: "Keep Google" });
+      const choose = async (choice: "note" | "google") => {
+        if (this.busy || this.stopped) {
+          new Notice("Wait for calendar sync to finish, then retry.");
+          return;
+        }
+        noteButton.disabled = true;
+        googleButton.disabled = true;
+        this.busy = true;
+        this.syncing.set(true);
+        try {
+          const api = this.api();
+          await this.validateManagedCalendar(api);
+          await resolveCalendarConflict(
+            conflict,
+            choice,
+            this.state,
+            api,
+            this.noteContext().notes,
+            () => this.save(),
+          );
+          modal.close();
+          new Notice(
+            "Calendar conflict resolved. Sync again to review remaining conflicts.",
+          );
+          this.reviewable = this.reviewable.filter(
+            (item) => item.uid !== conflict.uid,
+          );
+        } catch (error) {
+          this.report(error);
+          noteButton.disabled = false;
+          googleButton.disabled = false;
+        } finally {
+          this.busy = false;
+          this.syncing.set(false);
+        }
+      };
+      noteButton.addEventListener("click", () => void choose("note"));
+      googleButton.addEventListener("click", () => void choose("google"));
+    }
+    modal.open();
   }
 
   private api(calendarId = this.getSettings().googleCalendar.calendarId) {

@@ -3,6 +3,7 @@ import { get, writable } from "svelte/store";
 import type { GoogleCalendarSync } from "../google-calendar/service";
 import { getTimeRangeMatch } from "../parser/parser";
 import { locateSource } from "../service/source-identity";
+import { hasTaskLock } from "../util/task-lock";
 
 import { taskSubtree } from "./browser";
 import { parseCaptureCandidates } from "./capture-parser";
@@ -13,6 +14,7 @@ import {
 import { pendingTaskDeletion } from "./deletion-types";
 import { TaskDrag } from "./drag";
 import { pendingIdentityDecision } from "./identity-types";
+import type { NoteTaskReference } from "./note-drag";
 import {
   matchingOccurrenceUndo,
   occurrenceCompletionVerified,
@@ -26,13 +28,15 @@ import {
   resolvedTaskOperation,
   type TaskMutation,
 } from "./operations";
-import { rewriteTaskNote } from "./reconcile-markdown";
+import { PlainTaskImporter } from "./plain-import";
+import { rewriteTaskNote, withoutTaskCaptureTag } from "./reconcile-markdown";
 import type { TaskLink, TaskRegistryState } from "./registry";
 import {
   indentTaskSubtree,
   newTaskMarkdown,
   scheduleNoteTitle,
   subtaskInsertTarget,
+  noteTaskSource,
 } from "./schedule-markdown";
 import {
   scheduleIntervalSchema,
@@ -52,6 +56,7 @@ export class TaskProjectionConflict extends TaskReadError {}
 
 export class TaskScheduler {
   readonly drag: TaskDrag;
+  readonly importer: PlainTaskImporter;
   readonly state = writable<{
     operations: ScheduleOperation[];
     projections: TaskProjection[];
@@ -72,10 +77,14 @@ export class TaskScheduler {
       read(path: string): Promise<string | null>;
       flush(paths: string[]): Promise<void>;
       settings(): TaskCaptureSettings;
+      linkedSync?(): boolean;
+      readImports?(): Promise<string | null>;
+      writeImports?(value: string): Promise<void>;
       reveal?(source: TaskSource): Promise<void>;
     },
   ) {
     this.drag = new TaskDrag(service);
+    this.importer = new PlainTaskImporter(calendar, host);
     this.publish();
   }
 
@@ -108,7 +117,7 @@ export class TaskScheduler {
     );
     if (
       this.stopped ||
-      !browser.writable ||
+      !(browser.writable || (browser.readOnly && browser.connected)) ||
       !snapshot ||
       !task ||
       snapshot.provider !== source.provider ||
@@ -128,16 +137,20 @@ export class TaskScheduler {
       value.accountId === snapshot.account.id;
     this.state.update((previous) => ({
       ...previous,
-      operations: state.schedules.filter(
-        (operation) =>
-          owns(operation) &&
-          !["complete", "cancelled"].includes(operation.phase),
-      ),
+      operations:
+        this.host.linkedSync?.() === false
+          ? []
+          : state.schedules.filter(
+              (operation) =>
+                owns(operation) &&
+                !["complete", "cancelled"].includes(operation.phase),
+            ),
       projections: Object.values(state.projections).filter(owns),
     }));
   }
 
   projection(taskId: string) {
+    if (this.host.linkedSync?.() === false) return undefined;
     const projections = get(this.state).projections.filter(
       (projection) => projection.taskId === taskId,
     );
@@ -156,6 +169,139 @@ export class TaskScheduler {
       { kind: "schedule", interval: scheduleIntervalSchema.parse(interval) },
       id,
     );
+  }
+
+  private plainTask(taskId: string) {
+    const browser = get(this.service.state),
+      snapshot = browser.snapshot;
+    if (!snapshot)
+      throw new TaskReadError("Connect Todoist before importing a task.");
+    const task = this.previewTask({
+      provider: snapshot.provider,
+      accountId: snapshot.account.id,
+      taskId,
+    });
+    const raw = withoutTaskCaptureTag(
+      newTaskMarkdown(
+        task,
+        taskSubtree(snapshot, task),
+        snapshot,
+        this.host.settings(),
+      ),
+    );
+    return {
+      task,
+      raw,
+      key: JSON.stringify([
+        snapshot.provider,
+        snapshot.account.id,
+        task.id,
+        taskOccurrenceKey(task),
+      ]),
+    };
+  }
+
+  async place(
+    taskId: string,
+    interval: ScheduleInterval,
+    id: string = crypto.randomUUID(),
+  ) {
+    if (this.host.linkedSync?.() !== false)
+      return this.schedule(taskId, interval, id);
+    const { raw, key } = this.plainTask(taskId);
+    const target = scheduleIntervalSchema.parse(interval);
+    await this.importer.runPane(
+      key,
+      id,
+      JSON.stringify(["schedule", raw, target]),
+      (savedId, prepare, pending) =>
+        this.importer.schedule(
+          raw,
+          target,
+          savedId,
+          undefined,
+          prepare,
+          pending.prepared,
+        ),
+    );
+  }
+
+  async insertFromPane(
+    taskId: string,
+    target: { path: string; offset: number; before: string },
+    id: string = crypto.randomUUID(),
+  ) {
+    if (this.host.linkedSync?.() !== false)
+      return this.insert(taskId, target, id);
+    const { raw, key } = this.plainTask(taskId);
+    await this.importer.runPane(
+      key,
+      id,
+      JSON.stringify(["insert", raw, target.path, target.offset]),
+      (savedId, prepare, pending) =>
+        this.importer.insert(
+          raw,
+          target,
+          savedId,
+          undefined,
+          prepare,
+          pending.prepared,
+        ),
+    );
+  }
+
+  async nestFromPane(
+    taskId: string,
+    parent: { path: string; line: number; text: string },
+    id: string = crypto.randomUUID(),
+  ) {
+    if (this.host.linkedSync?.() !== false)
+      return this.nest(taskId, parent, id);
+    const { raw, key } = this.plainTask(taskId);
+    await this.importer.runPane(
+      key,
+      id,
+      JSON.stringify(["nest", raw, parent.path, parent.line, parent.text]),
+      (savedId, prepare, pending) =>
+        this.importer.nest(
+          raw,
+          parent,
+          savedId,
+          undefined,
+          prepare,
+          pending.prepared,
+        ),
+    );
+  }
+
+  private async resolveNote(reference: NoteTaskReference) {
+    await this.host.flush([reference.path]);
+    const text = await this.host.read(reference.path);
+    if (text === null) throw new TaskReadError("The source note is missing.");
+    return noteTaskSource(text, reference);
+  }
+
+  async placeNote(
+    reference: NoteTaskReference,
+    interval: ScheduleInterval,
+    id: string,
+  ) {
+    const source = await this.resolveNote(reference);
+    return this.importer.schedule(
+      source.raw,
+      scheduleIntervalSchema.parse(interval),
+      id,
+      source,
+    );
+  }
+
+  async nestNote(
+    reference: NoteTaskReference,
+    parent: { path: string; line: number; text: string },
+    id: string,
+  ) {
+    const source = await this.resolveNote(reference);
+    return this.importer.nest(source.raw, parent, id, source);
   }
 
   insert(
@@ -411,6 +557,10 @@ export class TaskScheduler {
     id: string,
   ) {
     const target = scheduleOperationSchema.shape.target.parse(input);
+    if (this.host.linkedSync?.() === false)
+      throw new TaskReadError(
+        "Two-way Todoist sync is disabled. Import the task as Markdown instead.",
+      );
     await this.pending;
     const browser = get(this.service.state),
       snapshot = browser.snapshot;
@@ -496,6 +646,25 @@ export class TaskScheduler {
       );
     const linked = projection ? state.links[projection.linkUid] : links[0]?.[1];
     const previous = linked?.source ?? projection?.source;
+    if (previous && hasTaskLock(previous.raw))
+      throw new TaskReadError("Unlock this task before changing its schedule.");
+    if (previous) {
+      const text = await this.host.read(previous.path);
+      const from = text === null ? -1 : locateSource(text, previous);
+      if (
+        text !== null &&
+        from >= 0 &&
+        parseCaptureCandidates(previous.path, text).some(
+          (candidate) =>
+            candidate.from >= from &&
+            candidate.to <= from + previous.raw.length &&
+            candidate.tags.some((tag) => tag.name.toLowerCase() === "locked"),
+        )
+      )
+        throw new TaskReadError(
+          "Unlock the nested task before moving its container.",
+        );
+    }
     if (
       target.kind === "insert" &&
       target.parent &&
@@ -754,7 +923,8 @@ export class TaskScheduler {
   }
 
   resume(): Promise<void> {
-    if (this.stopped) return Promise.resolve();
+    if (this.stopped || this.host.linkedSync?.() === false)
+      return Promise.resolve();
     if (this.pending) {
       this.again = true;
       return this.pending;

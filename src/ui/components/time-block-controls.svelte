@@ -18,6 +18,7 @@
   import { selectActiveLogTimeBlocks } from "../../redux/index/index-selectors";
   import { type EditableTimeBlock } from "../../time-block-types";
   import { createMarkdownListTokens, getFirstLine } from "../../util/markdown";
+  import { containsLockedTask, isLocked } from "../../util/task-lock";
   import type { HTMLActionArray } from "../actions/use-actions";
   import { createTimeBlockMenu } from "../time-block-menu";
 
@@ -109,6 +110,8 @@
   const disabledFloatingControls = $derived(
     getDisabledFloatingControls(timeBlock),
   );
+  const locked = $derived(isLocked(timeBlock));
+  const lockedTree = $derived(containsLockedTask(timeBlock));
 
   function handleAutoSelect() {
     const target = $pendingTimelineTaskSelection;
@@ -150,17 +153,21 @@
       {/snippet}
 
       {#snippet topEnd({ isActive, setIsActive })}
-        <DragControls {isActive} {setIsActive} {timeBlock} />
+        {#if !lockedTree}<DragControls
+            {isActive}
+            {setIsActive}
+            {timeBlock}
+          />{/if}
       {/snippet}
 
       {#snippet bottom({ isActive, setIsActive })}
-        {#if !timeBlock.isAllDayEvent && !continuesAfterSegment}
+        {#if !locked && !timeBlock.isAllDayEvent && !continuesAfterSegment}
           <ResizeControls {isActive} reverse {setIsActive} {timeBlock} />
         {/if}
       {/snippet}
 
       {#snippet top({ isActive, setIsActive })}
-        {#if !timeBlock.isAllDayEvent && !startsBeforeSegment}
+        {#if !locked && !timeBlock.isAllDayEvent && !startsBeforeSegment}
           <ResizeControls
             fromTop
             {isActive}

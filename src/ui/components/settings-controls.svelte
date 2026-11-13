@@ -65,6 +65,21 @@
         ),
     );
 
+    new SettingGroup(el).setHeading("Experimental").addSetting((setting) =>
+      setting
+        .setName("Two-way Todoist sync")
+        .setDesc(
+          "Link note edits back to Todoist. Otherwise imports become ordinary Markdown.",
+        )
+        .addToggle((toggle) =>
+          toggle
+            .setValue($settings.experimentalTodoistSync)
+            .onChange((value) => {
+              $settings = { ...$settings, experimentalTodoistSync: value };
+            }),
+        ),
+    );
+
     new SettingGroup(el)
       .addSetting((setting) =>
         setting.setName("Start hour").addDropdown((dropdown) =>

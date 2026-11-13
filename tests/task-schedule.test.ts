@@ -23,7 +23,10 @@ import { taskCalendarPreviews } from "../src/tasks/calendar-preview";
 import { TaskDeletionController } from "../src/tasks/deletion";
 import { taskSubtree } from "../src/tasks/browser";
 import { TaskReconciler } from "../src/tasks/reconcile";
-import { recordExternalTaskOccurrence, taskOccurrenceSchema } from "../src/tasks/occurrence-types";
+import {
+  recordExternalTaskOccurrence,
+  taskOccurrenceSchema,
+} from "../src/tasks/occurrence-types";
 import { observeExternalTaskOccurrences } from "../src/tasks/occurrence-observe";
 import { mutationFields } from "../src/tasks/operations";
 import { taskCaptureSettingsSchema } from "../src/tasks/capture-settings";
@@ -62,10 +65,15 @@ async function harness() {
     failPath = "",
     failCalendar = false,
     loseCalendarResponse = false;
+  let linkedSync = true;
+  let imports: string | null = null;
+  let failImportWriteCountdown = 0;
   let stable = true;
   let loseTaskResponse = false;
   let exportGuardFailure = "";
-  const exportGuard = vi.fn(async () => { if (exportGuardFailure) throw new Error(exportGuardFailure); });
+  const exportGuard = vi.fn(async () => {
+    if (exportGuardFailure) throw new Error(exportGuardFailure);
+  });
   let failWriteCountdown = 0;
   const calendarSettings = structuredClone(defaultSettings);
   let calendarState: CalendarSyncState = {
@@ -178,7 +186,11 @@ async function harness() {
   };
   const calendar: Pick<
     GoogleCalendarSync,
-    "editNotes" | "syncProjection" | "recoverProjection" | "removeProjection" | "assertTaskExportAllowed"
+    | "editNotes"
+    | "syncProjection"
+    | "recoverProjection"
+    | "removeProjection"
+    | "assertTaskExportAllowed"
   > = {
     assertTaskExportAllowed: exportGuard,
     editNotes: async (edit) => edit(notes, await notes.scan()),
@@ -243,28 +255,57 @@ async function harness() {
     if (!commands.has(operation.id) && operation.mutation.kind === "delete") {
       const remote = tasks.get(operation.mutation.taskId);
       if (remote) {
-        for (const item of taskSubtree({ ...snapshot(), tasks: [...tasks.values()].map(task => ({ ...task, completed: false })) }, remote))
+        for (const item of taskSubtree(
+          {
+            ...snapshot(),
+            tasks: [...tasks.values()].map((task) => ({
+              ...task,
+              completed: false,
+            })),
+          },
+          remote,
+        ))
           tasks.delete(item.task.id);
         tasks.delete(remote.id);
       }
-    }
-    else if (!commands.has(operation.id) && operation.recurringUndo) {
-      tasks.set(operation.mutation.kind === "create" ? "unexpected" : operation.mutation.taskId, {
-        ...tasks.get(operation.mutation.kind === "create" ? "unexpected" : operation.mutation.taskId)!,
-        completionCount: operation.recurringUndo.completionCount, due: operation.recurringUndo.due, completed: false,
-      });
-    }
-    else if (!commands.has(operation.id) && operation.mutation.kind === "complete" && operation.base?.due?.recurring) {
+    } else if (!commands.has(operation.id) && operation.recurringUndo) {
+      tasks.set(
+        operation.mutation.kind === "create"
+          ? "unexpected"
+          : operation.mutation.taskId,
+        {
+          ...tasks.get(
+            operation.mutation.kind === "create"
+              ? "unexpected"
+              : operation.mutation.taskId,
+          )!,
+          completionCount: operation.recurringUndo.completionCount,
+          due: operation.recurringUndo.due,
+          completed: false,
+        },
+      );
+    } else if (
+      !commands.has(operation.id) &&
+      operation.mutation.kind === "complete" &&
+      operation.base?.due?.recurring
+    ) {
       const remote = tasks.get(operation.mutation.taskId)!;
       const due = remote.due!;
       tasks.set(remote.id, {
         ...remote,
         completed: false,
         completionCount: remote.completionCount! + 1,
-        due: { ...due, date: DateTime.fromISO(due.date, { zone: due.timezone ?? "UTC" }).plus({ days: 1 }).toISO()! },
+        due: {
+          ...due,
+          date: DateTime.fromISO(due.date, { zone: due.timezone ?? "UTC" })
+            .plus({ days: 1 })
+            .toISO()!,
+        },
       });
-    }
-    else if (!commands.has(operation.id) && operation.mutation.kind !== "create")
+    } else if (
+      !commands.has(operation.id) &&
+      operation.mutation.kind !== "create"
+    )
       tasks.set(operation.mutation.taskId, {
         ...tasks.get(operation.mutation.taskId)!,
         ...mutationFields(operation.mutation),
@@ -281,7 +322,9 @@ async function harness() {
           : operation.mutation.taskId,
     };
   });
-  const readTask = vi.fn(async (id: string) => structuredClone(tasks.get(id) ?? null));
+  const readTask = vi.fn(async (id: string) =>
+    structuredClone(tasks.get(id) ?? null),
+  );
   const provider = () => ({
     read: async () => snapshot(),
     get: readTask,
@@ -304,13 +347,20 @@ async function harness() {
       secret = value;
     },
   };
-  let service = new TaskService(storage, provider);
+  let service = new TaskService(storage, provider, () => linkedSync);
   await service.initialize();
   await service.connect("token");
   const host = {
     read: async (path: string) => texts.get(path) ?? null,
     flush: async () => {},
     settings: () => taskCaptureSettingsSchema.parse({}),
+    linkedSync: () => linkedSync,
+    readImports: async () => imports,
+    writeImports: async (value: string) => {
+      if (failImportWriteCountdown && --failImportWriteCountdown === 0)
+        throw new Error("import metadata unavailable");
+      imports = value;
+    },
   };
   let scheduler = new TaskScheduler(service, calendar, host);
   const makeCapture = () =>
@@ -333,10 +383,19 @@ async function harness() {
     scheduler,
     host.settings,
   );
-  let deleter = new TaskDeletionController(service, capture, scheduler, reconciler);
+  let deleter = new TaskDeletionController(
+    service,
+    capture,
+    scheduler,
+    reconciler,
+  );
   return {
-    get deleter() { return deleter; },
-    get capture() { return capture; },
+    get deleter() {
+      return deleter;
+    },
+    get capture() {
+      return capture;
+    },
     get service() {
       return service;
     },
@@ -359,7 +418,9 @@ async function harness() {
     apply,
     readTask,
     exportGuard,
-    setExportGuardFailure(value: string) { exportGuardFailure = value; },
+    setExportGuardFailure(value: string) {
+      exportGuardFailure = value;
+    },
     process,
     setFailTaskWrite(value: boolean) {
       failTaskWrite = value;
@@ -373,9 +434,18 @@ async function harness() {
     setLoseCalendarResponse(value: boolean) {
       loseCalendarResponse = value;
     },
-    setLoseTaskResponse(value: boolean) { loseTaskResponse = value; },
+    setLoseTaskResponse(value: boolean) {
+      loseTaskResponse = value;
+    },
     setStable(value: boolean) {
       stable = value;
+    },
+    setLinkedSync(value: boolean) {
+      linkedSync = value;
+      service.publish();
+    },
+    failImportWriteAfter(count: number) {
+      failImportWriteCountdown = count;
     },
     failWriteAfter(count: number) {
       failWriteCountdown = count;
@@ -417,7 +487,7 @@ async function harness() {
       service.stop();
       calendarState = JSON.parse(calendarDisk);
       notes = makeNotes();
-      service = new TaskService(storage, provider);
+      service = new TaskService(storage, provider, () => linkedSync);
       await service.initialize();
       scheduler = new TaskScheduler(service, calendar, host);
       capture = makeCapture();
@@ -427,7 +497,12 @@ async function harness() {
         scheduler,
         host.settings,
       );
-      deleter = new TaskDeletionController(service, capture, scheduler, reconciler);
+      deleter = new TaskDeletionController(
+        service,
+        capture,
+        scheduler,
+        reconciler,
+      );
     },
   };
 }
@@ -809,7 +884,9 @@ describe("recurring occurrence freezing", () => {
       const selectedEvent = h.calendarState.records[selectedBlock.uid]!.eventId;
       await h.restart();
       await h.reconcile();
-      const undoReview = await h.reconciler.occurrenceUndo.review(completion.id);
+      const undoReview = await h.reconciler.occurrenceUndo.review(
+        completion.id,
+      );
       await h.reconciler.occurrenceUndo.confirm(undoReview);
       await h.reconcile();
       const restored = h.service.registry.snapshot();
@@ -1886,11 +1963,16 @@ describe("verified task deletion", () => {
   test("opening a confirmation has no deletion intent or provider writes", async () => {
     const h = await harness();
     const review = await h.deleter.review(root.id);
-    expect(review.record.tasks.map(task => task.id)).toEqual([root.id, child.id]);
+    expect(review.record.tasks.map((task) => task.id)).toEqual([
+      root.id,
+      child.id,
+    ]);
     expect(h.service.registry.snapshot().deletions).toEqual({});
     expect(h.service.registry.snapshot().operations).toEqual([]);
     expect(h.apply).not.toHaveBeenCalled();
-    await expect(h.service.mutate({ kind: "delete", taskId: root.id })).rejects.toThrow("Confirm");
+    await expect(
+      h.service.mutate({ kind: "delete", taskId: root.id }),
+    ).rejects.toThrow("Confirm");
     h.service.stop();
   });
 
@@ -1921,15 +2003,23 @@ describe("verified task deletion", () => {
     const state = h.service.registry.snapshot();
     const record = Object.values(state.deletions)[0]!;
     expect(record.phase).toBe("complete");
-    expect(record.tasks.map(task => task.id)).toEqual([root.id, child.id]);
+    expect(record.tasks.map((task) => task.id)).toEqual([root.id, child.id]);
     expect(h.tasks.size).toBe(0);
     expect(state.links).toEqual({});
-    expect(Object.values(state.detached).every(item => item.reason === "deleted" && item.deletionId === record.id)).toBe(true);
+    expect(
+      Object.values(state.detached).every(
+        (item) => item.reason === "deleted" && item.deletionId === record.id,
+      ),
+    ).toBe(true);
     expect(h.events.size).toBe(1);
-    expect(h.texts.get(projection.source.path)).toBe(before.replaceAll(" #todoist", ""));
+    expect(h.texts.get(projection.source.path)).toBe(
+      before.replaceAll(" #todoist", ""),
+    );
     expect(h.texts.get(projection.source.path)).toContain("Child");
     expect(h.texts.get(projection.source.path)).not.toContain("#todoist");
-    const deletion = state.operations.find(op => op.mutation.kind === "delete")!;
+    const deletion = state.operations.find(
+      (op) => op.mutation.kind === "delete",
+    )!;
     expect(deletion.deletionReadback).toEqual({ root: null, child: null });
     await h.indexNotes();
     expect(get(h.capture.state).issues).toEqual([]);
@@ -1937,8 +2027,14 @@ describe("verified task deletion", () => {
     h.texts.set(projection.source.path, before);
     await h.indexNotes();
     expect(h.service.registry.snapshot().links).toEqual({});
-    expect(get(h.capture.state).issues.some(issue => issue.deletionId === record.id)).toBe(true);
-    expect(h.apply.mock.calls.filter(([op]) => op.mutation.kind === "create")).toHaveLength(0);
+    expect(
+      get(h.capture.state).issues.some(
+        (issue) => issue.deletionId === record.id,
+      ),
+    ).toBe(true);
+    expect(
+      h.apply.mock.calls.filter(([op]) => op.mutation.kind === "create"),
+    ).toHaveLength(0);
     h.scheduler.stop();
     h.service.stop();
   });
@@ -1952,15 +2048,23 @@ describe("verified task deletion", () => {
     await h.deleter.confirm(await h.deleter.review(root.id));
     await finish(h);
     expect(h.tasks.size).toBe(0);
-    expect(Object.values(h.service.registry.snapshot().deletions)[0]?.phase).toBe("unlinking");
-    expect(h.service.registry.snapshot().links[projection.linkUid]).toBeDefined();
+    expect(
+      Object.values(h.service.registry.snapshot().deletions)[0]?.phase,
+    ).toBe("unlinking");
+    expect(
+      h.service.registry.snapshot().links[projection.linkUid],
+    ).toBeDefined();
     await h.restart();
     h.setFailPath("");
     await h.service.refresh();
     await finish(h);
-    expect(Object.values(h.service.registry.snapshot().deletions)[0]?.phase).toBe("complete");
+    expect(
+      Object.values(h.service.registry.snapshot().deletions)[0]?.phase,
+    ).toBe("complete");
     expect(h.service.registry.snapshot().links).toEqual({});
-    expect(h.apply.mock.calls.filter(([op]) => op.mutation.kind === "delete")).toHaveLength(1);
+    expect(
+      h.apply.mock.calls.filter(([op]) => op.mutation.kind === "delete"),
+    ).toHaveLength(1);
     h.scheduler.stop();
     h.service.stop();
   });
@@ -1969,7 +2073,9 @@ describe("verified task deletion", () => {
     const h = await harness();
     const review = await h.deleter.review(root.id);
     h.setFailTaskWrite(true);
-    await expect(h.deleter.confirm(review)).rejects.toThrow("task state offline");
+    await expect(h.deleter.confirm(review)).rejects.toThrow(
+      "task state offline",
+    );
     expect(h.tasks.size).toBe(2);
     expect(h.apply).not.toHaveBeenCalled();
     expect(h.service.registry.snapshot().deletions).toEqual({});
@@ -1981,12 +2087,18 @@ describe("verified task deletion", () => {
     const h = await harness();
     await h.service.mutate({ kind: "complete", taskId: child.id });
     await h.service.refresh();
-    expect(get(h.service.state).completed.map(task => task.id)).toEqual([child.id]);
+    expect(get(h.service.state).completed.map((task) => task.id)).toEqual([
+      child.id,
+    ]);
     const review = await h.deleter.review(root.id);
-    expect(review.record.tasks.find(task => task.id === child.id)?.completed).toBe(true);
+    expect(
+      review.record.tasks.find((task) => task.id === child.id)?.completed,
+    ).toBe(true);
     await h.deleter.confirm(review);
     await finish(h);
-    expect(Object.values(h.service.registry.snapshot().deletions)[0]?.phase).toBe("complete");
+    expect(
+      Object.values(h.service.registry.snapshot().deletions)[0]?.phase,
+    ).toBe("complete");
     expect(get(h.service.state).completed).toEqual([]);
     h.service.stop();
   });
@@ -1994,12 +2106,31 @@ describe("verified task deletion", () => {
   test("a saved deletion reserves descendants and refuses new children until it is stopped", async () => {
     const h = await harness();
     const review = await h.deleter.review(root.id);
-    await h.service.registry.change(state => { state.deletions[review.record.id] = review.record; });
-    await expect(h.service.mutate({ kind: "update", taskId: child.id, changes: { title: "Blocked" } })).rejects.toThrow("saved deletion");
-    await expect(h.scheduler.schedule(child.id, interval)).rejects.toThrow("saved deletion");
-    await expect(h.service.mutate({ kind: "create", task: { ...child, parentId: root.id } })).rejects.toThrow("saved deletion");
+    await h.service.registry.change((state) => {
+      state.deletions[review.record.id] = review.record;
+    });
+    await expect(
+      h.service.mutate({
+        kind: "update",
+        taskId: child.id,
+        changes: { title: "Blocked" },
+      }),
+    ).rejects.toThrow("saved deletion");
+    await expect(h.scheduler.schedule(child.id, interval)).rejects.toThrow(
+      "saved deletion",
+    );
+    await expect(
+      h.service.mutate({
+        kind: "create",
+        task: { ...child, parentId: root.id },
+      }),
+    ).rejects.toThrow("saved deletion");
     await h.deleter.cancel(review.record.id);
-    await h.service.mutate({ kind: "update", taskId: child.id, changes: { title: "Allowed" } });
+    await h.service.mutate({
+      kind: "update",
+      taskId: child.id,
+      changes: { title: "Allowed" },
+    });
     await h.service.refresh();
     expect(h.tasks.get(child.id)?.title).toBe("Allowed");
     h.service.stop();
@@ -2008,11 +2139,15 @@ describe("verified task deletion", () => {
   test("switching account suspends a saved deletion and preserves its details", async () => {
     const h = await harness();
     const review = await h.deleter.review(root.id);
-    await h.service.registry.change(state => { state.deletions[review.record.id] = review.record; });
+    await h.service.registry.change((state) => {
+      state.deletions[review.record.id] = review.record;
+    });
     h.service.disconnect();
     await h.deleter.resume();
     expect(h.apply).not.toHaveBeenCalled();
-    expect(h.service.registry.snapshot().deletions[review.record.id]?.tasks).toEqual(review.record.tasks);
+    expect(
+      h.service.registry.snapshot().deletions[review.record.id]?.tasks,
+    ).toEqual(review.record.tasks);
     await expect(h.deleter.cancel(review.record.id)).rejects.toThrow();
     h.service.stop();
   });
@@ -2021,9 +2156,11 @@ describe("verified task deletion", () => {
     const h = await harness();
     await h.scheduler.schedule(root.id, interval);
     await h.settle();
-    const childUid = Object.entries(h.service.registry.snapshot().links).find(([, link]) => link.taskId === child.id)![0];
+    const childUid = Object.entries(h.service.registry.snapshot().links).find(
+      ([, link]) => link.taskId === child.id,
+    )![0];
     const apply = h.apply.getMockImplementation()!;
-    h.apply.mockImplementation(async op => {
+    h.apply.mockImplementation(async (op) => {
       if (op.mutation.kind !== "delete") return apply(op);
       h.tasks.delete(root.id);
       h.tasks.set(child.id, { ...h.tasks.get(child.id)!, parentId: null });
@@ -2031,9 +2168,13 @@ describe("verified task deletion", () => {
     });
     await h.deleter.confirm(await h.deleter.review(root.id));
     await finish(h);
-    expect(h.service.registry.snapshot().links[childUid]?.taskId).toBe(child.id);
+    expect(h.service.registry.snapshot().links[childUid]?.taskId).toBe(
+      child.id,
+    );
     expect(h.service.registry.snapshot().detached[childUid]).toBeUndefined();
-    expect(Object.values(h.service.registry.snapshot().deletions)[0]?.phase).toBe("complete");
+    expect(
+      Object.values(h.service.registry.snapshot().deletions)[0]?.phase,
+    ).toBe("complete");
     expect(h.events.size).toBe(1);
     h.scheduler.stop();
     h.service.stop();
@@ -2043,15 +2184,26 @@ describe("verified task deletion", () => {
     const h = await harness();
     await h.scheduler.schedule(root.id, interval);
     await h.settle();
-    await h.scheduler.schedule(child.id, { start: "2026-11-12T10:00:00Z", end: "2026-11-12T10:30:00Z" });
+    await h.scheduler.schedule(child.id, {
+      start: "2026-11-12T10:00:00Z",
+      end: "2026-11-12T10:30:00Z",
+    });
     await h.settle();
-    const paths = [...new Set(Object.values(h.service.registry.snapshot().links).map(link => link.source.path))];
+    const paths = [
+      ...new Set(
+        Object.values(h.service.registry.snapshot().links).map(
+          (link) => link.source.path,
+        ),
+      ),
+    ];
     expect(paths).toHaveLength(2);
     await h.deleter.confirm(await h.deleter.review(root.id));
     await finish(h);
     expect(h.service.registry.snapshot().links).toEqual({});
     expect(h.events.size).toBe(2);
-    expect(paths.every(path => !h.texts.get(path)?.includes("#todoist"))).toBe(true);
+    expect(
+      paths.every((path) => !h.texts.get(path)?.includes("#todoist")),
+    ).toBe(true);
     expect(h.texts.get(paths[0]!)).toContain("Work");
     expect(h.texts.get(paths[1]!)).toContain("Child");
     h.scheduler.stop();
@@ -2060,6 +2212,273 @@ describe("verified task deletion", () => {
 });
 
 describe("linked task scheduling", () => {
+  test("scheduled plain import recovers a failed final receipt under a new nonce after restart", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    h.failImportWriteAfter(3);
+    await expect(
+      h.scheduler.place(root.id, interval, crypto.randomUUID()),
+    ).rejects.toThrow("import metadata unavailable");
+    const path = "Daily/2026-11-11.md";
+    expect(h.texts.get(path)!.match(/Work/g) ?? []).toHaveLength(1);
+    await h.restart();
+    const retryId = crypto.randomUUID();
+    await h.scheduler.place(root.id, interval, retryId);
+    await h.scheduler.place(root.id, interval, retryId);
+    expect(h.texts.get(path)!.match(/Work/g) ?? []).toHaveLength(1);
+    expect(
+      Object.values(get(h.scheduler.importer.imports))[0]?.uid,
+    ).toBeTruthy();
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.service.registry.snapshot().links).toEqual({});
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("untimed plain import recovers its exact prepared edit after receipt failure", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    const path = "Projects/Work.md",
+      before = "# Project\n";
+    h.file(path);
+    h.texts.set(path, before);
+    h.failImportWriteAfter(3);
+    await expect(
+      h.scheduler.insertFromPane(
+        root.id,
+        { path, offset: before.length, before },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toThrow("import metadata unavailable");
+    const after = h.texts.get(path)!;
+    expect(after.match(/Work/g) ?? []).toHaveLength(1);
+    await h.restart();
+    await h.scheduler.insertFromPane(
+      root.id,
+      { path, offset: before.length, before: after },
+      crypto.randomUUID(),
+    );
+    expect(h.texts.get(path)).toBe(after);
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("a pending scheduled import never overwrites an edited note on retry", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    h.failImportWriteAfter(3);
+    await expect(
+      h.scheduler.place(root.id, interval, crypto.randomUUID()),
+    ).rejects.toThrow("import metadata unavailable");
+    const path = "Daily/2026-11-11.md";
+    const edited = h.texts.get(path)!.replace("Work", "Edited by user");
+    h.texts.set(path, edited);
+    await h.restart();
+    try {
+      await h.scheduler.place(root.id, interval, crypto.randomUUID());
+    } catch (error) {
+      expect(String(error)).toContain("Review");
+    }
+    expect(h.texts.get(path)).toBe(edited);
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("a new delivery after a completed plain import can intentionally create another copy", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    await h.scheduler.place(root.id, interval, crypto.randomUUID());
+    await h.scheduler.place(root.id, interval, crypto.randomUUID());
+    expect(
+      h.texts.get("Daily/2026-11-11.md")!.match(/Work/g) ?? [],
+    ).toHaveLength(2);
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("read-only pane placement imports a plain subtree exactly once without task writes or registry links", async () => {
+    const h = await harness();
+    h.tasks.set(root.id, {
+      ...root,
+      due: { date: "2026-11-11", recurring: false, text: "", timezone: null },
+    });
+    await h.service.refresh();
+    const due = structuredClone(h.tasks.get(root.id)?.due);
+    h.setLinkedSync(false);
+    const before = structuredClone(h.service.registry.snapshot());
+    const nonce = crypto.randomUUID();
+    await Promise.all([
+      h.scheduler.place(root.id, interval, nonce),
+      h.scheduler.place(root.id, interval, nonce),
+    ]);
+    await h.scheduler.place(root.id, interval, nonce);
+    const path = "Daily/2026-11-11.md";
+    const text = h.texts.get(path)!;
+    expect(text.match(/Work/g) ?? []).toHaveLength(1);
+    expect(text).toContain("- [ ] Child");
+    expect(text).not.toContain("#todoist");
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.tasks.get(root.id)?.due).toEqual(due);
+    expect(h.tasks.get(child.id)?.parentId).toBe(root.id);
+    expect(h.service.registry.snapshot()).toEqual(before);
+    expect(get(h.service.state)).toMatchObject({
+      readOnly: true,
+      writable: false,
+    });
+    await expect(h.scheduler.schedule(root.id, interval)).rejects.toThrow();
+    await h.restart();
+    await h.scheduler.importer.initialize();
+    expect(Object.values(get(h.scheduler.importer.imports))).toHaveLength(1);
+    expect(h.service.registry.snapshot()).toEqual(before);
+    await h.scheduler.place(root.id, interval, nonce);
+    expect(h.texts.get(path)!.match(/Work/g) ?? []).toHaveLength(1);
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("plain pane insertion and nesting preserve subtree without opt-in or provider writes", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    const first = "Projects/One.md",
+      firstText = "# Project\n";
+    h.file(first);
+    h.texts.set(first, firstText);
+    await h.scheduler.insertFromPane(root.id, {
+      path: first,
+      before: firstText,
+      offset: firstText.length,
+    });
+    const second = "Daily/2026-11-12.md";
+    h.file(second);
+    h.texts.set(second, "# Day planner\n- 09:00 - 09:30 Admin\n");
+    await h.scheduler.nestFromPane(root.id, {
+      path: second,
+      line: 1,
+      text: "09:00 - 09:30 Admin",
+    });
+    expect(h.texts.get(first)).toContain("- [ ] Work");
+    const nested = h.texts.get(second)!;
+    expect(nested).toContain("  - [ ] Work");
+    expect(nested).toContain("    - [ ] Child");
+    expect(nested).not.toContain("#todoist");
+    expect(h.service.registry.snapshot().links).toEqual({});
+    expect(h.service.registry.snapshot().operations).toEqual([]);
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("moving an existing note subtree to a calendar interval preserves its Google identity", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    const path = "Daily/2026-11-11.md";
+    h.file(path);
+    h.texts.set(
+      path,
+      "# Day planner\r\n- [ ] 09:00 - 09:30 Existing\r\n  - [ ] Child\r\n",
+    );
+    await h.syncCalendar();
+    const block = (await h.notes.scan())[0]!;
+    const eventId = h.calendarState.records[block.uid]!.eventId;
+    await h.scheduler.placeNote(
+      { path, line: 1, text: "09:00 - 09:30 Existing", durationMinutes: 30 },
+      { start: "2026-11-12T10:00:00Z", end: "2026-11-12T10:30:00Z" },
+      crypto.randomUUID(),
+    );
+    await h.syncCalendar();
+    const next = await h.notes.scan();
+    expect(next.find((item) => item.uid === block.uid)?.raw).toContain(
+      "- [ ] Child",
+    );
+    expect(h.calendarState.records[block.uid]?.eventId).toBe(eventId);
+    expect(h.events.has(eventId)).toBe(true);
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.service.registry.snapshot().links).toEqual({});
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("nesting an existing CRLF note subtree retains its checklist and surrounding bytes", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    const path = "Daily/2026-11-12.md";
+    const before =
+      "# Day planner\r\n- [ ] Source\r\n  - [ ] Child\r\n- 09:00 - 09:30 Admin\r\n- 10:00 - 10:30 Next\r\n";
+    h.file(path);
+    h.texts.set(path, before);
+    await h.scheduler.nestNote(
+      { path, line: 1, text: "Source" },
+      { path, line: 3, text: "09:00 - 09:30 Admin" },
+      crypto.randomUUID(),
+    );
+    const result = h.texts.get(path)!;
+    expect(result).toContain("  - [ ] Source\r\n    - [ ] Child");
+    expect(result.indexOf("Source")).toBeGreaterThan(
+      result.indexOf("09:00 - 09:30 Admin"),
+    );
+    expect(result.indexOf("Child")).toBeLessThan(
+      result.indexOf("10:00 - 10:30 Next"),
+    );
+    expect(result.replace(/\r\n/g, "")).not.toContain("\n");
+    expect(h.apply).not.toHaveBeenCalled();
+    expect(h.service.registry.snapshot().links).toEqual({});
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("note moves reject locked subtrees, self-containment and stale source or destination", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    const path = "Daily/2026-11-12.md";
+    const initial =
+      "# Day planner\n- [ ] Source\n  - [ ] 09:00 - 09:30 Child\n- 10:00 - 10:30 Target\n";
+    h.file(path);
+    h.texts.set(path, initial);
+    const source = { path, line: 1, text: "Source" };
+    await expect(
+      h.scheduler.nestNote(
+        source,
+        { path, line: 2, text: "09:00 - 09:30 Child" },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      h.scheduler.nestNote(
+        { ...source, text: "Stale" },
+        { path, line: 3, text: "10:00 - 10:30 Target" },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toThrow();
+    await expect(
+      h.scheduler.nestNote(
+        source,
+        { path, line: 3, text: "10:00 - 10:30 Stale" },
+        crypto.randomUUID(),
+      ),
+    ).rejects.toThrow();
+    const rootLocked = initial.replace("Source", "Source #locked");
+    h.texts.set(path, rootLocked);
+    await expect(
+      h.scheduler.placeNote(
+        { path, line: 1, text: "Source #locked" },
+        interval,
+        crypto.randomUUID(),
+      ),
+    ).rejects.toThrow();
+    const childLocked = initial.replace("Child", "Child #locked");
+    h.texts.set(path, childLocked);
+    await expect(
+      h.scheduler.placeNote(source, interval, crypto.randomUUID()),
+    ).rejects.toThrow();
+    expect(h.texts.get(path)).toBe(childLocked);
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
   test("an untouched date-only native preview creates no note, event or provider command", async () => {
     const h = await harness();
     h.tasks.set(root.id, {
@@ -2170,7 +2589,9 @@ describe("linked task scheduling", () => {
 
   test("an exporter collision retains the local schedule and prevents task-date writes until retry", async () => {
     const h = await harness();
-    h.setExportGuardFailure("Todoist is already exporting into this managed calendar.");
+    h.setExportGuardFailure(
+      "Todoist is already exporting into this managed calendar.",
+    );
     await h.scheduler.schedule(root.id, interval);
     await h.settle();
     const intent = h.service.registry.snapshot().schedules.at(-1)!;
@@ -2183,23 +2604,32 @@ describe("linked task scheduling", () => {
     h.setExportGuardFailure("");
     await h.scheduler.retry(intent.id);
     await h.settle();
-    expect(h.service.registry.snapshot().schedules.find(op => op.id === intent.id)?.phase).toBe("complete");
+    expect(
+      h.service.registry.snapshot().schedules.find((op) => op.id === intent.id)
+        ?.phase,
+    ).toBe("complete");
     expect(h.events.size).toBe(1);
     expect(h.tasks.get(root.id)?.due?.date).toBe(interval.start);
-    h.scheduler.stop();h.service.stop();
+    h.scheduler.stop();
+    h.service.stop();
   });
 
   test("an untimed task capture remains available while calendar export is paused", async () => {
     const h = await harness();
     h.setExportGuardFailure("Calendar unavailable");
-    const path = "Tasks.md", before = "# Tasks\n";
-    h.texts.set(path, before);h.file(path);
+    const path = "Tasks.md",
+      before = "# Tasks\n";
+    h.texts.set(path, before);
+    h.file(path);
     await h.scheduler.insert(root.id, { path, offset: before.length, before });
     await h.settle();
     expect(h.exportGuard).not.toHaveBeenCalled();
-    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe("complete");
+    expect(h.service.registry.snapshot().schedules.at(-1)?.phase).toBe(
+      "complete",
+    );
     expect(h.texts.get(path)).toContain("Work #todoist");
-    h.scheduler.stop();h.service.stop();
+    h.scheduler.stop();
+    h.service.stop();
   });
   test("a restored note before missing-source acknowledgment cancels stale detachment", async () => {
     const h = await harness();

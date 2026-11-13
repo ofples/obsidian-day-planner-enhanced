@@ -102,6 +102,20 @@ function harness(edits?: { isWriting: boolean; revision: number }) {
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 describe("vault calendar adapter", () => {
+  test("restoring a missing note retains the saved children while using Google title and time", async () => {
+    const h = harness();
+    h.texts.set(sourcePath, "# Day planner\r\n\r\n# Journal\r\nUntouched.\r\n");
+    await h.notes.scan();
+    const snapshot = {
+      title: "Google title",
+      start: window.moment("2026-11-11 11:00").toISOString(),
+      end: window.moment("2026-11-11 12:00").toISOString(),
+    };
+    await h.notes.write(uid, snapshot, undefined, original);
+    expect(h.texts.get(sourcePath)).toContain("11:00 - 12:00 Google title");
+    expect(h.texts.get(sourcePath)).toContain("Nested [[Other]] ^child");
+    expect(h.texts.get(sourcePath)).toContain("# Journal\r\nUntouched.");
+  });
   test("native note writes invalidate calendar scan and mutation evidence", async () => {
     const edits = { isWriting: true, revision: 1 };
     const h = harness(edits);
@@ -317,9 +331,23 @@ describe("vault calendar adapter", () => {
     const [block] = await h.notes.scan();
     await h.notes.cancel(block!);
     expect(h.texts.get(sourcePath)).toContain(
-      "- [-] Cancelled in Google Calendar:",
+      "- [-] ~~09:00 - 10:00 Work #work~~ ^anchor",
     );
     expect(h.texts.get(sourcePath)).toContain("Nested [[Other]] ^child");
+    expect(await h.notes.scan()).toEqual([]);
+  });
+  test("migrates legacy cancelled lines without changing surrounding bytes or block IDs", async () => {
+    const h = harness();
+    const text =
+      "# Day planner\r\n- [-] Cancelled in Google Calendar: 09:00 - 10:00 Old ^anchor\r\n  - [ ] Child\r\n# Journal\r\nKeep.\r\n";
+    h.texts.set(sourcePath, text);
+    expect(await h.notes.scan()).toEqual([]);
+    expect(h.texts.get(sourcePath)).toBe(
+      text.replace(
+        "Cancelled in Google Calendar: 09:00 - 10:00 Old ^anchor",
+        "~~09:00 - 10:00 Old~~ ^anchor",
+      ),
+    );
     expect(await h.notes.scan()).toEqual([]);
   });
   test("an ID moved to an unrelated note protects the Google event from deletion", async () => {

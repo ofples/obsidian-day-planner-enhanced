@@ -2,8 +2,12 @@ import type { App, Plugin } from "obsidian";
 
 import { TaskService } from "./service";
 import { TodoistProvider } from "./todoist";
+import { TodoistAuth } from "./todoist-auth";
 
-export function createTaskService(plugin: Plugin) {
+export function createTaskService(
+  plugin: Plugin,
+  writesEnabled: () => boolean = () => true,
+) {
   let active = true;
   plugin.register(() => {
     active = false;
@@ -15,7 +19,11 @@ export function createTaskService(plugin: Plugin) {
   const secrets = Reflect.get(plugin.app, "secretStorage") as
     | App["secretStorage"]
     | undefined;
-  return new TaskService(
+  let oauth: TodoistAuth | undefined;
+  const auth = (): TodoistAuth =>
+    (oauth ??= new TodoistAuth(plugin.app, service.connectionKey));
+  plugin.register(() => oauth?.stop());
+  const service: TaskService = new TaskService(
     {
       read: async () =>
         (await adapter.exists(path)) ? adapter.read(path) : null,
@@ -55,6 +63,16 @@ export function createTaskService(plugin: Plugin) {
         secrets.setSecret(key, value);
       },
     },
-    (token) => new TodoistProvider(token, () => active),
+    (token) =>
+      new TodoistProvider(
+        token,
+        () => active,
+        () => auth().token(token),
+      ),
+    writesEnabled,
+    (write) => auth().connect(write),
+    (token) => auth().commit(token),
+    (token) => auth().discard(token),
   );
+  return service;
 }

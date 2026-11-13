@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { EllipsisVertical } from "lucide-svelte";
+  import { EllipsisVertical, LoaderCircle } from "lucide-svelte";
   import { Menu } from "obsidian";
+  import { readable } from "svelte/store";
 
   import { getDateRangeContext } from "../../context/date-range-context";
   import { getIsInSidebarContext } from "../../context/is-in-sidebar-context";
@@ -18,6 +19,8 @@
     workspaceFacade,
     periodicNotes,
     reSync,
+    googleSyncing = readable(false),
+    openReviewSyncConflicts,
     initWeeklyView,
     openTimelineSettingsModal,
   } = getObsidianContext();
@@ -63,6 +66,7 @@
     addTimelineViewMenuItems(menu, {
       exportSchedule,
       reSync,
+      openReviewSyncConflicts,
       initWeeklyView,
       openTimelineSettingsModal,
       settingsStore,
@@ -93,6 +97,17 @@
     {#if $isInSidebar}
       <div class="period">{selectedDay.format("MMM YYYY")}</div>
       <div class="buttons-right">
+        <button
+          class="clickable-icon sync-button"
+          aria-busy={$googleSyncing}
+          aria-label="Sync"
+          onclick={reSync}
+          type="button"
+        >
+          {#if $googleSyncing}<LoaderCircle
+              class="is-spinning svg-icon"
+            />{:else}Sync{/if}
+        </button>
         <ControlButton label="More options" onclick={handleMenuClick}>
           <EllipsisVertical class="svg-icon" />
         </ControlButton>

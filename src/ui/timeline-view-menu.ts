@@ -9,6 +9,7 @@ import { addColumnSelectionItems } from "./column-selection-menu";
 export interface TimelineViewMenuProps {
   exportSchedule: ObsidianContext["exportSchedule"];
   reSync: ObsidianContext["reSync"];
+  openReviewSyncConflicts?: () => void;
   initWeeklyView: ObsidianContext["initWeeklyView"];
   openTimelineSettingsModal: ObsidianContext["openTimelineSettingsModal"];
   openFileForDay: ObsidianContext["workspaceFacade"]["openFileForDay"];
@@ -23,6 +24,7 @@ export function addTimelineViewMenuItems(
   const {
     exportSchedule,
     reSync,
+    openReviewSyncConflicts,
     initWeeklyView,
     openTimelineSettingsModal,
     openFileForDay,
@@ -55,12 +57,16 @@ export function addTimelineViewMenuItems(
   );
 
   menu.addItem((item) =>
-    item
-      .setSection("action")
-      .setTitle("Sync Google Calendar and refresh calendars")
-      .setIcon("sync")
-      .onClick(reSync),
+    item.setSection("action").setTitle("Sync").setIcon("sync").onClick(reSync),
   );
+  if (openReviewSyncConflicts)
+    menu.addItem((item) =>
+      item
+        .setSection("action")
+        .setTitle("Review sync conflicts")
+        .setIcon("git-compare")
+        .onClick(openReviewSyncConflicts),
+    );
 
   menu.addItem((item) =>
     item

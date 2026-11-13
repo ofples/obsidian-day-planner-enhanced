@@ -1,7 +1,7 @@
 <script lang="ts">
   /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
   import { Notice } from "obsidian";
-  import { get, readable } from "svelte/store";
+  import { derived, get, readable } from "svelte/store";
   import { isNotVoid } from "typed-assert";
 
   import { getObsidianContext } from "../../context/obsidian-context";
@@ -16,6 +16,7 @@
   import { selectLogEntriesById } from "../../redux/index/index-slice";
   import { selectRecurringPreviewsForDay } from "../../redux/index/recurring-preview-selectors";
   import { taskDragMime } from "../../tasks/drag";
+  import { noteTaskDragMime } from "../../tasks/note-drag";
   import type { ProviderTask } from "../../tasks/types";
   import type {
     LogTimeBlock,
@@ -87,9 +88,15 @@
     workspaceFacade,
     openLogEntryEditModal,
     taskScheduler,
+    noteTaskDrag,
   } = getObsidianContext();
-  const draggedTask =
+  const providerDraggedTask =
     taskScheduler?.drag.state ?? readable<ProviderTask | null>(null);
+  const noteDraggedTask = noteTaskDrag?.state ?? readable(null);
+  const draggedTask = derived(
+    [providerDraggedTask, noteDraggedTask],
+    ([provider, note]) => provider ?? note,
+  );
   let taskDropPreview: { start: Moment; end: Moment; title: string } | null =
     $state(null);
   let subtaskDropTarget: string | null = $state(null);
@@ -102,7 +109,8 @@
 
   function taskIntervalAt(event: DragEvent) {
     const task = taskScheduler?.drag.current();
-    if (!task || !taskScheduler || !el) return null;
+    const note = noteTaskDrag?.current();
+    if ((!task && !note) || !taskScheduler || !el) return null;
     const settings = $settingsStore;
     const minutes = offsetYToMinutes(
       snap(event.clientY - el.getBoundingClientRect().top, settings),
@@ -115,31 +123,35 @@
       end: start
         .clone()
         .add(
-          taskScheduler.duration(task, settings.defaultDurationMinutes),
+          task
+            ? taskScheduler.duration(task, settings.defaultDurationMinutes)
+            : (note?.durationMinutes ?? settings.defaultDurationMinutes),
           "minutes",
         ),
-      title: task.title,
+      title: task?.title ?? note?.title ?? "Note task",
     };
   }
 
   function taskDragOver(event: DragEvent) {
-    if (
-      !event.dataTransfer?.types.includes(taskDragMime) ||
-      !taskScheduler?.drag.current()
-    )
-      return;
+    if (!event.dataTransfer || !acceptsTaskDrag(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
     subtaskDropTarget = null;
     taskDropPreview = taskIntervalAt(event);
   }
 
+  function acceptsTaskDrag(event: DragEvent) {
+    return Boolean(
+      event.dataTransfer &&
+        ((event.dataTransfer.types.includes(taskDragMime) &&
+          taskScheduler?.drag.current()) ||
+          (event.dataTransfer.types.includes(noteTaskDragMime) &&
+            noteTaskDrag?.current())),
+    );
+  }
+
   function subtaskDragOver(event: DragEvent, id: string) {
-    if (
-      !event.dataTransfer?.types.includes(taskDragMime) ||
-      !taskScheduler?.drag.current()
-    )
-      return;
+    if (!event.dataTransfer || !acceptsTaskDrag(event)) return;
     event.preventDefault();
     event.stopPropagation();
     event.dataTransfer.dropEffect = "move";
@@ -155,45 +167,64 @@
       text: string;
     },
   ) {
-    if (!event.dataTransfer?.types.includes(taskDragMime) || !taskScheduler)
+    if (!event.dataTransfer || !acceptsTaskDrag(event) || !taskScheduler)
       return;
     event.preventDefault();
     event.stopPropagation();
     try {
-      const drop = taskScheduler.drag.accept(event.dataTransfer);
-      await taskScheduler.nest(
-        drop.task.id,
-        { path: block.path, line: block.position.start.line, text: block.text },
-        drop.id,
-      );
+      const parent = {
+        path: block.path,
+        line: block.position.start.line,
+        text: block.text,
+      };
+      if (event.dataTransfer.types.includes(noteTaskDragMime) && noteTaskDrag) {
+        const drop = noteTaskDrag.accept(event.dataTransfer);
+        await taskScheduler.nestNote(drop.reference, parent, drop.id);
+      } else {
+        const drop = taskScheduler.drag.accept(event.dataTransfer);
+        await (
+          taskScheduler.nestFromPane?.bind(taskScheduler) ??
+          taskScheduler.nest.bind(taskScheduler)
+        )(drop.task.id, parent, drop.id);
+      }
     } catch (error) {
       new Notice(
         error instanceof Error ? error.message : "Could not add this subtask.",
       );
     } finally {
       taskScheduler.drag.cancel();
+      noteTaskDrag?.cancel();
       subtaskDropTarget = null;
       taskDropPreview = null;
     }
   }
 
   async function dropTask(event: DragEvent) {
-    if (!event.dataTransfer?.types.includes(taskDragMime) || !taskScheduler)
+    if (!event.dataTransfer || !acceptsTaskDrag(event) || !taskScheduler)
       return;
     event.preventDefault();
     event.stopPropagation();
     try {
-      const drop = taskScheduler.drag.accept(event.dataTransfer),
-        interval = taskIntervalAt(event);
-      if (interval)
-        await taskScheduler.schedule(
-          drop.task.id,
-          {
-            start: interval.start.toISOString(),
-            end: interval.end.toISOString(),
-          },
-          drop.id,
-        );
+      const interval = taskIntervalAt(event);
+      if (interval) {
+        const target = {
+          start: interval.start.toISOString(),
+          end: interval.end.toISOString(),
+        };
+        if (
+          event.dataTransfer.types.includes(noteTaskDragMime) &&
+          noteTaskDrag
+        ) {
+          const drop = noteTaskDrag.accept(event.dataTransfer);
+          await taskScheduler.placeNote(drop.reference, target, drop.id);
+        } else {
+          const drop = taskScheduler.drag.accept(event.dataTransfer);
+          await (
+            taskScheduler.place?.bind(taskScheduler) ??
+            taskScheduler.schedule.bind(taskScheduler)
+          )(drop.task.id, target, drop.id);
+        }
+      }
     } catch (error) {
       new Notice(
         error instanceof Error
@@ -202,6 +233,7 @@
       );
     } finally {
       taskScheduler.drag.cancel();
+      noteTaskDrag?.cancel();
       taskDropPreview = null;
     }
   }

@@ -64,7 +64,7 @@ export function parseBlocks(
       const raw = text.slice(from, to);
       if (cancelledMarker.test(raw.split(/\r?\n/)[0] ?? "")) continue;
       const line = raw.split(/\r?\n/)[0] ?? "";
-      if (/^\s*[-*+] \[-\] Cancelled in Google Calendar:/.test(line)) continue;
+      if (/^\s*[-*+]\s+\[-\]/.test(line)) continue;
       const range = getTimeRangeMatch(line);
       const time = getTimeFromLine({
         line,

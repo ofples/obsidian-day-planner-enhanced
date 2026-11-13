@@ -42,6 +42,7 @@ import {
 } from "./types";
 
 export interface TaskBrowserState {
+  readOnly?: boolean;
   snapshot: TaskSnapshot | null;
   connected: boolean;
   loading: boolean;
@@ -83,10 +84,29 @@ export class TaskService {
   constructor(
     private readonly storage: TaskStorage,
     private readonly provider: (token: string) => TaskProvider,
+    private readonly writesEnabled: () => boolean = () => true,
+    private readonly authenticate?: (write: boolean) => Promise<string>,
+    private readonly commitAuthentication?: (token: string) => () => void,
+    private readonly discardAuthentication?: (token: string) => void,
   ) {}
 
   private secretKey() {
     return `day-planner-tasks-${this.cache.namespace}-todoist`;
+  }
+
+  get connectionKey() {
+    return this.secretKey();
+  }
+
+  async signIn(replaceAccount = false) {
+    if (!this.authenticate)
+      throw new Error("Browser sign-in is unavailable on this device.");
+    const token = await this.authenticate(this.writesEnabled());
+    try {
+      await this.connect(token, replaceAccount, this.commitAuthentication);
+    } finally {
+      this.discardAuthentication?.(token);
+    }
   }
 
   private isCurrent(generation: number) {
@@ -129,7 +149,9 @@ export class TaskService {
         operation.accountId === snapshot.account.id,
     );
     const operations = owned.filter(isOutstanding);
-    const effective = pendingSnapshot(snapshot, operations);
+    const effective = this.writesEnabled()
+      ? pendingSnapshot(snapshot, operations)
+      : snapshot;
     const deletedIds = new Set(
       owned
         .filter(
@@ -189,11 +211,13 @@ export class TaskService {
             cancellable: identityDecisionCanCancel(registry, record),
           })),
         writable:
+          this.writesEnabled() &&
           this.canWrite &&
           current.connected &&
           !get(this.registry.restoration) &&
           !this.registry.needsReadback,
         restoration: get(this.registry.restoration),
+        readOnly: !this.writesEnabled(),
         needsTrackingReadback: this.registry.needsReadback,
         aliases: Object.fromEntries(
           owned
@@ -866,7 +890,11 @@ export class TaskService {
   }
 
   /** An account switch is explicit. Failed validation keeps the existing connection. */
-  async connect(token: string, replaceAccount = false) {
+  async connect(
+    token: string,
+    replaceAccount = false,
+    commit?: (token: string) => () => void,
+  ) {
     if (this.closed)
       throw new Error("Reopen the Tasks pane before connecting.");
     if (!token.trim()) throw new Error("Enter your Todoist API token.");
@@ -887,6 +915,7 @@ export class TaskService {
       token.trim(),
       replaceAccount,
       generation,
+      commit,
     );
     this.pending = operation;
     try {
@@ -904,6 +933,7 @@ export class TaskService {
     token: string,
     replaceAccount: boolean,
     generation: number,
+    commit?: (token: string) => () => void,
   ) {
     try {
       const snapshot = await this.provider(token).read();
@@ -919,7 +949,13 @@ export class TaskService {
       const cache = { ...this.cache, snapshot };
       await this.save(cache);
       if (!this.isCurrent(generation)) return;
-      this.storage.setSecret(this.secretKey(), token);
+      const rollback = commit?.(token);
+      try {
+        this.storage.setSecret(this.secretKey(), token);
+      } catch (error) {
+        rollback?.();
+        throw error;
+      }
       this.cache = cache;
       if (this.registry.needsReadback && !get(this.registry.restoration))
         await this.registry.acknowledgeReadback();
@@ -991,9 +1027,12 @@ export class TaskService {
         if (!this.isCurrent(generation)) return;
         this.publish();
       }
-      snapshot = await this.queue.run(provider, snapshot, () =>
-        this.isCurrent(generation),
-      );
+      if (this.writesEnabled())
+        snapshot = await this.queue.run(
+          provider,
+          snapshot,
+          () => this.isCurrent(generation) && this.writesEnabled(),
+        );
       if (!this.isCurrent(generation)) return;
       const cache = { ...this.cache, snapshot };
       await this.save(cache);

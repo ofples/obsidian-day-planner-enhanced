@@ -25,7 +25,7 @@ export class TaskDrag {
   start(task: ProviderTask, transfer: DataTransfer) {
     const browser = get(this.service.state);
     if (
-      !browser.writable ||
+      !(browser.writable || (browser.readOnly && browser.connected)) ||
       !browser.snapshot ||
       task.completed ||
       task.id.startsWith("local-")
@@ -59,7 +59,10 @@ export class TaskDrag {
     if (
       !active ||
       active.expires < Date.now() ||
-      !get(this.service.state).writable ||
+      !(
+        get(this.service.state).writable ||
+        (get(this.service.state).readOnly && get(this.service.state).connected)
+      ) ||
       snapshot?.provider !== active.provider ||
       snapshot.account.id !== active.accountId
     )

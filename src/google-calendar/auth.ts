@@ -238,7 +238,7 @@ export class GoogleCalendarAuth {
           scope:
             "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly",
           access_type: "offline",
-          prompt: "consent",
+          prompt: "select_account consent",
           state,
           code_challenge: challenge,
           code_challenge_method: "S256",

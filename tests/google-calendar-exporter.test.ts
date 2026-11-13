@@ -27,6 +27,7 @@ afterEach(() => {
   for (const dispose of disposers.splice(0)) dispose();
   vi.restoreAllMocks();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 const response = (json: unknown, status = 200) => ({
   status,
@@ -40,6 +41,7 @@ async function setup(
   calendarId = "",
   records: CalendarSyncState["records"] = {},
 ) {
+  vi.stubGlobal("activeDocument", document);
   let disk = JSON.stringify({
     version: 2,
     namespace: "a".repeat(32),
@@ -64,7 +66,9 @@ async function setup(
   });
   const plugin = {
     app: {
+      workspace: { on: vi.fn(() => ({})), iterateAllLeaves: vi.fn() },
       vault: {
+        on: vi.fn(() => ({})),
         adapter: { exists: async () => true, read: async () => disk, write },
         getMarkdownFiles: readNotes,
       },
@@ -74,6 +78,7 @@ async function setup(
       dir: ".obsidian/plugins/day-planner-enhanced",
     },
     addCommand: vi.fn(),
+    registerEvent: vi.fn(),
     register: (dispose: () => void) => disposers.push(dispose),
     registerInterval: (id: number) =>
       disposers.push(() => window.clearInterval(id)),

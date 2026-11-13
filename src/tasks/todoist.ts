@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import {
   RequestCooldownError,
+  RequestCancelledError,
   todoistRequestGate,
 } from "../service/request-gate";
 
@@ -105,6 +106,8 @@ export class TodoistProvider implements TaskProvider {
   constructor(
     private readonly token: string,
     private readonly canStart: () => boolean = () => true,
+    private readonly accessToken: () => Promise<string> = () =>
+      Promise.resolve(token),
   ) {}
 
   private async request(
@@ -114,11 +117,13 @@ export class TodoistProvider implements TaskProvider {
     let result;
     try {
       result = await todoistRequestGate(this.token).run(
-        () =>
-          requestUrl({
+        async () => {
+          const token = await this.accessToken();
+          if (!this.canStart()) throw new RequestCancelledError();
+          return requestUrl({
             url: `https://api.todoist.com/api/v1/${path}`,
             method: body ? "POST" : "GET",
-            headers: { Authorization: `Bearer ${this.token}` },
+            headers: { Authorization: `Bearer ${token}` },
             ...(body
               ? {
                   body: body.toString(),
@@ -126,7 +131,8 @@ export class TodoistProvider implements TaskProvider {
                 }
               : {}),
             throw: false,
-          }),
+          });
+        },
         undefined,
         this.canStart,
         `${body ? "POST" : "GET"} ${path.split("?")[0]}${body?.has("commands") ? " commands" : ""}`,

@@ -302,6 +302,18 @@ The optional status bar widget shows the active clock and provides a shortcut to
 
 - Clock time blocks cannot be edited by dragging yet. Use the context menu to edit clock times.
 
+## Task pane and accounts
+
+Open **Accounts** in the task pane, or in Day Planner settings, and choose **Sign in with Google** or **Sign in with Todoist**. Sign-in opens your browser. Google uses the Desktop OAuth client configured in the expandable Google Calendar setup instructions. Existing connections remain available during sign-in.
+
+Todoist imports create ordinary Markdown copies by default. Drag a task onto an empty timeline slot to schedule it, or onto the right half of an existing block to add it and its children as subtasks. Local note tasks support the same timeline actions. Untimed unchecked tasks from your notes appear under **Note tasks** in the pane. Project filters, date grouping and search help narrow the list.
+
+The **Experimental two-way Todoist sync** setting enables the earlier linked-task workflow. It is disabled by default. Pending Todoist writes pause while it is disabled. Sign in again after enabling it to grant write access.
+
+Add `#locked` to a task, or use the lock button at the top right of its timeline block, to prevent moving it. A locked child also protects its containing block from moves that would shift that child.
+
+Use **Sync** beside the timeline menu to refresh connected services. Its icon spins during synchronization. Automatic Google sync waits for five seconds without edits, and conflict decisions are available through **Review sync conflicts** in the timeline menu. Verified two-sided edits offer **Keep note** and **Keep Google** choices. Missing note blocks offer **Restore to note** and **Remove Google event** after verifying event ownership. Restoring also preserves the last known subtasks when their cached content is available.
+
 ## Support and contribute
 
 If Day Planner Enhanced makes your daily planning easier, [star the repository](https://github.com/jagaldol/obsidian-day-planner-enhanced). It helps other Obsidian users find the project and follow its development.

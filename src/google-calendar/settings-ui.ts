@@ -78,7 +78,7 @@ export function addGoogleCalendarSetupDetails(container: HTMLElement) {
   );
   addStep(
     "Connect and test.",
-    "Click Connect below, choose your Google account in the browser and approve calendar access. Then click Sync now. Test one disposable block in each direction before enabling automatic sync. Keep automatic sync enabled on only one desktop at a time.",
+    "Click Sign in with Google below or in Accounts, choose your Google account in the browser and approve calendar access. Then click Sync. Test one disposable block in each direction before enabling automatic sync. Keep automatic sync enabled on only one desktop at a time.",
   );
   details.appendChild(steps);
   const note = document.createElement("p");
@@ -271,10 +271,12 @@ export function googleCalendarSettingDefinitions(
         name: "Connect Google Calendar",
         render: (setting) => {
           setting.addButton((button) =>
-            button.setButtonText("Connect").onClick(() => service().connect()),
+            button
+              .setButtonText("Sign in with Google")
+              .onClick(() => service().connect()),
           );
           setting.addButton((button) =>
-            button.setButtonText("Sync now").onClick(() => service().run()),
+            button.setButtonText("Sync").onClick(() => service().run()),
           );
           setting.addButton((button) =>
             button
@@ -315,7 +317,7 @@ export function googleCalendarSettingDefinitions(
       },
       {
         name: "Automatically sync Google Calendar",
-        desc: "Sync every minute while Obsidian is open. Enable on only one device at a time. Start with manual sync to verify your setup.",
+        desc: "Sync after five seconds without note edits, with a periodic check while Obsidian is open.",
         render: (setting) => {
           setting.addToggle((control) =>
             control

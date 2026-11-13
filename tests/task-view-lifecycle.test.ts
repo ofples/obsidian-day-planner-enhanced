@@ -15,6 +15,12 @@ vi.mock("svelte", async (importOriginal) => ({
   mount: vi.fn(() => ({})),
   unmount: vi.fn(async () => {}),
 }));
+vi.mock("../src/ui/components/task-pane-root.svelte", () => ({
+  default: vi.fn(),
+}));
+vi.mock("../src/ui/task-schedule-modal", () => ({
+  TaskScheduleModal: vi.fn(),
+}));
 vi.mock("obsidian", () => ({
   ItemView: class {
     contentEl = { addClass: vi.fn(), removeClass: vi.fn() };

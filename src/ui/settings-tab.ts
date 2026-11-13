@@ -44,7 +44,28 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
   getSettingDefinitions(): SettingDefinitionItem[] {
     const settings = this.plugin.getSettings();
     const definitions: SettingDefinitionItem[] = [
+      {
+        name: "Accounts",
+        desc: "Sign in to Google Calendar and Todoist.",
+        render: (setting) => {
+          setting.addButton((button) =>
+            button
+              .setButtonText("Sign in with Google")
+              .onClick(() => this.plugin.openConnections()),
+          );
+          setting.addButton((button) =>
+            button
+              .setButtonText("Sign in with Todoist")
+              .onClick(() => this.plugin.openConnections()),
+          );
+        },
+      },
       this.googleCalendarDefinition(),
+      {
+        name: "Experimental two-way Todoist sync",
+        desc: "Link note edits and completion back to Todoist. Sign in again after enabling. Otherwise tasks are imported as ordinary Markdown.",
+        control: { type: "toggle", key: "experimentalTodoistSync" },
+      },
       {
         name: "Tasks",
         desc: "Connect Todoist and browse tasks beside your schedule.",

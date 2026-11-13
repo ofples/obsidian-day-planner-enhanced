@@ -62,7 +62,7 @@
     busy = true;
     error = "";
     try {
-      await scheduler.schedule(
+      await scheduler.place(
         opened.task.id,
         resolveScheduleInput(
           date,
