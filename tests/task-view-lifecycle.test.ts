@@ -1,4 +1,5 @@
 import type { WorkspaceLeaf } from "obsidian";
+import { mount } from "svelte";
 import { get } from "svelte/store";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
@@ -127,5 +128,39 @@ describe("Tasks view link decisions", () => {
       expect.stringContaining("link decision is saved"),
     );
     expect(get(h.instance.panelAction)?.kind).toBe("unlink");
+  });
+  test("schedule Retry respects both provider deadlines before resuming", async () => {
+    const resetTask = vi.fn(() => false);
+    const resetCalendar = vi.fn(() => false);
+    const retry = vi.fn(async () => {});
+    const instance = new TasksView(
+      {} as WorkspaceLeaf,
+      {
+        refresh: vi.fn(async () => {}),
+        resetProviderForUserRetry: resetTask,
+      } as unknown as TaskService,
+      {} as TaskCapture,
+      vi.fn(),
+      { retry } as never,
+      undefined,
+      undefined,
+      undefined,
+      { calendars: vi.fn(), resetForUserRetry: resetCalendar },
+    );
+    await instance.onOpen();
+    const props = vi.mocked(mount).mock.lastCall![1]!.props as {
+      retrySchedule(id: string): void;
+    };
+    props.retrySchedule("schedule");
+    expect(resetCalendar).not.toHaveBeenCalled();
+    expect(retry).not.toHaveBeenCalled();
+    resetTask.mockReturnValue(true);
+    props.retrySchedule("schedule");
+    expect(resetCalendar).toHaveBeenCalledOnce();
+    expect(retry).not.toHaveBeenCalled();
+    resetCalendar.mockReturnValue(true);
+    props.retrySchedule("schedule");
+    expect(retry).toHaveBeenCalledExactlyOnceWith("schedule");
+    await instance.onClose();
   });
 });

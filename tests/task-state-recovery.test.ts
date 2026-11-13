@@ -164,6 +164,7 @@ describe("saved task tracking repair", () => {
       }),
     };
     const service = createTaskService({
+      register: vi.fn(),
       manifest: { id: "day-planner-enhanced", dir },
       app: { vault: { configDir: ".obsidian", adapter } },
     } as unknown as Plugin);

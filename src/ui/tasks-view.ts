@@ -37,7 +37,8 @@ export class TasksView extends ItemView {
     private readonly defaultDuration: () => number = () => 30,
     private readonly reconciler?: TaskReconciler,
     private readonly settings?: Writable<DayPlannerSettings>,
-    private readonly calendar?: Pick<GoogleCalendarSync, "calendars">,
+    private readonly calendar?: Pick<GoogleCalendarSync, "calendars"> &
+      Partial<Pick<GoogleCalendarSync, "resetForUserRetry">>,
     private readonly deleter?: TaskDeletionController,
   ) {
     super(leaf);
@@ -103,6 +104,19 @@ export class TasksView extends ItemView {
           if (this.scheduler) handle(this.scheduler.reveal(task.id));
         },
         retrySchedule: (id: string) => {
+          if (!this.service.resetProviderForUserRetry()) {
+            new Notice("Wait for Todoist's retry deadline before retrying.");
+            return;
+          }
+          if (
+            this.calendar?.resetForUserRetry &&
+            !this.calendar.resetForUserRetry()
+          ) {
+            new Notice(
+              "Wait for Google Calendar's retry deadline before retrying.",
+            );
+            return;
+          }
           if (this.scheduler) handle(this.scheduler.retry(id));
         },
         completeTask: (task: ProviderTask) =>

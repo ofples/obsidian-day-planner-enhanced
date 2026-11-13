@@ -4,6 +4,10 @@ import { TaskService } from "./service";
 import { TodoistProvider } from "./todoist";
 
 export function createTaskService(plugin: Plugin) {
+  let active = true;
+  plugin.register(() => {
+    active = false;
+  });
   const path = `${plugin.manifest.dir ?? `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}`}/task-cache.json`;
   const adapter = plugin.app.vault.adapter;
   const statePath = path.replace(/task-cache\.json$/, "task-state.json");
@@ -51,6 +55,6 @@ export function createTaskService(plugin: Plugin) {
         secrets.setSecret(key, value);
       },
     },
-    (token) => new TodoistProvider(token),
+    (token) => new TodoistProvider(token, () => active),
   );
 }

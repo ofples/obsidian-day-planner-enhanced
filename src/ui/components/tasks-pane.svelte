@@ -606,7 +606,7 @@
             $browserState.loading ||
             ($browserState.retryAt ?? 0) > Date.now()}
           onclick={() => {
-            void service.refresh();
+            void service.refresh(true);
           }}
           title="Refresh tasks"
           ><RefreshCw
@@ -702,7 +702,7 @@
               class="task-text-button"
               disabled={($browserState.retryAt ?? 0) > Date.now()}
               onclick={() => {
-                void service.refresh();
+                void service.refresh(true);
               }}>Retry sync</button
             >{/if}{/if}
         {#each $reconcileState.issues as issue (issue.id)}<div

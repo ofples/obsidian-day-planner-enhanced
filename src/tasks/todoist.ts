@@ -1,6 +1,11 @@
 import { requestUrl } from "obsidian";
 import { z } from "zod";
 
+import {
+  RequestCooldownError,
+  todoistRequestGate,
+} from "../service/request-gate";
+
 import type { TaskDraft, TaskOperation, TaskPatch } from "./operations";
 import {
   TaskReadError,
@@ -97,32 +102,52 @@ const remoteTaskSchema = z.object({
 /** Read a complete account snapshot before publishing any of it. */
 export class TodoistProvider implements TaskProvider {
   readonly capabilities = { recurringUndo: true };
-  constructor(private readonly token: string) {}
+  constructor(
+    private readonly token: string,
+    private readonly canStart: () => boolean = () => true,
+  ) {}
 
   private async request(
     path: string,
     body?: URLSearchParams,
   ): Promise<unknown> {
-    const response = await requestUrl({
-      url: `https://api.todoist.com/api/v1/${path}`,
-      method: body ? "POST" : "GET",
-      headers: { Authorization: `Bearer ${this.token}` },
-      ...(body
-        ? {
-            body: body.toString(),
-            contentType: "application/x-www-form-urlencoded",
-          }
-        : {}),
-      throw: false,
-    });
+    let result;
+    try {
+      result = await todoistRequestGate(this.token).run(
+        () =>
+          requestUrl({
+            url: `https://api.todoist.com/api/v1/${path}`,
+            method: body ? "POST" : "GET",
+            headers: { Authorization: `Bearer ${this.token}` },
+            ...(body
+              ? {
+                  body: body.toString(),
+                  contentType: "application/x-www-form-urlencoded",
+                }
+              : {}),
+            throw: false,
+          }),
+        undefined,
+        this.canStart,
+        `${body ? "POST" : "GET"} ${path.split("?")[0]}${body?.has("commands") ? " commands" : ""}`,
+        (response) => response.status === 401 || response.status === 403,
+      );
+    } catch (error) {
+      if (error instanceof RequestCooldownError)
+        throw new TaskReadError(
+          error.permanent
+            ? "Reconnect Todoist or check this connection's permissions."
+            : error.circuitOpen
+              ? "Todoist sync is paused after repeated failures. Use Retry sync when ready."
+              : "Todoist is busy. Try refreshing after a short wait.",
+          error.retryAt,
+          error.permanent,
+          error.status,
+        );
+      throw error;
+    }
+    const { response, retryAt } = result;
     if (response.status !== 200) {
-      const retry = response.headers["retry-after"];
-      const seconds = Number(retry);
-      const retryAt = retry
-        ? Number.isFinite(seconds)
-          ? Date.now() + seconds * 1000
-          : Date.parse(retry)
-        : undefined;
       throw new TaskReadError(
         response.status === 401
           ? "Reconnect Todoist to refresh your tasks."

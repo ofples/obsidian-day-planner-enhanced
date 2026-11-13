@@ -1,9 +1,20 @@
 import { requestUrl } from "obsidian";
 import { z } from "zod";
 
+import {
+  googleRequestGate,
+  RequestCooldownError,
+  RequestPermanentError,
+  RequestCancelledError,
+  RequestTransientError,
+} from "../service/request-gate";
 import type { DayPlannerSettings } from "../settings";
 
-import type { GoogleCalendarAuth } from "./auth";
+import {
+  googleQuotaError,
+  GoogleTokenError,
+  type GoogleCalendarAuth,
+} from "./auth";
 import { plannerEventColor, type EventColors } from "./colors";
 import { isTodoistCalendarExport } from "./exporter";
 import { renderSubtasks, withSubtasks } from "./subtasks";
@@ -16,11 +27,19 @@ import type {
 } from "./types";
 
 export class CalendarHttpError extends Error {
-  constructor(readonly status: number) {
+  constructor(
+    readonly status: number,
+    readonly retryAt?: number,
+    readonly circuitOpen = false,
+  ) {
     super(
-      status === 412
-        ? "Google changed during sync; retry to compare both versions."
-        : `Google Calendar request failed (${status}). No sync baseline was advanced.`,
+      circuitOpen
+        ? "Google Calendar sync is paused. Retry sync or reconnect when ready."
+        : retryAt && (status === 429 || status === 403)
+          ? "Google Calendar is rate limited. Wait for the retry deadline, then retry sync."
+          : status === 412
+            ? "Google changed during sync; retry to compare both versions."
+            : `Google Calendar request failed (${status}). No sync baseline was advanced.`,
     );
   }
 }
@@ -33,6 +52,7 @@ export class GoogleCalendarApi implements CalendarApi {
     private readonly clientId: string,
     private readonly calendarId: string,
     private readonly namespace: string,
+    private readonly canStart: () => boolean = () => true,
   ) {}
 
   private async request<T>(
@@ -42,39 +62,79 @@ export class GoogleCalendarApi implements CalendarApi {
     etag?: string,
   ): Promise<T> {
     let refresh = false;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const token = await this.auth.token(this.clientId, refresh);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const forceRefresh = refresh;
       refresh = false;
-      const response = await requestUrl({
-        url: `https://www.googleapis.com/calendar/v3/${path}`,
-        method,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          ...(etag ? { "If-Match": etag } : {}),
-        },
-        ...(body
-          ? { contentType: "application/json", body: JSON.stringify(body) }
-          : {}),
-        throw: false,
-      });
+      let result;
+      try {
+        result = await googleRequestGate(this.auth).run(
+          async () => {
+            let token: string;
+            try {
+              token = await this.auth.token(this.clientId, forceRefresh);
+            } catch (error) {
+              if (error instanceof GoogleTokenError) {
+                if (error.status === 429 || error.status >= 500 || error.quota)
+                  throw new RequestTransientError(
+                    error.status,
+                    error.retryAfter,
+                  );
+                throw new RequestPermanentError(error, error.status);
+              }
+              if (
+                error instanceof Error &&
+                /Connect Google Calendar|SecretStorage/.test(error.message)
+              )
+                throw new RequestPermanentError(error);
+              throw error;
+            }
+            if (!this.canStart()) throw new RequestCancelledError();
+            return requestUrl({
+              url: `https://www.googleapis.com/calendar/v3/${path}`,
+              method,
+              headers: {
+                Authorization: `Bearer ${token}`,
+                ...(etag ? { "If-Match": etag } : {}),
+              },
+              ...(body
+                ? {
+                    contentType: "application/json",
+                    body: JSON.stringify(body),
+                  }
+                : {}),
+              throw: false,
+            });
+          },
+          (response) => {
+            if (response.status !== 403) return false;
+            try {
+              return googleQuotaError(response.json);
+            } catch {
+              return false;
+            }
+          },
+          this.canStart,
+          `${method} ${path.split("?")[0]}`,
+          (response) =>
+            response.status === 403 || (response.status === 401 && attempt > 0),
+        );
+      } catch (error) {
+        if (error instanceof RequestCooldownError)
+          throw new CalendarHttpError(
+            error.status ?? 503,
+            error.retryAt,
+            error.circuitOpen,
+          );
+        throw error;
+      }
+      const { response, retryAt } = result;
       if (response.status >= 200 && response.status < 300)
         return (response.status === 204 ? undefined : response.json) as T;
       if (response.status === 401 && attempt === 0) {
         refresh = true;
         continue;
       }
-      if (
-        (response.status === 429 || response.status >= 500) &&
-        method !== "POST" &&
-        attempt < 3
-      ) {
-        const retry = Number(response.headers["retry-after"]) * 1000;
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.min(10_000, retry || 500 * 2 ** attempt)),
-        );
-        continue;
-      }
-      throw new CalendarHttpError(response.status);
+      throw new CalendarHttpError(response.status, retryAt);
     }
     throw new Error("Google Calendar retry limit reached.");
   }

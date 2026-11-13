@@ -12,6 +12,9 @@ import {
   taskCaptureSettingsSchema,
 } from "../src/tasks/capture-settings";
 import { TaskService } from "../src/tasks/service";
+import { TaskReconciler } from "../src/tasks/reconcile";
+import type { TaskScheduler } from "../src/tasks/schedule";
+import { scheduleOperationSchema } from "../src/tasks/schedule-types";
 import type { TaskOperation } from "../src/tasks/operations";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
 
@@ -98,6 +101,234 @@ async function setup(initial = "- [ ] Buy rice #todoist #karma") {
 }
 
 describe("tagged task capture", () => {
+  async function linkedTreeFixture(oldText = "- [ ] Parent #todoist\n  - [ ] Milk\n  - [ ] Bread") {
+    const h = await setup("");
+    const original = parseCaptureCandidates("Old.md", oldText);
+    await h.service.registry.change(state => {
+      for (const [i, candidate] of original.entries()) {
+        const source = { path: candidate.path, from: candidate.from, raw: candidate.raw, title: candidate.title };
+        const base: ProviderTask = { id: `tree-${i}`, title: candidate.title, description: "", projectId: "inbox", parentId: i ? "tree-0" : null, labels: [], priority: 1, completed: false, order: i, due: null };
+        state.links[`tree-uid-${i}`] = { provider: "todoist", accountId: "account", taskId: base.id, source, noteBase: source, base };
+      }
+    });
+    return { ...h, oldText };
+  }
+
+  test("missing parent holds identical children in an unrelated older list for review", async () => {
+    const h = await linkedTreeFixture();
+    const notes = new Map([["Old.md", "- [ ] Laundry\n- [ ] Another local item"], ["Other.md", "- [ ] Errands\n  - [ ] Milk\n  - [ ] Bread"]]);
+    const capture = new TaskCapture(h.service, { ...h.host, paths: () => [...notes.keys()], candidates: () => [...notes].flatMap(([path, text]) => parseCaptureCandidates(path, text)), read: async path => notes.get(path) ?? null });
+    const result = await capture.inspectCurrentIdentities();
+    for (const uid of ["tree-uid-1", "tree-uid-2"]) {
+      expect(result.candidates.some(candidate => candidate.uid === uid)).toBe(false);
+      expect(result.identityIssues.some(issue => issue.uids.includes(uid) && issue.message.includes("parent note task is missing"))).toBe(true);
+      expect(await capture.missingSource(uid, result)).toBeNull();
+    }
+    expect(Object.keys(h.service.registry.snapshot().links)).toHaveLength(3);
+    expect(h.apply).not.toHaveBeenCalled();
+    capture.stop(); h.capture.stop(); h.service.stop();
+  });
+
+  test("a matched whole-parent move retains parent and child identities", async () => {
+    const h = await linkedTreeFixture();
+    const notes = new Map([["Old.md", ""], ["New.md", h.oldText]]);
+    const capture = new TaskCapture(h.service, { ...h.host, paths: () => [...notes.keys()], candidates: () => [...notes].flatMap(([path, text]) => parseCaptureCandidates(path, text)), read: async path => notes.get(path) ?? null });
+    const result = await capture.inspectCurrentIdentities();
+    expect(result.candidates.map(candidate => candidate.uid)).toEqual(["tree-uid-0", "tree-uid-1", "tree-uid-2"]);
+    expect(result.identityIssues).toEqual([]);
+    capture.stop(); h.capture.stop(); h.service.stop();
+  });
+
+  test("a previously acknowledged independent child stays linked when its parent is missing", async () => {
+    const h = await linkedTreeFixture();
+    const independent = parseCaptureCandidates("Other.md", "- [ ] Milk")[0]!;
+    await h.service.registry.change(state => {
+      const link = state.links["tree-uid-1"]!;
+      link.source = { path: independent.path, from: independent.from, raw: independent.raw, title: independent.title };
+      link.noteBase = link.source;
+    });
+    const notes = new Map([["Old.md", "- [ ] Laundry"], ["Other.md", "- [ ] Milk"]]);
+    const capture = new TaskCapture(h.service, { ...h.host, paths: () => [...notes.keys()], candidates: () => [...notes].flatMap(([path, text]) => parseCaptureCandidates(path, text)), read: async path => notes.get(path) ?? null });
+    const result = await capture.inspectCurrentIdentities();
+    expect(result.candidates.find(candidate => candidate.path === "Other.md")?.uid).toBe("tree-uid-1");
+    expect(result.identityIssues.some(issue => issue.uids.includes("tree-uid-1"))).toBe(false);
+    capture.stop(); h.capture.stop(); h.service.stop();
+  });
+
+  test("a unique native block identity permits a child move despite its missing parent", async () => {
+    const h = await linkedTreeFixture("- [ ] Parent #todoist\n  - [ ] Milk ^unique-child\n  - [ ] Bread");
+    const notes = new Map([["Old.md", "- [ ] Laundry\n- [ ] Another"], ["Other.md", "- [ ] Milk ^unique-child"]]);
+    const capture = new TaskCapture(h.service, { ...h.host, paths: () => [...notes.keys()], candidates: () => [...notes].flatMap(([path, text]) => parseCaptureCandidates(path, text)), read: async path => notes.get(path) ?? null });
+    const result = await capture.inspectCurrentIdentities();
+    expect(result.candidates.find(candidate => candidate.path === "Other.md")?.uid).toBe("tree-uid-1");
+    expect(result.identityIssues.some(issue => issue.uids.includes("tree-uid-1") && issue.message.includes("parent note task is missing"))).toBe(false);
+    capture.stop(); h.capture.stop(); h.service.stop();
+  });
+
+  test("missing-parent guard propagates through a 2000-level chain without recursion", async () => {
+    const h = await setup("");
+    const count = 2000;
+    const candidates = Array.from({ length: count }, (_, i) => {
+      const raw = "x".repeat(count - i);
+      return { path: "New.md", from: i, to: count, raw, title: `Node ${i}`, line: i, completed: false, status: " ", tags: [], uid: i ? `deep-${i}` : undefined };
+    });
+    await h.service.registry.change(state => {
+      for (let i = 0; i < count; i++) {
+        const candidate = candidates[i]!;
+        const source = { path: "Old.md", from: i, raw: candidate.raw, title: candidate.title };
+        const base: ProviderTask = { id: `task-${i}`, title: candidate.title, description: "", projectId: "inbox", parentId: i ? `task-${i - 1}` : null, labels: [], priority: 1, completed: false, order: i, due: null };
+        state.links[`deep-${i}`] = { provider: "todoist", accountId: "account", taskId: base.id, source, base };
+      }
+    });
+    const result = h.capture.inspectIdentities(candidates.slice(1));
+    expect(result.identityIssues.filter(issue => issue.message.includes("parent note task is missing"))).toHaveLength(count - 1);
+    expect(result.candidates).toHaveLength(0);
+    h.capture.stop(); h.service.stop();
+  });
+
+  test("a stale completed child plan cannot override its current source back inside the parent", async () => {
+    const h = await linkedTreeFixture();
+    const child = h.service.registry.snapshot().links["tree-uid-1"]!;
+    const candidate = parseCaptureCandidates("Other.md", "- [ ] Milk")[0]!;
+    const source = { path: candidate.path, from: candidate.from, raw: candidate.raw, title: candidate.title };
+    const operation = (task: ProviderTask, plannedSource: typeof source) => scheduleOperationSchema.parse({
+      id: crypto.randomUUID(), provider: "todoist", accountId: "account", task,
+      linkUid: "tree-uid-1", googleUid: "unused", providerOperationId: crypto.randomUUID(), occurrenceKey: "single",
+      target: { kind: "insert", path: plannedSource.path, offset: 0, before: "" }, children: [], raw: plannedSource.raw,
+      generatedTaskIds: [child.taskId], syncTaskDate: false, phase: "complete", createdAt: new Date().toISOString(),
+      plan: { edits: [], links: [{ uid: "tree-uid-1", task: child.base, source: plannedSource }], interval: null },
+    });
+    const notes = new Map([["Old.md", "- [ ] Laundry\n- [ ] Other"], ["Other.md", "- [ ] Milk"]]);
+    const capture = new TaskCapture(h.service, { ...h.host, paths: () => [...notes.keys()], candidates: () => [...notes].flatMap(([path, text]) => parseCaptureCandidates(path, text)), read: async path => notes.get(path) ?? null });
+    await h.service.registry.change(state => { state.schedules.push(operation(child.base!, source)); });
+    const later = await capture.inspectCurrentIdentities();
+    expect(later.candidates.some(item => item.uid === "tree-uid-1")).toBe(false);
+    expect(later.identityIssues.some(item => item.uids.includes("tree-uid-1"))).toBe(true);
+    await h.service.registry.change(state => { state.links["tree-uid-1"]!.source = source; state.links["tree-uid-1"]!.noteBase = source; });
+    expect((await capture.inspectCurrentIdentities()).candidates.some(item => item.uid === "tree-uid-1")).toBe(true);
+    capture.stop(); h.capture.stop(); h.service.stop();
+  });
+
+  test("removed tree sources remain protected when unrelated checklist lines leave ambiguous same-note candidates", async () => {
+    const h = await setup("");
+    const oldText = Array.from({ length: 5 }, (_, i) => `- [ ] Removed ${i} #todoist`).join("\n");
+    const otherText = Array.from({ length: 4 }, (_, i) => `- [ ] Retained ${i} #todoist`).join("\n");
+    const old = parseCaptureCandidates("Old.md", oldText);
+    const other = parseCaptureCandidates("Other.md", otherText);
+    await h.service.registry.change(state => {
+      for (const [index, candidate] of [...old, ...other].entries()) {
+        const source = { path: candidate.path, raw: candidate.raw, from: candidate.from, title: candidate.title };
+        const base: ProviderTask = { id: `task-${index}`, title: candidate.title, description: "", projectId: "inbox", parentId: index ? "task-0" : null, labels: [], priority: 1, completed: false, order: index, due: null };
+        state.links[`uid-${index}`] = { provider: "todoist", accountId: "account", taskId: base.id, source, base };
+      }
+    });
+    const current = "- [ ] Unrelated one\n- [ ] Unrelated two";
+    const capture = new TaskCapture(h.service, {
+      ...h.host,
+      candidates: () => [...parseCaptureCandidates("Old.md", current), ...parseCaptureCandidates("Other.md", otherText)],
+      paths: () => ["Old.md", "Other.md"],
+      read: async path => path === "Old.md" ? current : otherText,
+    });
+    const inspection = await capture.inspectCurrentIdentities();
+    expect(inspection.identityIssues.flatMap(issue => issue.uids).sort()).toEqual(Array.from({ length: 5 }, (_, i) => `uid-${i}`).sort());
+    expect(inspection.candidates.filter(candidate => candidate.uid).map(candidate => candidate.uid).sort()).toEqual(Array.from({ length: 4 }, (_, i) => `uid-${i + 5}`).sort());
+    expect(await capture.missingSource("uid-0", inspection)).toBeNull();
+    expect(Object.keys(h.service.registry.snapshot().links)).toHaveLength(9);
+    const tasks = Object.values(h.service.registry.snapshot().links).map(link => link.base!);
+    h.service.state.update(state => ({ ...state, snapshot: { ...state.snapshot!, tasks } }));
+    const reconciler = new TaskReconciler(h.service, capture, { publish: vi.fn() } as unknown as TaskScheduler, () => taskCaptureSettingsSchema.parse({}));
+    let ready = false, notifications = 0;
+    const unsubscribe = capture.state.subscribe(() => {
+      if (!ready) return;
+      if (++notifications >= 8) { reconciler.stop(); return; }
+      if (!reconciler.running) void reconciler.scan();
+    });
+    ready = true;
+    await capture.scan();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(notifications).toBeLessThan(8);
+    expect(Object.keys(h.service.registry.snapshot().issues)).toHaveLength(5);
+    expect(Object.keys(h.service.registry.snapshot().links)).toHaveLength(9);
+    unsubscribe();
+    reconciler.stop();
+    capture.stop();
+    h.capture.stop();
+    h.service.stop();
+  });
+
+  test("large current-note inventories yield to the UI and still inspect every note", async () => {
+    const h = await setup();
+    const paths = Array.from({ length: 80 }, (_, i) => `Note-${i}.md`);
+    const capture = new TaskCapture(h.service, {
+      ...h.host,
+      paths: () => paths,
+      read: async (path) => `- [ ] Local task ${path}`,
+    });
+    let timerRan = false;
+    const timer = new Promise<void>(resolve => setTimeout(() => { timerRan = true; resolve(); }, 0));
+    const result = await capture.inspectCurrentIdentities();
+    expect(timerRan).toBe(true);
+    expect(result.candidates).toHaveLength(paths.length);
+    expect(result.documents?.size).toBe(paths.length);
+    await timer;
+    capture.stop();
+    h.capture.stop();
+    h.service.stop();
+  });
+
+  test("inventory changes during a yielded scan still reject stale identity evidence", async () => {
+    const h = await setup();
+    const paths = Array.from({ length: 30 }, (_, i) => `Note-${i}.md`);
+    let revision = 0;
+    const capture = new TaskCapture(h.service, {
+      ...h.host,
+      paths: () => paths,
+      revision: () => revision,
+      read: async (path) => `- [ ] Local task ${path}`,
+    });
+    setTimeout(() => { revision++; }, 0);
+    await expect(capture.inspectCurrentIdentities()).rejects.toThrow("notes changed while checking task links");
+    expect(Object.keys(h.service.registry.snapshot().links)).toHaveLength(0);
+    capture.stop();
+    h.capture.stop();
+    h.service.stop();
+  });
+
+  test("stopping during a yielded inventory scan prevents later note reads", async () => {
+    const h = await setup();
+    const paths = Array.from({ length: 100 }, (_, i) => `Note-${i}.md`);
+    const read = vi.fn(async (path: string) => `- [ ] Local task ${path}`);
+    const capture = new TaskCapture(h.service, { ...h.host, paths: () => paths, read });
+    setTimeout(() => capture.stop(), 0);
+    await expect(capture.inspectCurrentIdentities()).rejects.toThrow("notes changed while checking task links");
+    expect(read).toHaveBeenCalledTimes(25);
+    h.capture.stop();
+    h.service.stop();
+  });
+
+  test("capture completion and reconciliation settle without requesting each other indefinitely", async () => {
+    const h = await setup("- [ ] Local checklist");
+    const reconciler = new TaskReconciler(h.service, h.capture, {} as TaskScheduler, () => taskCaptureSettingsSchema.parse({}));
+    const scans = vi.spyOn(h.capture, "scan");
+    let ready = false;
+    let notifications = 0;
+    const unsubscribe = h.capture.state.subscribe(() => {
+      if (!ready) return;
+      notifications++;
+      if (notifications >= 8) { reconciler.stop(); return; }
+      if (!reconciler.running) void reconciler.scan();
+    });
+    ready = true;
+    await h.capture.scan();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(notifications).toBeLessThan(8);
+    expect(scans.mock.calls.length).toBeLessThan(8);
+    unsubscribe();
+    reconciler.stop();
+    h.capture.stop();
+    h.service.stop();
+  });
+
   test("a stale indexed source cannot make a restored block create a second task", async () => {
     const oldText = "- [ ] 09:00 - 10:00 Work #todoist";
     const nextText = "- [ ] 10:00 - 11:00 Work #todoist";

@@ -1,5 +1,7 @@
 import { get, writable } from "svelte/store";
 
+import { todoistRequestGate } from "../service/request-gate";
+
 import {
   reviewTaskConflict,
   taskConflictMutations,
@@ -659,6 +661,10 @@ export class TaskService {
       throw new TaskReadError(
         "Review the conflicting task fields before applying this change.",
       );
+    if (!this.resetProviderForUserRetry())
+      throw new TaskReadError(
+        "Wait for Todoist's retry deadline before retrying.",
+      );
     await this.registry.updateOperation(id, {
       retryAt: undefined,
       error: undefined,
@@ -864,6 +870,10 @@ export class TaskService {
     if (this.closed)
       throw new Error("Reopen the Tasks pane before connecting.");
     if (!token.trim()) throw new Error("Enter your Todoist API token.");
+    if (!todoistRequestGate(token.trim()).resetForUserRetry())
+      throw new TaskReadError(
+        "Wait for Todoist's retry deadline before reconnecting.",
+      );
     if (this.pending)
       throw new Error("Wait for the current refresh to finish.");
     const generation = ++this.generation;
@@ -931,12 +941,18 @@ export class TaskService {
     }
   }
 
-  refresh(): Promise<void> {
+  resetProviderForUserRetry() {
+    const token = this.storage.getSecret(this.secretKey());
+    return !token || todoistRequestGate(token).resetForUserRetry();
+  }
+
+  refresh(manual = false): Promise<void> {
     if (this.closed) return Promise.resolve();
     if (get(this.registry.restoration)) return Promise.resolve();
     if (this.pending) return this.pending;
     const token = this.storage.getSecret(this.secretKey());
     if (!token) return Promise.resolve();
+    if (manual && !this.resetProviderForUserRetry()) return Promise.resolve();
     const state = get(this.state);
     if (state.retryAt && state.retryAt > Date.now()) return Promise.resolve();
     const generation = this.generation;

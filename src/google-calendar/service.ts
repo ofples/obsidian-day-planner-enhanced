@@ -5,6 +5,7 @@ import { selectSortedDedupedVisibleDays } from "../redux/date-ranges-slice";
 import { googleTimeBlocksUpdated } from "../redux/ical/ical-slice";
 import type { AppStore } from "../redux/store";
 import type { PeriodicNotes } from "../service/periodic-notes";
+import { googleRequestGate } from "../service/request-gate";
 import type { DayPlannerSettings } from "../settings";
 
 import { GoogleCalendarApi } from "./api";
@@ -354,6 +355,10 @@ export class GoogleCalendarSync {
   }
 
   async connect() {
+    if (!this.resetForUserRetry()) {
+      new Notice("Google Calendar is waiting for its retry deadline.");
+      return;
+    }
     if (this.busy) {
       new Notice("A calendar operation is already running.");
       return;
@@ -424,8 +429,16 @@ export class GoogleCalendarSync {
     await this.validateManagedCalendar(this.api());
   }
 
+  resetForUserRetry() {
+    return googleRequestGate(this.auth).resetForUserRetry();
+  }
+
   async run(automatic = false) {
     if (this.busy || this.stopped) return;
+    if (!automatic && !this.resetForUserRetry()) {
+      new Notice("Google Calendar is waiting for its retry deadline.");
+      return;
+    }
     if (this.edits?.isWriting) {
       if (!automatic)
         new Notice(
@@ -449,6 +462,7 @@ export class GoogleCalendarSync {
         config.clientId.trim(),
         config.calendarId.trim(),
         this.state.namespace,
+        () => !this.stopped,
       );
       const canonicalId = await this.validateManagedCalendar(api);
       await api.usePlannerColors(settings);
@@ -496,6 +510,7 @@ export class GoogleCalendarSync {
       this.getSettings().googleCalendar.clientId.trim(),
       calendarId.trim(),
       this.state.namespace,
+      () => !this.stopped,
     );
   }
 

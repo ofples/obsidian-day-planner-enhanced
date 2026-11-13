@@ -1070,7 +1070,7 @@ export default class DayPlanner extends Plugin {
       void (async () => {
         if (this.taskCapture && this.taskService.registry) {
           await this.taskCapture.scan();
-          await this.taskService.refresh();
+          await this.taskService.refresh(true);
           await this.taskDeleter?.resume();
           await this.taskScheduler?.resume();
           await this.taskReconciler?.scan();

@@ -340,11 +340,92 @@ export class TaskCapture {
           : "Task links need review before capture.",
       );
     }
+    // A bare child line is not enough to move a linked subtree's child to an
+    // unrelated note when the linked parent itself is missing.
+    const guarded = new Set<CaptureCandidate>();
+    const contains = (parent: TaskSource, child: TaskSource) =>
+      parent.path === child.path &&
+      child.from > parent.from &&
+      child.from + child.raw.length <= parent.from + parent.raw.length;
+    const taskKey = (provider: string, accountId: string, taskId: string) =>
+      JSON.stringify([provider, accountId, taskId]);
+    const linkEntries = Object.entries(state.links);
+    const linksByTask = new Map<string, typeof linkEntries>();
+    for (const entry of linkEntries) {
+      const link = entry[1];
+      if (!link.taskId) continue;
+      const key = taskKey(link.provider, link.accountId, link.taskId);
+      const values = linksByTask.get(key) ?? [];
+      values.push(entry);
+      linksByTask.set(key, values);
+    }
+    const childrenByParent = new Map<string, string[]>();
+    for (const [uid, link] of linkEntries) {
+      if (!link.base?.parentId) continue;
+      const parents = (
+        linksByTask.get(
+          taskKey(link.provider, link.accountId, link.base.parentId),
+        ) ?? []
+      ).filter(
+        ([, parent]) =>
+          contains(parent.source, link.source) ||
+          (!!parent.noteBase && contains(parent.noteBase, link.source)),
+      );
+      if (parents.length !== 1) continue;
+      const parentUid = parents[0]![0];
+      const children = childrenByParent.get(parentUid) ?? [];
+      children.push(uid);
+      childrenByParent.set(parentUid, children);
+    }
+    const candidateByUid = new Map(
+      candidates.flatMap((candidate) =>
+        candidate.uid ? [[candidate.uid, candidate] as const] : [],
+      ),
+    );
+    const oldBlockCounts = new Map<string, number>();
+    const candidateBlockCounts = new Map<string, number>();
+    for (const source of Object.values(previous)) {
+      const id = nativeSourceBlockId(source.raw);
+      if (id) oldBlockCounts.set(id, (oldBlockCounts.get(id) ?? 0) + 1);
+    }
+    for (const candidate of candidates) {
+      const id = nativeSourceBlockId(candidate.raw);
+      if (id)
+        candidateBlockCounts.set(id, (candidateBlockCounts.get(id) ?? 0) + 1);
+    }
+    const queue = linkEntries
+      .filter(([uid]) => !candidateByUid.has(uid))
+      .map(([uid]) => uid);
+    for (let index = 0; index < queue.length; index++) {
+      for (const uid of childrenByParent.get(queue[index]!) ?? []) {
+        const candidate = candidateByUid.get(uid);
+        const link = state.links[uid]!;
+        if (!candidate || candidate.path === link.source.path) continue;
+        const blockId = nativeSourceBlockId(link.source.raw);
+        const provenBlock =
+          blockId &&
+          blockId === nativeSourceBlockId(candidate.raw) &&
+          oldBlockCounts.get(blockId) === 1 &&
+          candidateBlockCounts.get(blockId) === 1;
+        if (provenBlock) continue;
+        candidate.uid = undefined;
+        candidateByUid.delete(uid);
+        guarded.add(candidate);
+        blocked.add(candidate);
+        identityIssues.push({
+          path: link.source.path,
+          uids: [uid],
+          message:
+            "The parent note task is missing and a similar child exists in another note. Review the source before moving its link.",
+        });
+        queue.push(uid);
+      }
+    }
     const historicalOwners = new Map(
       historical.map(({ uid, occurrenceId }) => [uid, occurrenceId]),
     );
     for (const group of findTaskSourceCopies(
-      candidates,
+      candidates.filter((candidate) => !guarded.has(candidate)),
       previous,
       historicalOwners,
     )) {
@@ -458,20 +539,30 @@ export class TaskCapture {
     ];
     const documents = new Map<string, string | null>();
     const unavailable = new Set<string>();
-    for (const path of paths) {
+    const candidates: CaptureCandidate[] = [];
+    for (const [index, path] of paths.entries()) {
+      let text: string | null | undefined;
       try {
-        documents.set(path, await this.host.read(path));
+        text = await this.host.read(path);
+        documents.set(path, text);
       } catch {
         unavailable.add(path);
+      }
+      if (text != null) candidates.push(...parseCaptureCandidates(path, text));
+      // Cached vault reads and parsing can otherwise monopolize the UI while a
+      // missing link requires checking the complete note inventory.
+      if ((index + 1) % 25 === 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (!this.ready() || this.host.revision?.() !== revision)
+          throw new TaskReadError(
+            "The notes changed while checking task links. Recheck after the edit finishes.",
+          );
       }
     }
     const changedInventory =
       this.host.paths &&
       JSON.stringify(inventory!.toSorted()) !==
         JSON.stringify(this.host.paths().toSorted());
-    const candidates = [...documents].flatMap(([path, text]) =>
-      text === null ? [] : parseCaptureCandidates(path, text),
-    );
     if (!this.ready() || this.host.revision?.() !== revision)
       throw new TaskReadError(
         "The notes changed while checking task links. Recheck after the edit finishes.",

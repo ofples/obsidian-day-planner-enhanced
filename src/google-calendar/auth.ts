@@ -6,6 +6,38 @@ interface Tokens {
   expires_in: number;
 }
 
+export function googleQuotaError(body: unknown) {
+  if (!body || typeof body !== "object" || !("error" in body)) return false;
+  const error = body.error;
+  if (!error || typeof error !== "object") return false;
+  if ("status" in error && error.status === "RESOURCE_EXHAUSTED") return true;
+  if (!("errors" in error) || !Array.isArray(error.errors)) return false;
+  return error.errors.some((item: unknown) =>
+    Boolean(
+      item &&
+        typeof item === "object" &&
+        "reason" in item &&
+        [
+          "rateLimitExceeded",
+          "userRateLimitExceeded",
+          "quotaExceeded",
+        ].includes(String(item.reason)),
+    ),
+  );
+}
+
+export class GoogleTokenError extends Error {
+  constructor(
+    readonly status: number,
+    readonly retryAfter?: string,
+    readonly quota = false,
+  ) {
+    super(
+      `Google sign-in failed (${status}). Reconnect in Day Planner settings.`,
+    );
+  }
+}
+
 export async function googleTokenRequest(
   params: Record<string, string>,
 ): Promise<Tokens> {
@@ -17,8 +49,19 @@ export async function googleTokenRequest(
     throw: false,
   });
   if (response.status !== 200)
-    throw new Error(
-      `Google sign-in failed (${response.status}). Reconnect in Day Planner settings.`,
+    throw new GoogleTokenError(
+      response.status,
+      Object.entries(response.headers).find(
+        ([name]) => name.toLowerCase() === "retry-after",
+      )?.[1],
+      response.status === 403 &&
+        (() => {
+          try {
+            return googleQuotaError(response.json);
+          } catch {
+            return false;
+          }
+        })(),
     );
   return response.json as Tokens;
 }

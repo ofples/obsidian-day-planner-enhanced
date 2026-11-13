@@ -179,3 +179,27 @@ describe("Todoist complete snapshots", () => {
     ).rejects.toMatchObject({ retryAt: expect.any(Number) });
   });
 });
+
+// Adapter contracts exercise HTTP shape; timing is covered by request-gate tests.
+vi.mock("../src/service/request-gate", async (load) => {
+  const actual = await load<typeof import("../src/service/request-gate")>();
+  const gate = {
+    run: async <T extends { status: number; headers: Record<string, string> }>(
+      send: () => Promise<T>,
+    ) => {
+      const response = await send();
+      return {
+        response,
+        retryAt: actual.retryAfterAt(
+          response.headers["retry-after"],
+          Date.now(),
+        ),
+      };
+    },
+  };
+  return {
+    ...actual,
+    todoistRequestGate: () => gate,
+    googleRequestGate: () => gate,
+  };
+});
