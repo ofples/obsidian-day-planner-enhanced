@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ChevronDown, ChevronRight, Lock } from "lucide-svelte";
+  import { untrack } from "svelte";
 
   import type { CaptureCandidate } from "../../tasks/capture-parser";
   import type { NoteTaskDrag } from "../../tasks/note-drag";
@@ -10,19 +11,22 @@
     candidates,
     noteDrag,
     query = "",
+    initialExpanded = true,
     openNote,
   }: {
     candidates: CaptureCandidate[];
     noteDrag?: NoteTaskDrag;
     query?: string;
+    initialExpanded?: boolean;
     openNote: (path: string, line: number) => void;
   } = $props();
-  let expanded = $state(true);
+  let expanded = $state(untrack(() => initialExpanded));
   let limit = $state(30);
   const rows = $derived(noteTaskRows(candidates, query));
   $effect(() => {
     void query;
     limit = 30;
+    if (query.trim()) expanded = true;
   });
 
   function startDrag(

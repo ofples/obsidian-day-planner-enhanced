@@ -1,5 +1,16 @@
 <script lang="ts">
-  import { RefreshCw, Settings, CalendarClock } from "lucide-svelte";
+  import {
+    AlertCircle,
+    CalendarClock,
+    ChevronDown,
+    ChevronRight,
+    Flag,
+    ListChecks,
+    RefreshCw,
+    Search,
+    Settings,
+    X,
+  } from "lucide-svelte";
   import { DateTime } from "luxon";
   import { Notice } from "obsidian";
   import { readable, type Readable, type Writable } from "svelte/store";
@@ -10,6 +21,8 @@
   import type { TaskScheduler } from "../../tasks/schedule";
   import type { TaskService } from "../../tasks/service";
   import type { ProviderTask } from "../../tasks/types";
+  import { TaskRenderCache } from "../task-render-cache";
+  import "../task-panel.css";
 
   import NoteTasksSection from "./note-tasks-section.svelte";
 
@@ -34,14 +47,31 @@
     openNote: (path: string, line: number) => void;
   } = $props();
   const browser = $derived(service.state);
-  const groups = $derived(
-    $browser.snapshot ? taskGroups($browser.snapshot, $preferences) : [],
+  const snapshot = $derived($browser.snapshot);
+  const grouping = $derived($preferences.groupBy);
+  const groups = $derived(snapshot ? taskGroups(snapshot, $preferences) : []);
+  const completeGroups = $derived(
+    snapshot
+      ? taskGroups(snapshot, {
+          groupBy: grouping,
+          query: "",
+          projectId: "",
+          selectedId: null,
+          collapsed: [],
+        })
+      : [],
   );
-  let query = $derived($preferences.query);
-  const projects = $derived(
-    new Map(
-      $browser.snapshot?.projects.map((project) => [project.id, project.name]),
+  const rowCache = new TaskRenderCache();
+  const renderedGroups = $derived(
+    rowCache.project(
+      JSON.stringify([snapshot?.provider, snapshot?.account.id, grouping]),
+      completeGroups,
+      groups,
+      $preferences.collapsed,
     ),
+  );
+  const projects = $derived(
+    new Map(snapshot?.projects.map((project) => [project.id, project.name])),
   );
   function toggle(id: string) {
     const collapsed = $preferences.collapsed;
@@ -54,12 +84,19 @@
   }
   function dueDate(task: ProviderTask) {
     if (!task.due) return "";
+    const zone = snapshot?.account.timezone ?? "UTC";
     const date = DateTime.fromISO(task.due.date, {
-      zone: task.due.timezone ?? $browser.snapshot?.account.timezone,
-    });
-    return date.toFormat(
-      task.due.date.includes("T") ? "d MMM, HH:mm" : "d MMM",
-    );
+      zone: task.due.timezone ?? zone,
+    }).setZone(zone);
+    const today = DateTime.now().setZone(zone);
+    const label = date.hasSame(today, "day")
+      ? "Today"
+      : date.hasSame(today.plus({ days: 1 }), "day")
+        ? "Tomorrow"
+        : date.toFormat("d MMM");
+    return task.due.date.includes("T")
+      ? `${label}, ${date.toFormat("HH:mm")}`
+      : label;
   }
   function drag(event: DragEvent, task: ProviderTask) {
     try {
@@ -73,289 +110,210 @@
       );
     }
   }
+  function choose(task: ProviderTask) {
+    $preferences = { ...$preferences, selectedId: task.id };
+    schedule(task);
+  }
 </script>
 
-<section class="simple-tasks-pane" aria-label="Tasks">
-  <header>
-    <h2>Tasks</h2>
-    <button
-      aria-label="Refresh tasks"
-      disabled={$browser.loading || !$browser.connected}
-      onclick={() => service.refresh(true)}
-      title="Refresh tasks"
-      ><RefreshCw
-        class={$browser.loading ? "spinning" : ""}
-        size={16}
-      /></button
-    >
-    <button
-      aria-label="Accounts"
-      onclick={connections}
-      title="Accounts and sign-in"><Settings size={16} /></button
-    >
+<section class="simple-tasks-pane dp-task-panel" aria-label="Tasks">
+  <header class="task-toolbar">
+    <div class="task-heading">
+      <h2>Tasks</h2>
+      <div class="task-toolbar-actions">
+        <button
+          class="task-icon-button"
+          aria-label="Refresh tasks"
+          disabled={$browser.loading ||
+            !$browser.connected ||
+            ($browser.retryAt ?? 0) > Date.now()}
+          onclick={() => service.refresh(true)}
+          title="Refresh tasks"
+        >
+          <RefreshCw
+            class={$browser.loading ? "task-spinning" : ""}
+            size={17}
+          />
+        </button>
+        <button
+          class="task-icon-button"
+          aria-label="Connections"
+          onclick={connections}
+          title="Accounts and connections"><Settings size={17} /></button
+        >
+      </div>
+    </div>
+    <div class="task-source-label">
+      <span class="task-source-mark"><ListChecks size={15} /></span><span
+        >Todoist</span
+      >
+      <span
+        class="task-connection-dot"
+        class:connected={$browser.connected}
+        aria-label={$browser.connected
+          ? "Todoist connected"
+          : "Todoist disconnected"}
+        role="img"
+      ></span>
+    </div>
+    <label class="task-search"
+      ><Search size={16} />
+      <input
+        aria-label="Search tasks"
+        placeholder="Search tasks"
+        type="search"
+        bind:value={$preferences.query}
+      />
+      {#if $preferences.query}<button
+          class="task-icon-button"
+          aria-label="Clear search"
+          onclick={() => {
+            $preferences = { ...$preferences, query: "" };
+          }}><X size={14} /></button
+        >{/if}
+    </label>
+    <div class="task-filter-row">
+      <div class="task-grouping" aria-label="Group tasks">
+        <button
+          aria-pressed={$preferences.groupBy === "date"}
+          onclick={() => {
+            $preferences = { ...$preferences, groupBy: "date" };
+          }}>Date</button
+        >
+        <button
+          aria-pressed={$preferences.groupBy === "project"}
+          onclick={() => {
+            $preferences = { ...$preferences, groupBy: "project" };
+          }}>Project</button
+        >
+      </div>
+      <label class="task-project-filter"
+        ><select
+          aria-label="Filter by project"
+          bind:value={$preferences.projectId}
+        >
+          <option value="">All projects</option>
+          {#each snapshot?.projects ?? [] as project (project.id)}<option
+              value={project.id}>{project.name}</option
+            >{/each}
+        </select><ChevronDown size={13} /></label
+      >
+    </div>
   </header>
-  <div class="sources">
-    <button onclick={connections}>Todoist</button><button onclick={connections}
-      >Google</button
+  {#if $browser.error}<div
+      class="task-review task-connection-error"
+      role="status"
     >
-  </div>
-  <label class="search"
-    ><input
-      aria-label="Search tasks"
-      oninput={(event) => {
-        $preferences = { ...$preferences, query: event.currentTarget.value };
-      }}
-      placeholder="Search tasks"
-      type="search"
-      value={query}
-    /></label
-  >
-  <div class="filters">
-    <select aria-label="Filter by project" bind:value={$preferences.projectId}>
-      <option value="">All projects</option>
-      {#each $browser.snapshot?.projects ?? [] as project (project.id)}
-        <option value={project.id}>{project.name}</option>
-      {/each}
-    </select>
-    <select aria-label="Group tasks" bind:value={$preferences.groupBy}>
-      <option value="date">By date</option><option value="project"
-        >By project</option
+      <AlertCircle size={16} />
+      <p>{$browser.error}</p>
+      <button class="task-text-button" onclick={connections}>Connections</button
       >
-    </select>
-  </div>
-  {#if $browser.error}<div class="connection-error" role="status">
-      {$browser.error}<button onclick={connections}>Sign in</button>
     </div>{/if}
-  <div class="task-sources">
-    <NoteTasksSection candidates={$noteTasks} {noteDrag} {openNote} {query} />
-    {#if !$browser.connected}<button class="signin" onclick={connections}
-        >Sign in with Todoist</button
-      >{/if}
-    {#each groups as group (group.id)}
-      <details
-        ontoggle={(event) => {
-          if (
-            event.currentTarget.open ===
-            $preferences.collapsed.includes(group.id)
-          )
-            toggle(group.id);
-        }}
-        open={!$preferences.collapsed.includes(group.id)}
-      >
-        <summary>{group.label}<span>{group.count}</span></summary>
-        {#each group.rows as row (row.task.id)}
-          <div
-            style:padding-left={`${8 + row.depth * 12}px`}
-            class="import-task"
-            aria-label={row.task.title}
-            draggable={$browser.connected}
-            ondragend={() => scheduler?.drag.cancel()}
-            ondragstart={(event) => drag(event, row.task)}
-            role="group"
+  <div class="task-body">
+    <div class="task-list-area">
+      <NoteTasksSection
+        candidates={$noteTasks}
+        initialExpanded={!$browser.connected}
+        {noteDrag}
+        {openNote}
+        query={$preferences.query}
+      />
+      {#if !$browser.connected}<div class="task-empty">
+          <ListChecks size={28} />
+          <h3>Bring your tasks here</h3>
+          <button class="task-primary" onclick={connections}
+            >Sign in with Todoist</button
           >
-            {#if row.hasChildren}<button
-                class="expand-task"
-                aria-expanded={!$preferences.collapsed.includes(
-                  `task:${group.id}:${row.task.id}`,
-                )}
-                aria-label={`Subtasks of ${row.task.title}`}
-                onclick={() => toggle(`task:${group.id}:${row.task.id}`)}
-                >{$preferences.collapsed.includes(
-                  `task:${group.id}:${row.task.id}`,
-                )
-                  ? "›"
-                  : "⌄"}</button
-              >{/if}
-            <div class="task-content">
-              <button
-                class="task-title"
-                onclick={() => {
-                  $preferences = { ...$preferences, selectedId: row.task.id };
-                  schedule(row.task);
-                }}>{row.task.title}</button
+        </div>{/if}
+      {#if snapshot && !groups.length}<div class="task-empty">
+          <Search size={25} />
+          <p>
+            {$preferences.query || $preferences.projectId
+              ? "No matching Todoist tasks"
+              : "No active Todoist tasks"}
+          </p>
+        </div>{/if}
+      <div class="task-groups">
+        {#each renderedGroups as renderedGroup (renderedGroup.id)}
+          {@const group = renderedGroup.group}
+          <section class="task-group" aria-label={group?.label} hidden={!group}>
+            {#if group}<button
+                class="task-group-heading"
+                aria-expanded={!$preferences.collapsed.includes(group.id)}
+                onclick={() => toggle(group.id)}
               >
-              <div class="task-meta">
-                {#if row.depth === 0}<span
-                    >{projects.get(row.task.projectId) ??
-                      "Unavailable project"}</span
-                  >{/if}
-                {#if row.task.due}<span>{dueDate(row.task)}</span>{/if}
-                {#each row.task.labels as label (label)}<span>#{label}</span
-                  >{/each}
+                {#if $preferences.collapsed.includes(group.id)}<ChevronRight
+                    size={15}
+                  />{:else}<ChevronDown size={15} />{/if}
+                <strong>{group.label}</strong><span>{group.count}</span></button
+              >{/if}
+            {#each renderedGroup.rows as renderedRow (renderedRow.row.task.id)}
+              {@const row = renderedRow.row}
+              <div
+                style:--task-depth={Math.min(row.depth, 6)}
+                class="import-task task-row-container"
+                class:task-nested={row.depth > 0}
+                class:task-selected={$preferences.selectedId === row.task.id}
+                aria-label={row.task.title}
+                draggable={$browser.connected && !!scheduler}
+                hidden={renderedRow.hidden}
+                ondragend={() => scheduler?.drag.cancel()}
+                ondragstart={(event) => drag(event, row.task)}
+                role="group"
+              >
+                {#if row.hasChildren}<button
+                    class="task-tree-toggle task-icon-button"
+                    aria-expanded={!$preferences.collapsed.includes(
+                      `task:${renderedGroup.id}:${row.task.id}`,
+                    )}
+                    aria-label={`Subtasks of ${row.task.title}`}
+                    onclick={() =>
+                      toggle(`task:${renderedGroup.id}:${row.task.id}`)}
+                  >
+                    {#if $preferences.collapsed.includes(`task:${renderedGroup.id}:${row.task.id}`)}<ChevronRight
+                        size={13}
+                      />{:else}<ChevronDown size={13} />{/if}
+                  </button>{/if}
+                <span class="task-import-circle" aria-hidden="true"></span>
+                <div class="task-row-content">
+                  <button
+                    class="task-row"
+                    class:task-context={row.context}
+                    onclick={() => choose(row.task)}
+                  >
+                    <span class="task-title"
+                      >{row.task.title || "Untitled task"}</span
+                    ></button
+                  >
+                  <div class="task-row-meta">
+                    {#if row.depth === 0}<span class="task-project-chip"
+                        >{projects.get(row.task.projectId) ??
+                          "Unavailable project"}</span
+                      >{/if}
+                    {#if row.task.due}<span class="task-date"
+                        >{dueDate(row.task)}</span
+                      >{/if}
+                    {#each row.task.labels as label (label)}<span
+                        class="task-label-chip">#{label}</span
+                      >{/each}
+                    {#if row.task.priority > 1}<span
+                        class="task-priority"
+                        title={`Priority ${5 - row.task.priority}`}
+                        ><Flag size={12} /></span
+                      >{/if}
+                  </div>
+                </div>
+                <button
+                  class="task-icon-button task-row-schedule"
+                  aria-label={`Schedule ${row.task.title}`}
+                  onclick={() => choose(row.task)}
+                  title="Add to schedule"><CalendarClock size={16} /></button
+                >
               </div>
-            </div>
-            <button
-              class="schedule-task"
-              aria-label={`Schedule ${row.task.title}`}
-              onclick={() => schedule(row.task)}
-              title="Add to schedule"><CalendarClock size={15} /></button
-            >
-          </div>
+            {/each}
+          </section>
         {/each}
-      </details>
-    {/each}
+      </div>
+    </div>
   </div>
 </section>
-
-<style>
-  .simple-tasks-pane {
-    display: flex;
-    flex-direction: column;
-
-    min-width: 0;
-    height: 100%;
-    padding: 0;
-
-    font-size: var(--font-ui-small);
-    color: var(--text-normal);
-
-    background: var(--background-primary);
-  }
-
-  header {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-    padding: 10px 8px 8px;
-  }
-
-  h2 {
-    flex: 1;
-    margin: 0;
-    font-size: 18px;
-  }
-
-  button {
-    cursor: pointer;
-
-    height: auto;
-    padding: 5px;
-
-    color: var(--text-muted);
-
-    background: transparent;
-    border: 0;
-    box-shadow: none;
-  }
-
-  .sources {
-    display: flex;
-    gap: 8px;
-    padding: 0 8px 8px;
-  }
-
-  .sources button {
-    padding: 4px 8px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 5px;
-  }
-
-  .search {
-    padding: 0 8px 10px;
-  }
-
-  .search input {
-    width: 100%;
-  }
-
-  .filters {
-    display: flex;
-    gap: 6px;
-    padding: 0 8px 8px;
-  }
-
-  .filters select {
-    min-width: 0;
-    max-width: 100%;
-    font-size: var(--font-ui-smaller);
-  }
-
-  .filters select:first-child {
-    flex: 1;
-  }
-
-  .task-sources {
-    overflow: auto;
-    min-height: 0;
-  }
-
-  summary {
-    cursor: pointer;
-    padding: 9px 8px;
-    font-weight: 600;
-  }
-
-  summary span {
-    margin-left: 8px;
-    font-size: 11px;
-    color: var(--text-muted);
-  }
-
-  .import-task {
-    display: flex;
-    gap: 5px;
-    align-items: flex-start;
-    padding: 4px 6px;
-  }
-
-  .import-task:hover {
-    background: var(--background-modifier-hover);
-  }
-
-  .task-content {
-    flex: 1;
-    min-width: 0;
-  }
-
-  .task-title {
-    width: 100%;
-    color: var(--text-normal);
-    text-align: left;
-  }
-
-  .task-meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-
-    padding: 0 5px 4px;
-
-    font-size: var(--font-ui-smaller);
-    color: var(--text-muted);
-  }
-
-  .task-meta span {
-    padding: 0 4px;
-    border: 1px solid var(--background-modifier-border);
-    border-radius: 4px;
-  }
-
-  .expand-task {
-    flex-shrink: 0;
-    width: 18px;
-  }
-
-  .schedule-task {
-    flex-shrink: 0;
-  }
-
-  .connection-error {
-    margin: 0 8px 8px;
-    color: var(--text-error);
-  }
-
-  .signin {
-    margin: 10px;
-    color: var(--text-accent);
-  }
-
-  :global(.simple-tasks-pane .spinning) {
-    animation: spin 1s linear infinite;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-</style>

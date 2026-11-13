@@ -187,6 +187,43 @@
   border-radius: 4px;
 }
 
+.dp-task-panel .task-source-label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-self: start;
+
+  font-size: 12px;
+  color: var(--tp-muted);
+}
+
+.dp-task-panel .task-connection-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--tp-muted);
+  border-radius: 50%;
+}
+
+.dp-task-panel .task-connection-dot.connected {
+  background: var(--color-green);
+}
+
+.dp-task-panel .task-connection-error {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+
+  padding: 9px 10px;
+
+  color: var(--tp-warning);
+}
+
+.dp-task-panel .task-connection-error p {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .dp-task-panel .task-search {
   display: flex;
   gap: 7px;
@@ -508,6 +545,42 @@
 
 .dp-task-panel .task-row-content {
   min-width: 0;
+}
+
+.dp-task-panel .task-import-circle {
+  width: 15px;
+  height: 15px;
+  margin-top: 3px;
+
+  border: 1.3px solid var(--tp-muted);
+  border-radius: 50%;
+}
+
+.dp-task-panel .task-row-schedule {
+  width: 23px;
+  height: 24px;
+  padding: 3px;
+}
+
+.dp-task-panel .note-open {
+  align-items: flex-start;
+  justify-content: flex-start;
+  white-space: normal;
+}
+
+.dp-task-panel .note-title,
+.dp-task-panel .note-path {
+  width: 100%;
+  min-width: 0;
+  text-align: start;
+  overflow-wrap: anywhere;
+}
+
+.dp-task-panel .note-path {
+  overflow: hidden;
+  color: var(--tp-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dp-task-panel .task-row {
@@ -1231,6 +1304,18 @@
 
 .task-panel-modal .modal-title {
   display: none;
+}
+
+.planner-connections-modal {
+  padding: 0;
+}
+
+.planner-connections-modal > .modal-header-button {
+  display: none;
+}
+
+.planner-connections-modal > .modal-content {
+  margin: 0;
 }
 
 .task-panel-modal .dp-task-panel {

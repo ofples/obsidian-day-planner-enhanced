@@ -73,6 +73,7 @@ test("shows connected Todoist account and successful Google connection", async (
     snapshot: { account: { name: "Example account" } },
   });
   let connected = false;
+  const signIn = vi.fn(async () => {});
   const calendar = {
     isConnected: () => connected,
     connect: async () => {
@@ -82,13 +83,24 @@ test("shows connected Todoist account and successful Google connection", async (
   component = mount(Connections, {
     target,
     props: {
-      service: { state, signIn: vi.fn() } as unknown as TaskService,
+      service: { state, signIn } as unknown as TaskService,
       calendar: calendar as unknown as GoogleCalendarSync,
       close: vi.fn(),
     },
   });
   flushSync();
   expect(target.textContent).toContain("Connected as Example account");
+  const options = target.querySelector<HTMLDetailsElement>("details")!;
+  expect(options.open).toBe(false);
+  expect(options.querySelector("summary")?.textContent).toContain(
+    "Account options",
+  );
+  options.open = true;
+  options.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+  Array.from(target.querySelectorAll(".connection-card"))[1]!
+    .querySelector<HTMLButtonElement>("button")!
+    .click();
+  expect(signIn).toHaveBeenCalledExactlyOnceWith(true);
   Array.from(target.querySelectorAll("button"))
     .find((button) => button.textContent?.includes("Sign in with Google"))!
     .click();
@@ -97,4 +109,8 @@ test("shows connected Todoist account and successful Google connection", async (
       "Connected",
     ),
   );
+  expect(
+    target.querySelector<HTMLButtonElement>(".connection-card button")
+      ?.textContent,
+  ).toContain("Reconnect");
 });

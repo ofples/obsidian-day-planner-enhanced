@@ -81,6 +81,14 @@ test("connected read-only pane schedules or drags the actual task and exposes ac
   const component = mount(SimpleTasksPane, { target, props: h });
   flushSync();
   expect(target.textContent).toContain("Provider work");
+  expect(
+    target.querySelector(".simple-tasks-pane.dp-task-panel"),
+  ).not.toBeNull();
+  expect(
+    target.querySelector(".note-heading")?.getAttribute("aria-expanded"),
+  ).toBe("false");
+  target.querySelector<HTMLButtonElement>(".note-heading")!.click();
+  flushSync();
   expect(target.textContent).toContain("Local reading");
   expect(
     target.querySelector(
@@ -94,11 +102,10 @@ test("connected read-only pane schedules or drags the actual task and exposes ac
   target.querySelector<HTMLButtonElement>(".task-title")!.click();
   expect(h.schedule).toHaveBeenCalledTimes(2);
   expect(get(h.preferences).selectedId).toBe(task.id);
-  target.querySelector<HTMLButtonElement>('[aria-label="Accounts"]')!.click();
-  Array.from(target.querySelectorAll<HTMLButtonElement>("button"))
-    .find((button) => button.textContent === "Google")!
+  target
+    .querySelector<HTMLButtonElement>('[aria-label="Connections"]')!
     .click();
-  expect(h.connections).toHaveBeenCalledTimes(2);
+  expect(h.connections).toHaveBeenCalledOnce();
   const row = target.querySelector<HTMLElement>(".import-task")!;
   expect(row.draggable).toBe(true);
   const data = new Map<string, string>();
@@ -150,16 +157,20 @@ test("copy-only pane preserves project filtering, dates and nested-task collapse
   document.body.append(target);
   const component = mount(SimpleTasksPane, { target, props: h });
   flushSync();
-  expect(target.querySelector(".task-meta")?.textContent).toContain("Project");
-  expect(target.querySelector(".task-meta")?.textContent).toContain(
-    "13 Nov, 15:30",
+  expect(target.querySelector(".task-row-meta")?.textContent).toContain(
+    "Project",
   );
-  expect(target.querySelector(".task-meta")?.textContent).toContain("#work");
-  const group = target.querySelector<HTMLSelectElement>(
-    '[aria-label="Group tasks"]',
-  )!;
-  group.value = "project";
-  group.dispatchEvent(new Event("change", { bubbles: true }));
+  expect(target.querySelector(".task-row-meta")?.textContent).toContain(
+    "15:30",
+  );
+  expect(target.querySelector(".task-row-meta")?.textContent).toContain(
+    "#work",
+  );
+  Array.from(
+    target.querySelectorAll<HTMLButtonElement>(".task-grouping button"),
+  )
+    .find((button) => button.textContent === "Project")!
+    .click();
   flushSync();
   expect(get(h.preferences).groupBy).toBe("project");
   target
@@ -168,7 +179,9 @@ test("copy-only pane preserves project filtering, dates and nested-task collapse
     )!
     .click();
   flushSync();
-  expect(target.querySelector('[aria-label="Child task"]')).toBeNull();
+  expect(
+    target.querySelector<HTMLElement>('[aria-label="Child task"]')?.hidden,
+  ).toBe(true);
   expect(get(h.preferences).collapsed).toContain("task:project:provider-task");
   const project = target.querySelector<HTMLSelectElement>(
     '[aria-label="Filter by project"]',
@@ -193,7 +206,9 @@ test("search filters both provider and note tasks, while disconnected notes rema
   search.dispatchEvent(new Event("input", { bubbles: true }));
   flushSync();
   expect(target.textContent).toContain("Local reading");
-  expect(target.textContent).not.toContain("Provider work");
+  expect(
+    target.querySelector('[aria-label="Provider work"]:not([hidden])'),
+  ).toBeNull();
   search.value = "provider";
   search.dispatchEvent(new Event("input", { bubbles: true }));
   flushSync();

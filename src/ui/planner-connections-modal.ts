@@ -16,6 +16,7 @@ export class PlannerConnectionsModal extends Modal {
     super(app);
   }
   onOpen() {
+    this.modalEl.addClass("task-panel-modal", "planner-connections-modal");
     this.component = mount(PlannerConnections, {
       target: this.contentEl,
       props: {
