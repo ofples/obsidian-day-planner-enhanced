@@ -17,11 +17,13 @@ import { taskSourceSchema, type TaskSource } from "./source";
 
 const importSourceSchema = taskSourceSchema.extend({
   uid: z.string().optional(),
+  taskIds: z.array(z.string()).optional(),
 });
 export type ImportedTaskSource = z.infer<typeof importSourceSchema>;
 const pendingSchema = z.object({
   id: z.uuid(),
   signature: z.string(),
+  taskIds: z.array(z.string()).optional(),
   prepared: z
     .object({
       edits: z.array(
@@ -74,6 +76,16 @@ export class PlainTaskImporter {
     return (this.initialization ??= this.load());
   }
 
+  /** All verified placements remain available when the same task is copied to another day. */
+  sources(): ReadonlyArray<readonly [string, ImportedTaskSource]> {
+    return [
+      ...Object.entries(get(this.imports)),
+      ...Object.values(this.receipts).map(
+        (receipt) => [receipt.key, receipt.source] as const,
+      ),
+    ];
+  }
+
   private async load() {
     const text = await this.host.readImports?.();
     if (text) {
@@ -124,6 +136,7 @@ export class PlainTaskImporter {
       prepare: (plan: NonNullable<PendingImport["prepared"]>) => Promise<void>,
       pending: PendingImport,
     ) => Promise<ImportedTaskSource>,
+    taskIds?: string[],
   ): Promise<ImportedTaskSource> {
     await this.initialize();
     const receipt = this.receipts[id];
@@ -172,7 +185,7 @@ export class PlainTaskImporter {
           throw new Error(
             "Finish the previous task import before choosing a different destination.",
           );
-        state.pending[key] ??= { id, signature };
+        state.pending[key] ??= { id, signature, taskIds };
       });
       const saved = this.pending[key]!;
       let source: ImportedTaskSource;
@@ -190,6 +203,7 @@ export class PlainTaskImporter {
           },
           saved,
         );
+        source = { ...source, taskIds: saved.taskIds ?? taskIds };
       } catch (error) {
         await this.updateMetadata((state) => {
           const current = state.pending[key];

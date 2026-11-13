@@ -78,6 +78,7 @@ function render(
   const schedule = vi.fn(async () => {}),
     cancel = vi.fn(),
     nest = vi.fn(async () => {}),
+    toggleTaskLock = vi.fn(async () => {}),
     accept = vi.fn(() => ({ task, id: nonce }));
   let current: ProviderTask | null = active ? task : null;
   const dragged = writable(active ? task : null);
@@ -93,6 +94,7 @@ function render(
           obsidianContextKey,
           {
             renderMarkdown: () => () => {},
+            toggleTaskLock,
             isModPressed: writable(false),
             showPreview: vi.fn(),
             settingsStore: writable(settings),
@@ -125,11 +127,16 @@ function render(
   flushSync();
   const area = target.querySelector<HTMLElement>(".tasks")!;
   const transfer = { types: [taskDragMime], dropEffect: "none" };
-  function event(type: string, element: Element = area) {
+  function event(
+    type: string,
+    element: Element = area,
+    point = { x: 0, y: 480 },
+  ) {
     const value = new MouseEvent(type, {
       bubbles: true,
       cancelable: true,
-      clientY: 480,
+      clientX: point.x,
+      clientY: point.y,
     });
     Object.defineProperty(value, "dataTransfer", { value: transfer });
     element.dispatchEvent(value);
@@ -142,6 +149,7 @@ function render(
     schedule,
     nest,
     cancel,
+    toggleTaskLock,
     accept,
     nonce,
     event,
@@ -155,6 +163,23 @@ function render(
 }
 
 describe("timeline task drops", () => {
+  test("selected local block exposes its keyboard lock control in the toolbar", async () => {
+    const h = render(false, [parent]);
+    expect(h.target.querySelector('button[aria-label="Lock task"]')).toBeNull();
+    h.target
+      .querySelector<HTMLElement>(".content")!
+      .dispatchEvent(new MouseEvent("pointerup", { bubbles: true, button: 0 }));
+    flushSync();
+    const button = h.target.querySelector<HTMLButtonElement>(
+      'button[aria-label="Lock task"]',
+    )!;
+    expect(button).not.toBeNull();
+    button.focus();
+    expect(document.activeElement).toBe(button);
+    button.click();
+    await vi.waitFor(() => expect(h.toggleTaskLock).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
   test("accepts an entering task and previews its snapped interval before any dragover", () => {
     const h = render();
     expect(h.event("dragenter").defaultPrevented).toBe(true);
@@ -198,9 +223,24 @@ describe("timeline task drops", () => {
         ".task-subtask-drop-target",
       )!;
       expect(zone).not.toBeNull();
-      expect(zone.textContent).toContain("Add as subtask");
-      expect(h.event("dragenter", zone).defaultPrevented).toBe(true);
+      vi.spyOn(zone, "getBoundingClientRect").mockReturnValue({
+        left: 100,
+        top: 200,
+      } as DOMRect);
+      expect(zone.textContent?.trim()).toBe("");
+      expect(
+        h.event("dragenter", zone, { x: 130, y: 240 }).defaultPrevented,
+      ).toBe(true);
       expect(zone.classList.contains("active")).toBe(true);
+      const icon = zone.querySelector<HTMLElement>(".subtask-drop-icon")!;
+      expect(icon.style.left).toBe("42px");
+      expect(icon.style.top).toBe("52px");
+      h.event("dragover", zone, { x: 160, y: 270 });
+      expect(icon.style.left).toBe("72px");
+      expect(icon.style.top).toBe("82px");
+      h.event("dragleave", zone);
+      expect(zone.querySelector(".subtask-drop-icon")).toBeNull();
+      h.event("dragenter", zone, { x: 160, y: 270 });
       expect(h.target.querySelector(".task-drop-preview")).toBeNull();
       expect(h.event("drop", zone).defaultPrevented).toBe(true);
       await vi.waitFor(() =>

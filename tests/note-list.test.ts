@@ -4,6 +4,25 @@ import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 import { noteTaskDragText, noteTaskRows } from "../src/tasks/note-list";
 
 describe("note task list", () => {
+  test("scheduled toggle and search preserve completed ancestor context", () => {
+    const text =
+      "- [x] Completed parent\n  - [ ] 09:00 - 10:00 Scheduled child\n    - [ ] Nested task";
+    const candidates = parseCaptureCandidates("Daily.md", text);
+    expect(noteTaskRows(candidates)).toEqual([]);
+    const rows = noteTaskRows(candidates, "Nested", true);
+    expect(
+      rows.map((row) => [
+        row.candidate.title,
+        row.context,
+        row.hasChildren,
+        row.scheduled,
+      ]),
+    ).toEqual([
+      ["Completed parent", true, true, false],
+      ["Scheduled child", true, true, true],
+      ["Nested task", false, false, true],
+    ]);
+  });
   test("keeps unchecked note tasks while excluding timed trees, completed and custom statuses", () => {
     const text = [
       "- [ ] Free parent",

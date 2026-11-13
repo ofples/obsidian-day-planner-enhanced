@@ -5,6 +5,7 @@
   import type { DayPlannerSettings } from "../../settings";
   import type { CaptureCandidate } from "../../tasks/capture-parser";
   import type { NoteTaskDrag } from "../../tasks/note-drag";
+  import type { TaskSource } from "../../tasks/source";
   import type { ProviderTask } from "../../tasks/types";
 
   import SimpleTasksPane from "./simple-tasks-pane.svelte";
@@ -14,6 +15,8 @@
   let {
     noteTasks,
     noteDrag,
+    noteContext,
+    resolveImported,
     openConnections,
     scheduleImported,
     openNote,
@@ -21,6 +24,8 @@
   }: ComponentProps<typeof TasksPane> & {
     noteTasks?: Readable<CaptureCandidate[]>;
     noteDrag?: NoteTaskDrag;
+    noteContext?: Readable<{ currentPath: string; targetPath: string }>;
+    resolveImported?: (uid: string) => TaskSource | undefined;
     openConnections?: () => void;
     scheduleImported?: (task: ProviderTask) => void;
     openNote?: (path: string, line: number) => void;
@@ -38,10 +43,12 @@
 {#if simpleMode}
   <SimpleTasksPane
     connections={openConnections}
+    {noteContext}
     {noteDrag}
     {noteTasks}
     openNote={openNote ?? (() => {})}
     preferences={legacy.preferences}
+    {resolveImported}
     schedule={scheduleImported ?? (() => {})}
     scheduler={legacy.scheduler}
     service={legacy.service}

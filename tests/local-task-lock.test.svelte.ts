@@ -8,7 +8,7 @@ import LocalTimeBlock from "../src/ui/components/local-time-block.svelte";
 
 import { baseTimeBlock } from "./edit/util/fixtures";
 
-test("local block exposes a keyboard-accessible top-right lock control", async () => {
+test("local block shows a noninteractive badge only while locked", async () => {
   const target = document.createElement("div");
   document.body.append(target);
   const toggleTaskLock = vi.fn(async () => {});
@@ -35,14 +35,8 @@ test("local block exposes a keyboard-accessible top-right lock control", async (
   const props = $state({ timeBlock: { ...baseTimeBlock, text: "Work" } });
   const component = mount(LocalTimeBlock, { target, context, props });
   flushSync();
-  const button = target.querySelector<HTMLButtonElement>(
-    'button[aria-label="Lock task"]',
-  )!;
-  expect(button.getAttribute("aria-pressed")).toBe("false");
-  button.focus();
-  expect(document.activeElement).toBe(button);
-  button.click();
-  expect(toggleTaskLock).toHaveBeenCalledWith(props.timeBlock);
+  expect(target.querySelector('[aria-label="Locked task"]')).toBeNull();
+  expect(target.querySelector('button[aria-label="Lock task"]')).toBeNull();
   const draggable = target.querySelector<HTMLElement>('[draggable="true"]')!;
   const transfer = {} as DataTransfer;
   const dragStart = new Event("dragstart", { bubbles: true, cancelable: true });
@@ -54,18 +48,12 @@ test("local block exposes a keyboard-accessible top-right lock control", async (
   );
   draggable.dispatchEvent(new Event("dragend", { bubbles: true }));
   expect(noteTaskDrag.cancel).toHaveBeenCalledOnce();
-  const buttonDrag = new Event("dragstart", {
-    bubbles: true,
-    cancelable: true,
-  });
-  Object.defineProperty(buttonDrag, "dataTransfer", { value: transfer });
-  button.dispatchEvent(buttonDrag);
-  expect(buttonDrag.defaultPrevented).toBe(true);
-  expect(noteTaskDrag.start).toHaveBeenCalledOnce();
   props.timeBlock = { ...props.timeBlock, text: "Work #locked" };
   flushSync();
-  expect(button.getAttribute("aria-label")).toBe("Unlock task");
-  expect(button.getAttribute("aria-pressed")).toBe("true");
+  expect(
+    target.querySelector('[role="img"][aria-label="Locked task"]'),
+  ).not.toBeNull();
+  expect(target.querySelector('button[aria-label="Unlock task"]')).toBeNull();
   expect(draggable.draggable).toBe(false);
   draggable.dispatchEvent(dragStart);
   expect(noteTaskDrag.start).toHaveBeenCalledOnce();

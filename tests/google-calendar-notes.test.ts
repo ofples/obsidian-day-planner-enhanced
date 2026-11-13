@@ -19,7 +19,10 @@ const marker = `<!-- dp-gcal:${uid} -->`;
 const original = `- [x] 09:00 - 10:00 Work #work ${marker} ^anchor\r\n    - [ ] Nested [[Other]] ^child`;
 const sourcePath = "Daily/2026-11-11.md";
 
-function harness(edits?: { isWriting: boolean; revision: number }) {
+function harness(
+  edits?: { isWriting: boolean; revision: number },
+  localWrites = false,
+) {
   const texts = new Map([
     [
       sourcePath,
@@ -90,8 +93,11 @@ function harness(edits?: { isWriting: boolean; revision: number }) {
     state,
     save,
     edits,
+    localWrites,
   );
   return {
+    app,
+    daily,
     texts,
     files,
     file,
@@ -109,6 +115,55 @@ function harness(edits?: { isWriting: boolean; revision: number }) {
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 describe("vault calendar adapter", () => {
+  test("explicit local writes work in excluded notes while calendar writes stay blocked", async () => {
+    const h = harness(undefined, true);
+    h.settings.googleCalendar.syncStartDate = "2026-11-14";
+    const previous =
+      "---\r\nsync: off\r\n---\r\n# Day planner\r\n\r\n# Journal\r\nKeep.\r\n";
+    h.texts.set(sourcePath, previous);
+    expect(await h.notes.scan()).toEqual([]);
+    const snapshot = {
+      title: "Imported",
+      start: window.moment("2026-11-11 09:00").toISOString(),
+      end: window.moment("2026-11-11 10:00").toISOString(),
+    };
+    await h.notes.write(uid, snapshot);
+    const after = h.texts.get(sourcePath)!;
+    expect(after).toContain("09:00 - 10:00 Imported");
+    expect(after).toContain("sync: off");
+    expect(after).toContain("# Journal\r\nKeep.");
+    expect(await h.notes.scan()).toEqual([]);
+    expect(h.texts.get(sourcePath)).toBe(after);
+    const regular = new ObsidianCalendarNotes(
+      h.app,
+      h.daily,
+      h.settings,
+      window.moment("2026-11-01").toISOString(),
+      window.moment("2026-12-01").toISOString(),
+      h.state,
+      h.save,
+    );
+    await expect(regular.write(uid, snapshot)).rejects.toThrow(
+      "outside Google Calendar sync scope",
+    );
+  });
+  test("interrupted explicitly authorized note edits recover outside calendar scope", async () => {
+    const h = harness(undefined, true);
+    h.settings.googleCalendar.syncStartDate = "2026-11-14";
+    const before = "---\nsync: false\n---\n# Day planner\n";
+    h.texts.set(sourcePath, before);
+    h.interrupt(true);
+    await expect(
+      h.notes.applyEdits([
+        { path: sourcePath, before, after: before + "- [ ] Added\n" },
+      ]),
+    ).rejects.toThrow("interrupted");
+    expect(h.state.pendingNoteChange?.localWrites).toBe(true);
+    h.interrupt(false);
+    await h.notes.scan();
+    expect(h.texts.get(sourcePath)).toBe(before + "- [ ] Added\n");
+    expect(h.state.pendingNoteChange).toBeUndefined();
+  });
   test("canonical sync round trips through real note scanning and survives restart", async () => {
     const h = harness();
     h.settings.googleCalendar.syncStartDate = "2026-11-14";

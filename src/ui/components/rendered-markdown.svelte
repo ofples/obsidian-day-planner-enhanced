@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ListTree } from "lucide-svelte";
   import type { Snippet } from "svelte";
 
   import { getObsidianContext } from "../../context/obsidian-context";
@@ -22,8 +23,12 @@
     bottomDecoration,
   }: { timeBlock: LocalTimeBlock; bottomDecoration?: Snippet } = $props();
 
-  const { renderMarkdown, toggleCheckboxInFile, settingsStore } =
-    getObsidianContext();
+  const {
+    renderMarkdown,
+    toggleCheckboxInFile,
+    settingsStore,
+    openNestedItemsEditModal,
+  } = getObsidianContext();
 
   type NestedListItem = NonNullable<LocalTimeBlock["children"]>[number];
 
@@ -131,6 +136,8 @@
   );
   let measuredRequiredHeightPx = $state(0);
   let availableHeightPx = $state<number>();
+  let availableWidthPx = $state<number>();
+  let compactStackHeightPx = $state(30);
   const inlineNestedItems = $derived(
     !timeBlock.isAllDayEvent &&
       nestedItemCount > 0 &&
@@ -139,6 +146,9 @@
           20 + nestedItemsRequiredHeightPx + 11,
           measuredRequiredHeightPx,
         ),
+  );
+  const narrowChildren = $derived(
+    inlineNestedItems && (availableWidthPx ?? Infinity) < 280,
   );
 
   function observeNestedLayout(element: HTMLDivElement) {
@@ -158,6 +168,9 @@
         measuredRequiredHeightPx = 0;
       }
       availableHeightPx = layout.clientHeight || undefined;
+      availableWidthPx = layout.clientWidth || undefined;
+      compactStackHeightPx =
+        Math.ceil((parseFloat(style.fontSize) || 11) * 2.35) + 4;
       // Measure in the normal layout only. Keeping this value while inline avoids
       // oscillating between the two modes when the compact row itself fits.
       if (!wasInline) {
@@ -212,7 +225,7 @@
     : isCompact
       ? "var(--rendered-markdown-compact-padding, 3px 11px)"
       : "var(--rendered-markdown-timed-padding, 6px 11px 5px)"}
-  class={`rendered-markdown planner-sticky-block-content${inlineNestedItems ? " has-inline-children" : ""}`}
+  class={`rendered-markdown planner-sticky-block-content${inlineNestedItems ? " has-inline-children" : ""}${narrowChildren ? " narrow-children" : ""}${narrowChildren && (availableHeightPx ?? blockHeightPx) < compactStackHeightPx ? " ultra-compact" : ""}`}
   {bottomDecoration}
   {completed}
 >
@@ -275,11 +288,9 @@
           "lines-after-first-wrapper",
           useStackedHeader && "is-stacked-header",
         ]}
-        title={inlineNestedItems
-          ? nestedItems
-              .map((item) => item.text.replace(/<!--.*?-->/g, ""))
-              .join(" · ")
-          : undefined}
+        title={nestedItems
+          .map((item) => item.text.replace(/<!--.*?-->/g, ""))
+          .join(" · ")}
         {@attach observeNestedLayout}
         {@attach createRenderMarkdownAttachment({
           renderMarkdown,
@@ -289,11 +300,47 @@
           onCheckboxLineClick,
         })}
       ></div>
+      {#if inlineNestedItems && (timeBlock.source === "dailyNoteDate" || timeBlock.source === "tasksPluginProp") && openNestedItemsEditModal}
+        <button
+          class="subtask-count"
+          type="button"
+          aria-label={`View all ${nestedItemCount} subtasks`}
+          title={`View all ${nestedItemCount} subtasks`}
+          onpointerdown={(event) => event.stopPropagation()}
+          onpointerup={(event) => event.stopPropagation()}
+          onclick={(event) => {
+            event.stopPropagation();
+            openNestedItemsEditModal(timeBlock);
+          }}><ListTree size={12} aria-hidden="true" />{nestedItemCount}</button
+        >
+      {/if}
     {/if}
   {/snippet}
 </TimeBlockContentLayout>
 
 <style>
+  .subtask-count {
+    cursor: pointer;
+
+    display: inline-flex;
+    flex: 0 0 auto;
+    gap: 2px;
+    align-items: center;
+
+    min-width: 0;
+    height: 16px;
+    margin-inline-end: 4px;
+    padding: 0 3px;
+
+    font-size: 10px;
+    color: var(--text-muted);
+
+    background: var(--background-secondary);
+    border: 0;
+    border-radius: 3px;
+    box-shadow: none;
+  }
+
   .markdown-wrapper {
     --checkbox-size: var(--planner-time-block-font-size, var(--font-ui-small));
     --checklist-done-color: var(--text-faint);
@@ -650,7 +697,8 @@
 
     line-height: 1.25;
     text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 
   :global(.has-inline-children) .lines-after-first-wrapper :global(ul),
@@ -663,7 +711,7 @@
     padding: 0;
 
     line-height: 1.25;
-    white-space: nowrap;
+    white-space: normal;
   }
 
   :global(.has-inline-children)
@@ -698,5 +746,31 @@
   :global(.has-inline-children) .lines-after-first-wrapper :global(li code) {
     min-width: 0;
     margin-inline-end: 4px;
+  }
+
+  :global(.narrow-children) {
+    --time-block-content-layout-padding: 2px 7px;
+  }
+
+  :global(.narrow-children) .lines-after-first-wrapper {
+    display: none;
+  }
+
+  :global(.narrow-children) .time-summary-row {
+    flex: 1 1 0;
+    flex-direction: column;
+    gap: 0;
+
+    min-width: 0;
+    max-width: none;
+  }
+
+  :global(.narrow-children) .first-line-wrapper {
+    width: 100%;
+  }
+
+  :global(.narrow-children.ultra-compact) .time-summary-row {
+    flex-direction: row;
+    gap: 3px;
   }
 </style>

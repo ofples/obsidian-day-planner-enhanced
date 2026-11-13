@@ -198,6 +198,10 @@ export class TaskScheduler {
         task.id,
         taskOccurrenceKey(task),
       ]),
+      taskIds: [
+        task.id,
+        ...taskSubtree(snapshot, task).map((row) => row.task.id),
+      ],
     };
   }
 
@@ -208,7 +212,7 @@ export class TaskScheduler {
   ) {
     if (this.host.linkedSync?.() !== false)
       return this.schedule(taskId, interval, id);
-    const { raw, key } = this.plainTask(taskId);
+    const { raw, key, taskIds } = this.plainTask(taskId);
     const target = scheduleIntervalSchema.parse(interval);
     await this.importer.runPane(
       key,
@@ -223,6 +227,7 @@ export class TaskScheduler {
           prepare,
           pending.prepared,
         ),
+      taskIds,
     );
   }
 
@@ -233,7 +238,7 @@ export class TaskScheduler {
   ) {
     if (this.host.linkedSync?.() !== false)
       return this.insert(taskId, target, id);
-    const { raw, key } = this.plainTask(taskId);
+    const { raw, key, taskIds } = this.plainTask(taskId);
     await this.importer.runPane(
       key,
       id,
@@ -247,6 +252,7 @@ export class TaskScheduler {
           prepare,
           pending.prepared,
         ),
+      taskIds,
     );
   }
 
@@ -257,7 +263,7 @@ export class TaskScheduler {
   ) {
     if (this.host.linkedSync?.() !== false)
       return this.nest(taskId, parent, id);
-    const { raw, key } = this.plainTask(taskId);
+    const { raw, key, taskIds } = this.plainTask(taskId);
     await this.importer.runPane(
       key,
       id,
@@ -271,6 +277,7 @@ export class TaskScheduler {
           prepare,
           pending.prepared,
         ),
+      taskIds,
     );
   }
 

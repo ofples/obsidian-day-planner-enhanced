@@ -82,6 +82,7 @@ export interface CalendarSyncState {
     events: GoogleEvent[];
   };
   pendingNoteChange?: {
+    localWrites?: boolean;
     edits: Array<{ path: string; before: string; after: string }>;
     identities: Record<string, LocalIdentity>;
     documents: Record<string, string>;

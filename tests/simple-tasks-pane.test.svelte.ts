@@ -54,7 +54,11 @@ function fixture(connected = true) {
     refresh: vi.fn(),
     registry: { snapshot: () => ({ namespace: "fixture" }) },
   } as unknown as TaskService;
-  const scheduler = { drag: new TaskDrag(service) } as TaskScheduler;
+  const imports = writable({});
+  const scheduler = {
+    drag: new TaskDrag(service),
+    importer: { imports, sources: () => Object.entries(get(imports)) },
+  } as unknown as TaskScheduler;
   const preferences = writable(taskViewStateSchema.parse({}));
   const noteTasks = writable(
     parseCaptureCandidates("Notes.md", "- [ ] Local reading"),
@@ -68,6 +72,7 @@ function fixture(connected = true) {
     scheduler,
     preferences,
     noteTasks,
+    noteContext: writable({ currentPath: "Notes.md", targetPath: "Notes.md" }),
     connections,
     schedule,
     openNote,
@@ -84,12 +89,15 @@ test("connected read-only pane schedules or drags the actual task and exposes ac
   expect(
     target.querySelector(".simple-tasks-pane.dp-task-panel"),
   ).not.toBeNull();
-  expect(
-    target.querySelector(".note-heading")?.getAttribute("aria-expanded"),
-  ).toBe("false");
-  target.querySelector<HTMLButtonElement>(".note-heading")!.click();
+  Array.from(target.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    .find((button) => button.textContent?.includes("Notes"))!
+    .click();
   flushSync();
   expect(target.textContent).toContain("Local reading");
+  Array.from(target.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    .find((button) => button.textContent?.includes("Todoist"))!
+    .click();
+  flushSync();
   expect(
     target.querySelector(
       '.task-checkbox, [aria-label^="Complete"], [aria-label^="Actions for"]',
@@ -202,6 +210,10 @@ test("search filters both provider and note tasks, while disconnected notes rema
   const search = target.querySelector<HTMLInputElement>(
     '[aria-label="Search tasks"]',
   )!;
+  Array.from(target.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    .find((button) => button.textContent?.includes("Notes"))!
+    .click();
+  flushSync();
   search.value = "reading";
   search.dispatchEvent(new Event("input", { bubbles: true }));
   flushSync();
@@ -209,6 +221,10 @@ test("search filters both provider and note tasks, while disconnected notes rema
   expect(
     target.querySelector('[aria-label="Provider work"]:not([hidden])'),
   ).toBeNull();
+  Array.from(target.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    .find((button) => button.textContent?.includes("Todoist"))!
+    .click();
+  flushSync();
   search.value = "provider";
   search.dispatchEvent(new Event("input", { bubbles: true }));
   flushSync();
@@ -218,8 +234,12 @@ test("search filters both provider and note tasks, while disconnected notes rema
   search.value = "";
   search.dispatchEvent(new Event("input", { bubbles: true }));
   flushSync();
-  expect(target.textContent).toContain("Local reading");
   expect(target.textContent).toContain("Sign in with Todoist");
+  Array.from(target.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    .find((button) => button.textContent?.includes("Notes"))!
+    .click();
+  flushSync();
+  expect(target.textContent).toContain("Local reading");
   target.querySelector<HTMLButtonElement>(".note-open")!.click();
   expect(h.openNote).toHaveBeenCalledWith("Notes.md", 0);
   await unmount(component);

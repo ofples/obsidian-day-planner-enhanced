@@ -146,6 +146,7 @@ import {
 import { runWithNoticeOnError } from "./util/effect";
 import { notifyAboutStartedTimeBlocks } from "./util/notify-about-started-time-blocks";
 import { createBackgroundBatchScheduler } from "./util/scheduler";
+import { sortPlannerTasks } from "./util/sort-planner-tasks";
 import { isWithDuration } from "./util/time-block-utils";
 
 export default class DayPlanner extends Plugin {
@@ -462,6 +463,8 @@ export default class DayPlanner extends Plugin {
             this.noteTaskCandidates,
             this.noteTaskDrag,
             () => this.openConnections(),
+            store,
+            this.periodicNotes,
           ),
       );
     this.addCommand({
@@ -812,6 +815,45 @@ export default class DayPlanner extends Plugin {
         );
 
         await this.app.workspace.getLeaf(false).openFile(dailyNote);
+      },
+    });
+
+    this.addCommand({
+      id: "sort-current-planner-by-time",
+      name: "Sort tasks in current note or selection by time",
+      editorCallback: (editor) => {
+        const original = editor.getValue();
+        const from = editor.posToOffset(editor.getCursor("from"));
+        const to = editor.posToOffset(editor.getCursor("to"));
+        const result = sortPlannerTasks(
+          original,
+          "",
+          from === to ? undefined : { from, to },
+        );
+        if (result === original) {
+          new Notice("No timed tasks need sorting in this note or selection.");
+          return;
+        }
+        let start = 0;
+        while (
+          start < original.length &&
+          start < result.length &&
+          original[start] === result[start]
+        )
+          start++;
+        let end = 0;
+        while (
+          end < original.length - start &&
+          end < result.length - start &&
+          original[original.length - 1 - end] ===
+            result[result.length - 1 - end]
+        )
+          end++;
+        editor.replaceRange(
+          result.slice(start, result.length - end),
+          editor.offsetToPos(start),
+          editor.offsetToPos(original.length - end),
+        );
       },
     });
 

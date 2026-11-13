@@ -1,6 +1,17 @@
 # Tasks in Day Planner
 
-The Tasks pane connects Todoist tasks to daily-note schedules and the existing Google Calendar bridge. Readable tags opt a note task into syncing. A private registry maintains identity as tasks are edited and moved. The provider boundary supports adding another task service later.
+The Tasks pane brings Todoist and note tasks into daily-note schedules and the existing Google Calendar bridge. Todoist imports become ordinary Markdown by default. Two-way Todoist sync is an experimental opt-in. Private import receipts retain task provenance, and the provider boundary supports adding other services later.
+
+## Morning planning
+
+- **Todoist** hides tasks already imported into the selected timeline day's note. **Show added** reveals them with an Added marker. The note name beside the toggle identifies the destination. Import receipts are checked against the note, account and recurring occurrence, including previous placements on other days.
+- **Notes** starts with the current editor note. **Scan other notes** adds cached task-index results as collapsible note groups. The note list survives a reload, and indexed changes refresh its existing groups. Refresh the scan to discover additional notes. Subtasks remain attached to their parents, including parent context during search. **Show scheduled** includes timed tasks from the current note.
+- Drop on the right half of a schedule block to nest a task beneath it. The hovered half highlights lightly and the return-arrow indicator follows the pointer.
+- Select a schedule block to find its lock action in the edit toolbar. Locked blocks show a small lock badge. Compact blocks expose a subtask count that opens the full nested editor. Narrow blocks use that count when a text preview will not fit.
+- Run **Sort tasks in current note or selection by time** from the command palette. Each list sorts its timed siblings, retaining parent/child relationships, untimed slots, headings and line endings. A selection includes only complete selected items.
+- **Connections** provides a direct Sign out action for each account.
+
+Direct local task placement also works in notes marked `sync: off`. Automatic Google sync continues to honor its configured start date and note exclusions.
 
 The production baseline started at `82ae46ff` on `feat/google-calendar-sync` and includes the installed rename/deletion hotfixes through `87de378b`. Feature development runs on `feat/task-pane-todoist`, which includes those hotfixes. The baseline checkout remains available for hotfixes.
 

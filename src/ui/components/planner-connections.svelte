@@ -18,7 +18,6 @@
   let todoistBusy = $state(false);
   let googleError = $state("");
   let todoistError = $state("");
-  let replaceAccount = $state(false);
   let firstButton: HTMLButtonElement;
   onMount(() => firstButton.focus());
 
@@ -41,7 +40,7 @@
     todoistBusy = true;
     todoistError = "";
     try {
-      await service.signIn(replaceAccount);
+      await service.signIn(true);
     } catch (error) {
       todoistError =
         error instanceof Error
@@ -49,6 +48,27 @@
           : "Could not sign in to Todoist.";
     } finally {
       todoistBusy = false;
+    }
+  }
+  function signOutGoogle() {
+    try {
+      calendar.disconnect();
+      googleConnected = calendar.isConnected();
+    } catch (error) {
+      googleError =
+        error instanceof Error
+          ? error.message
+          : "Could not sign out of Google.";
+    }
+  }
+  function signOutTodoist() {
+    try {
+      service.disconnect();
+    } catch (error) {
+      todoistError =
+        error instanceof Error
+          ? error.message
+          : "Could not sign out of Todoist.";
     }
   }
 </script>
@@ -74,15 +94,15 @@
       class:connected={googleConnected}
       aria-busy={googleBusy}
       aria-label={googleConnected
-        ? "Reconnect Google Calendar"
+        ? "Sign out of Google Calendar"
         : "Sign in with Google"}
       disabled={googleBusy}
-      onclick={signInGoogle}
+      onclick={googleConnected ? signOutGoogle : signInGoogle}
       type="button"
       >{googleBusy
         ? "Signing in…"
         : googleConnected
-          ? "Reconnect"
+          ? "Sign out"
           : "Sign in with Google"}</button
     >
     {#if googleError}<p class="connection-error" role="alert">
@@ -102,26 +122,17 @@
       class:connected={$taskState.connected}
       aria-busy={todoistBusy}
       aria-label={$taskState.connected
-        ? "Reconnect Todoist"
+        ? "Sign out of Todoist"
         : "Sign in with Todoist"}
       disabled={todoistBusy}
-      onclick={signInTodoist}
+      onclick={$taskState.connected ? signOutTodoist : signInTodoist}
       type="button"
       >{todoistBusy
         ? "Signing in…"
         : $taskState.connected
-          ? "Reconnect"
+          ? "Sign out"
           : "Sign in with Todoist"}</button
     >
-    {#if $taskState.snapshot}<details class="account-options">
-        <summary>Account options</summary><label
-          ><input
-            disabled={todoistBusy}
-            type="checkbox"
-            bind:checked={replaceAccount}
-          />Switch to a different Todoist account</label
-        >
-      </details>{/if}
     {#if todoistError}<p class="connection-error" role="alert">
         {todoistError}
       </p>{/if}
@@ -195,14 +206,8 @@
     background: var(--tp-surface);
   }
 
-  .connection-error,
-  .account-options {
+  .connection-error {
     grid-column: 2 / -1;
-  }
-
-  .account-options {
-    font-size: var(--font-ui-small);
-    color: var(--tp-muted);
   }
 
   .close-button {

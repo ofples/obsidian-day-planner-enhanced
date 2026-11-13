@@ -5,10 +5,13 @@ import {
   type ViewStateResult,
 } from "obsidian";
 import { mount, unmount } from "svelte";
-import { get, writable, type Writable } from "svelte/store";
+import { get, readable, writable, type Writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 
+import { viewTypeTimeline } from "../constants";
 import type { GoogleCalendarSync } from "../google-calendar/service";
+import type { AppStore } from "../redux/store";
+import type { PeriodicNotes } from "../service/periodic-notes";
 import type { DayPlannerSettings } from "../settings";
 import { taskViewStateSchema } from "../tasks/browser";
 import type { TaskCapture } from "../tasks/capture";
@@ -42,11 +45,13 @@ export class TasksView extends ItemView {
     private readonly reconciler?: TaskReconciler,
     private readonly settings?: Writable<DayPlannerSettings>,
     private readonly calendar?: Pick<GoogleCalendarSync, "calendars"> &
-      Partial<Pick<GoogleCalendarSync, "resetForUserRetry">>,
+      Partial<Pick<GoogleCalendarSync, "resetForUserRetry" | "importedSource">>,
     private readonly deleter?: TaskDeletionController,
     private readonly noteTasks?: Readable<CaptureCandidate[]>,
     private readonly noteDrag?: NoteTaskDrag,
     private readonly openConnections?: () => void,
+    private readonly store?: Pick<AppStore, "subscribe">,
+    private readonly daily?: Pick<PeriodicNotes, "createDailyNotePath">,
   ) {
     super(leaf);
   }
@@ -91,6 +96,49 @@ export class TasksView extends ItemView {
         );
       });
     };
+    try {
+      await this.scheduler?.importer.initialize();
+    } catch (error) {
+      new Notice(
+        `Task import history could not be loaded. ${error instanceof Error ? error.message : "Reload Day Planner to retry."}`,
+      );
+    }
+    const noteContext = readable({ currentPath: "", targetPath: "" }, (set) => {
+      let currentPath = this.app.workspace.getActiveFile()?.path ?? "";
+      let previous = "";
+      const publish = () => {
+        const state: unknown = this.app.workspace
+          .getLeavesOfType(viewTypeTimeline)[0]
+          ?.view.getState();
+        const day =
+          state &&
+          typeof state === "object" &&
+          "day" in state &&
+          typeof state.day === "string"
+            ? state.day
+            : "";
+        const targetPath =
+          day && this.daily
+            ? this.daily.createDailyNotePath(window.moment(day, "YYYY-MM-DD"))
+            : currentPath;
+        const key = JSON.stringify([currentPath, targetPath]);
+        if (key === previous) return;
+        previous = key;
+        set({ currentPath, targetPath });
+      };
+      const fileEvent = this.app.workspace.on("file-open", (file) => {
+        currentPath = file?.extension === "md" ? file.path : "";
+        publish();
+      });
+      const layoutEvent = this.app.workspace.on("layout-change", publish);
+      const stop = this.store?.subscribe(() => queueMicrotask(publish));
+      publish();
+      return () => {
+        this.app.workspace.offref(fileEvent);
+        this.app.workspace.offref(layoutEvent);
+        stop?.();
+      };
+    });
     this.component = mount(TasksPane, {
       target: this.contentEl,
       props: {
@@ -107,6 +155,8 @@ export class TasksView extends ItemView {
         deleter: this.deleter,
         noteTasks: this.noteTasks,
         noteDrag: this.noteDrag,
+        noteContext,
+        resolveImported: (uid: string) => this.calendar?.importedSource?.(uid),
         openConnections: this.openConnections,
         scheduleImported: (task: ProviderTask) => {
           if (this.scheduler)

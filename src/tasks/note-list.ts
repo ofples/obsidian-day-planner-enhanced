@@ -7,6 +7,9 @@ export interface NoteTaskRow {
   candidate: CaptureCandidate;
   locked: boolean;
   depth: number;
+  context: boolean;
+  hasChildren: boolean;
+  scheduled: boolean;
 }
 
 const key = (path: string, from: number) => JSON.stringify([path, from]);
@@ -15,6 +18,7 @@ const key = (path: string, from: number) => JSON.stringify([path, from]);
 export function noteTaskRows(
   candidates: CaptureCandidate[],
   query = "",
+  includeScheduled = false,
 ): NoteTaskRow[] {
   const sorted = candidates.toSorted(
     (a, b) => a.path.localeCompare(b.path) || a.from - b.from,
@@ -49,24 +53,51 @@ export function noteTaskRows(
     if (byKey.has(parent)) lockedTree.add(parent);
   }
   const needle = query.trim().toLocaleLowerCase();
-  return sorted
-    .filter(
-      (candidate) =>
-        candidate.status === " " &&
-        !candidate.completed &&
-        !candidate.insideTimedBlock &&
-        !timedTree.has(key(candidate.path, candidate.from)) &&
-        (!needle ||
-          `${candidate.title} ${candidate.path}`
-            .toLocaleLowerCase()
-            .includes(needle)),
+  const matches = new Set(
+    sorted
+      .filter(
+        (candidate) =>
+          candidate.status === " " &&
+          !candidate.completed &&
+          (includeScheduled ||
+            (!candidate.insideTimedBlock &&
+              !timedTree.has(key(candidate.path, candidate.from)))) &&
+          (!needle ||
+            `${candidate.title} ${candidate.path}`
+              .toLocaleLowerCase()
+              .includes(needle)),
+      )
+      .map((candidate) => key(candidate.path, candidate.from)),
+  );
+  const visible = new Set(matches);
+  for (const candidate of sorted.toReversed()) {
+    if (
+      !visible.has(key(candidate.path, candidate.from)) ||
+      candidate.parentFrom === undefined
     )
+      continue;
+    visible.add(key(candidate.path, candidate.parentFrom));
+  }
+  const parents = new Set(
+    sorted
+      .filter(
+        (candidate) =>
+          visible.has(key(candidate.path, candidate.from)) &&
+          candidate.parentFrom !== undefined,
+      )
+      .map((candidate) => key(candidate.path, candidate.parentFrom!)),
+  );
+  return sorted
+    .filter((candidate) => visible.has(key(candidate.path, candidate.from)))
     .map((candidate) => {
       const id = key(candidate.path, candidate.from);
       return {
         candidate,
         locked: lockedTree.has(id),
         depth: depthByKey.get(id) ?? 0,
+        context: !matches.has(id),
+        hasChildren: parents.has(id),
+        scheduled: timedTree.has(id),
       };
     });
 }

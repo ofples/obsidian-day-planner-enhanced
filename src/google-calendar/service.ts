@@ -119,6 +119,7 @@ const stateSchema = z.object({
     .optional(),
   pendingNoteChange: z
     .object({
+      localWrites: z.boolean().optional(),
       edits: z.array(
         z.object({ path: z.string(), before: z.string(), after: z.string() }),
       ),
@@ -321,7 +322,7 @@ export class GoogleCalendarSync {
     this.lastSaved = serialized;
   }
 
-  private noteContext(settings = this.getSettings()) {
+  private noteContext(settings = this.getSettings(), localWrites = false) {
     const config = settings.googleCalendar;
     const timeMin = window
       .moment()
@@ -342,6 +343,7 @@ export class GoogleCalendarSync {
       this.state,
       () => this.save(),
       this.edits,
+      localWrites,
     );
     return { notes, timeMin, timeMax };
   }
@@ -359,7 +361,7 @@ export class GoogleCalendarSync {
       );
     this.busy = true;
     try {
-      const { notes } = this.noteContext();
+      const { notes } = this.noteContext(this.getSettings(), true);
       const blocks = await notes.scan();
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Unload can stop the service while scanning notes.
       if (this.stopped)

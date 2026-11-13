@@ -1,5 +1,6 @@
 <script lang="ts">
   /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
+  import { CornerDownLeft } from "lucide-svelte";
   import { Notice } from "obsidian";
   import { derived, get, readable } from "svelte/store";
   import { isNotVoid } from "typed-assert";
@@ -100,10 +101,15 @@
   let taskDropPreview: { start: Moment; end: Moment; title: string } | null =
     $state(null);
   let subtaskDropTarget: string | null = $state(null);
+  let subtaskDropCursor: { x: number; y: number } | null = $state(null);
+  function clearSubtaskDrop() {
+    subtaskDropTarget = null;
+    subtaskDropCursor = null;
+  }
   $effect(() => {
     if (!$draggedTask) {
       taskDropPreview = null;
-      subtaskDropTarget = null;
+      clearSubtaskDrop();
     }
   });
 
@@ -136,7 +142,7 @@
     if (!event.dataTransfer || !acceptsTaskDrag(event)) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = "move";
-    subtaskDropTarget = null;
+    clearSubtaskDrop();
     taskDropPreview = taskIntervalAt(event);
   }
 
@@ -157,6 +163,11 @@
     event.dataTransfer.dropEffect = "move";
     taskDropPreview = null;
     subtaskDropTarget = id;
+    const bounds = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    subtaskDropCursor = {
+      x: event.clientX - bounds.left + 12,
+      y: event.clientY - bounds.top + 12,
+    };
   }
 
   async function dropSubtask(
@@ -194,7 +205,7 @@
     } finally {
       taskScheduler.drag.cancel();
       noteTaskDrag?.cancel();
-      subtaskDropTarget = null;
+      clearSubtaskDrop();
       taskDropPreview = null;
     }
   }
@@ -551,14 +562,18 @@
                 aria-label="Add task as subtask"
                 ondragenter={(event) => subtaskDragOver(event, timeBlock.id)}
                 ondragleave={() => {
-                  if (subtaskDropTarget === timeBlock.id)
-                    subtaskDropTarget = null;
+                  if (subtaskDropTarget === timeBlock.id) clearSubtaskDrop();
                 }}
                 ondragover={(event) => subtaskDragOver(event, timeBlock.id)}
                 ondrop={(event) => dropSubtask(event, timeBlock)}
                 role="group"
               >
-                <span>Add as subtask</span>
+                {#if subtaskDropTarget === timeBlock.id && subtaskDropCursor}<span
+                    style:left={`${subtaskDropCursor.x}px`}
+                    style:top={`${subtaskDropCursor.y}px`}
+                    class="subtask-drop-icon"
+                    ><CornerDownLeft aria-hidden="true" size={16} /></span
+                  >{/if}
               </div>
             {/if}
           </PositionedTimeBlock>
@@ -606,6 +621,8 @@
 
 <style>
   .task-subtask-drop-target {
+    cursor: copy;
+
     position: absolute;
     z-index: 20;
     top: var(--time-block-top);
@@ -620,29 +637,17 @@
     height: var(--time-block-height);
     padding: 0 6px;
 
-    background: color-mix(in srgb, var(--interactive-accent) 12%, transparent);
-    border: 1px dashed var(--interactive-accent);
+    background: transparent;
   }
 
   .task-subtask-drop-target.active {
-    background: color-mix(in srgb, var(--interactive-accent) 30%, transparent);
-    outline: 1px solid var(--interactive-accent);
+    background: color-mix(in srgb, var(--interactive-accent) 14%, transparent);
   }
 
-  .task-subtask-drop-target span {
+  .subtask-drop-icon {
     pointer-events: none;
-
-    overflow: hidden;
-
-    padding: 1px 4px;
-
-    font-size: var(--font-smallest);
-    color: var(--text-normal);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-
-    background: var(--background-primary);
-    border-radius: 3px;
+    position: absolute;
+    color: var(--interactive-accent);
   }
 
   .task-drop-preview {

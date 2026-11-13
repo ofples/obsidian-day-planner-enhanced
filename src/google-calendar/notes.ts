@@ -86,6 +86,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     private readonly state: CalendarSyncState,
     private readonly save: () => Promise<void>,
     private readonly edits?: Pick<TransactionWriter, "isWriting" | "revision">,
+    private readonly localWrites = false,
   ) {}
 
   private notesCurrent() {
@@ -249,6 +250,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
           .map((edit) => [edit.path, edit.after]),
       ),
     },
+    localWrites = false,
   ) {
     this.state.version = 2;
     if (!edits.length) {
@@ -257,7 +259,12 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       await this.save();
       return;
     }
-    this.state.pendingNoteChange = { edits, identities, documents };
+    this.state.pendingNoteChange = {
+      edits,
+      identities,
+      documents,
+      ...(localWrites ? { localWrites: true } : {}),
+    };
     await this.save();
     await this.recoverNoteChange();
     for (const edit of edits)
@@ -272,9 +279,10 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       const file = this.file(edit.path);
       const text = await this.app.vault.read(file);
       if (
-        !this.noteDateInScope(file) ||
-        !isCalendarNoteEnabled(text) ||
-        !isCalendarNoteEnabled(edit.after)
+        !pending.localWrites &&
+        (!this.noteDateInScope(file) ||
+          !isCalendarNoteEnabled(text) ||
+          !isCalendarNoteEnabled(edit.after))
       )
         throw new Error(
           "A pending calendar recovery is outside sync scope. Review it before syncing.",
@@ -407,8 +415,9 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     templateRaw?: string,
   ): Promise<CalendarNoteWritePlan> {
     if (
-      !(await this.canSync(previous?.path ?? "", snapshot)) ||
-      !(await this.canSync("", snapshot))
+      !this.localWrites &&
+      (!(await this.canSync(previous?.path ?? "", snapshot)) ||
+        !(await this.canSync("", snapshot)))
     )
       throw new Error(
         "This note or date is outside Google Calendar sync scope.",
@@ -423,7 +432,10 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       window.moment(snapshot.start).startOf("day"),
     );
     const before = await this.app.vault.read(target);
-    if (!this.noteDateInScope(target) || !isCalendarNoteEnabled(before))
+    if (
+      !this.localWrites &&
+      (!this.noteDateInScope(target) || !isCalendarNoteEnabled(before))
+    )
       throw new Error(
         "This note or date is outside Google Calendar sync scope.",
       );
@@ -488,16 +500,20 @@ export class ObsidianCalendarNotes implements CalendarNotes {
   }
 
   async applyWrite(plan: CalendarNoteWritePlan): Promise<LocalBlock> {
-    if (!(await this.canSync(plan.block.path, plan.block.snapshot)))
+    if (
+      !this.localWrites &&
+      !(await this.canSync(plan.block.path, plan.block.snapshot))
+    )
       throw new Error(
         "This note or date is outside Google Calendar sync scope.",
       );
     for (const edit of plan.edits) {
       const file = this.file(edit.path);
       if (
-        !this.noteDateInScope(file) ||
-        !isCalendarNoteEnabled(edit.before) ||
-        !isCalendarNoteEnabled(edit.after)
+        !this.localWrites &&
+        (!this.noteDateInScope(file) ||
+          !isCalendarNoteEnabled(edit.before) ||
+          !isCalendarNoteEnabled(edit.after))
       )
         throw new Error("This note is outside Google Calendar sync scope.");
     }
@@ -506,10 +522,15 @@ export class ObsidianCalendarNotes implements CalendarNotes {
         "Finish the pending calendar note operation before applying another write.",
       );
     const { uid, ...identity } = plan.block;
-    await this.changeNotes(plan.edits, {
-      ...this.state.identities,
-      [uid]: identity,
-    });
+    await this.changeNotes(
+      plan.edits,
+      {
+        ...this.state.identities,
+        [uid]: identity,
+      },
+      undefined,
+      this.localWrites,
+    );
     return plan.block;
   }
 
@@ -519,9 +540,10 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     for (const edit of edits) {
       const file = this.file(edit.path);
       if (
-        !this.noteDateInScope(file) ||
-        !isCalendarNoteEnabled(edit.before) ||
-        !isCalendarNoteEnabled(edit.after)
+        !this.localWrites &&
+        (!this.noteDateInScope(file) ||
+          !isCalendarNoteEnabled(edit.before) ||
+          !isCalendarNoteEnabled(edit.after))
       )
         throw new Error("This note is outside Google Calendar sync scope.");
     }
@@ -529,7 +551,12 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       throw new Error(
         "Finish the pending note operation before applying another write.",
       );
-    await this.changeNotes(edits, { ...this.state.identities });
+    await this.changeNotes(
+      edits,
+      { ...this.state.identities },
+      undefined,
+      this.localWrites,
+    );
   }
 
   async recoverMove() {

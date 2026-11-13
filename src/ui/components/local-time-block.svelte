@@ -1,7 +1,6 @@
 <script lang="ts">
   /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
-  import { Lock, LockOpen } from "lucide-svelte";
-  import { Notice } from "obsidian";
+  import { Lock } from "lucide-svelte";
   import type { Snippet } from "svelte";
 
   import { getObsidianContext } from "../../context/obsidian-context";
@@ -106,29 +105,13 @@
   {timeBlock}
   use={[...use, hoverPreview(timeBlock), [noteDrag, timeBlock]]}
 >
-  {#if (timeBlock.source === "dailyNoteDate" || timeBlock.source === "tasksPluginProp") && context.toggleTaskLock}
-    <button
-      class="task-lock-toggle"
-      aria-label={locked ? "Unlock task" : "Lock task"}
-      aria-pressed={locked}
-      onclick={async (event) => {
-        event.stopPropagation();
-        try {
-          await context.toggleTaskLock?.(timeBlock);
-        } catch (error) {
-          new Notice(
-            error instanceof Error
-              ? error.message
-              : "Could not change this task's lock.",
-          );
-        }
-      }}
-      onpointerdown={(event) => event.stopPropagation()}
-      onpointerup={(event) => event.stopPropagation()}
-      title={locked ? "Unlock task" : "Lock task"}
+  {#if locked}
+    <span
+      class="task-lock-badge"
+      aria-label="Locked task"
+      role="img"
+      title="Locked task"><Lock size={11} /></span
     >
-      {#if locked}<Lock size={14} />{:else}<LockOpen size={14} />{/if}
-    </button>
   {/if}
   {#if timeBlock.source === "frontmatterLog"}
     <FrontmatterLogContent {bottomDecoration} {timeBlock} />
@@ -140,8 +123,8 @@
 <!-- eslint-enable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Re-enable scorecard compatibility suppressions after this file. -->
 
 <style>
-  .task-lock-toggle {
-    cursor: pointer;
+  .task-lock-badge {
+    pointer-events: none;
 
     position: absolute;
     z-index: 4;
@@ -152,14 +135,6 @@
     align-items: center;
     justify-content: center;
 
-    width: 20px;
-    height: 20px;
-    padding: 0;
-
     color: var(--text-muted);
-
-    background: var(--background-primary);
-    border: 0;
-    border-radius: 4px;
   }
 </style>

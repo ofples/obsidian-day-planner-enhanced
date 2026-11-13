@@ -143,6 +143,69 @@
   min-width: 0;
 }
 
+.dp-task-panel .task-source-tabs {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.dp-task-panel .task-source-tabs > button {
+  flex: 1;
+  gap: 7px;
+
+  padding: 7px 9px;
+
+  color: var(--tp-muted);
+
+  border: 1px solid transparent;
+}
+
+.dp-task-panel .task-source-tabs > button[aria-selected="true"] {
+  color: var(--tp-text);
+  background: var(--tp-surface);
+  border-color: var(--tp-border);
+}
+
+.dp-task-panel .task-note-filter {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+
+  min-width: 0;
+
+  font-size: 11px;
+  color: var(--tp-muted);
+}
+
+.dp-task-panel .task-note-filter > span {
+  overflow: hidden;
+  flex: 1;
+
+  min-width: 0;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dp-task-panel .task-note-filter > button {
+  flex: none;
+  gap: 5px;
+  padding: 4px 5px;
+  font-size: 11px;
+}
+
+.dp-task-panel .task-note-filter > button[aria-pressed="true"],
+.dp-task-panel .task-added-chip {
+  color: var(--tp-accent);
+  background: var(--tp-accent-bg);
+}
+
+.dp-task-panel .task-added-chip {
+  padding: 1px 5px;
+  font-size: 10px;
+  border-radius: 4px;
+}
+
 .dp-task-panel h2 {
   flex: 1;
   font-size: 19px;

@@ -91,3 +91,88 @@ test("a failure before preparing an edit permits a different destination", async
     importer.runPane("key", crypto.randomUUID(), "second", async () => source),
   ).resolves.toEqual(source);
 });
+
+test("persists imported child IDs through a prepared retry and restart", async () => {
+  let disk: string | null = null;
+  const host = {
+    read: async () => null,
+    flush: async () => {},
+    readImports: async () => disk,
+    writeImports: async (value: string) => {
+      disk = value;
+    },
+  };
+  const calendar = {} as Pick<GoogleCalendarSync, "editNotes">;
+  const importer = new PlainTaskImporter(calendar, host);
+  const source = {
+    path: "Note.md",
+    from: 0,
+    raw: "- [ ] Root\n  - [ ] Child",
+    title: "Root",
+  };
+  const firstId = crypto.randomUUID();
+  await expect(
+    importer.runPane(
+      "key",
+      firstId,
+      "same",
+      async (_id, prepare) => {
+        await prepare({
+          edits: [{ path: "Note.md", before: "", after: source.raw }],
+          source,
+        });
+        throw new Error("interrupted");
+      },
+      ["root", "child"],
+    ),
+  ).rejects.toThrow("interrupted");
+  const restored = new PlainTaskImporter(calendar, host);
+  await restored.runPane(
+    "key",
+    crypto.randomUUID(),
+    "same",
+    async (id, _prepare, pending) => {
+      expect(id).toBe(firstId);
+      expect(pending.taskIds).toEqual(["root", "child"]);
+      return source;
+    },
+    ["root", "new-child"],
+  );
+  expect(get(restored.imports).key?.taskIds).toEqual(["root", "child"]);
+  const restarted = new PlainTaskImporter(calendar, host);
+  await restarted.initialize();
+  expect(get(restarted.imports).key?.taskIds).toEqual(["root", "child"]);
+});
+
+test("sources retain multiple completed placements after restart", async () => {
+  let disk: string | null = null;
+  const host = {
+    read: async () => null,
+    flush: async () => {},
+    readImports: async () => disk,
+    writeImports: async (value: string) => {
+      disk = value;
+    },
+  };
+  const calendar = {} as Pick<GoogleCalendarSync, "editNotes">;
+  const importer = new PlainTaskImporter(calendar, host);
+  const first = { path: "First.md", from: 0, raw: "- [ ] Root", title: "Root" };
+  const second = { ...first, path: "Second.md" };
+  await importer.runPane(
+    "key",
+    crypto.randomUUID(),
+    "first",
+    async () => first,
+  );
+  await importer.runPane(
+    "key",
+    crypto.randomUUID(),
+    "second",
+    async () => second,
+  );
+  const restarted = new PlainTaskImporter(calendar, host);
+  await restarted.initialize();
+  expect(new Set(restarted.sources().map(([, source]) => source.path))).toEqual(
+    new Set(["First.md", "Second.md"]),
+  );
+});

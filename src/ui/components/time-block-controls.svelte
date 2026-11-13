@@ -1,5 +1,7 @@
 <script lang="ts">
   /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
+  import { Lock, LockOpen } from "lucide-svelte";
+  import { Notice } from "obsidian";
   import { type Snippet } from "svelte";
 
   import { getObsidianContext } from "../../context/obsidian-context";
@@ -53,6 +55,7 @@
     editLine,
     useSelector,
     settingsSignal,
+    toggleTaskLock,
   } = getObsidianContext();
 
   const activeLogTimeBlocks = useSelector((state) =>
@@ -153,11 +156,38 @@
       {/snippet}
 
       {#snippet topEnd({ isActive, setIsActive })}
-        {#if !lockedTree}<DragControls
-            {isActive}
-            {setIsActive}
-            {timeBlock}
-          />{/if}
+        <div class="edit-toolbar">
+          {#if (timeBlock.source === "dailyNoteDate" || timeBlock.source === "tasksPluginProp") && toggleTaskLock}
+            <button
+              class="lock-control"
+              aria-label={locked ? "Unlock task" : "Lock task"}
+              aria-pressed={locked}
+              onclick={async (event) => {
+                event.stopPropagation();
+                try {
+                  await toggleTaskLock(timeBlock);
+                } catch (error) {
+                  new Notice(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not change this task's lock.",
+                  );
+                }
+              }}
+              onpointerdown={(event) => event.stopPropagation()}
+              title={locked ? "Unlock task" : "Lock task"}
+              type="button"
+              >{#if locked}<Lock size={14} />{:else}<LockOpen
+                  size={14}
+                />{/if}</button
+            >
+          {/if}
+          {#if !lockedTree}<DragControls
+              {isActive}
+              {setIsActive}
+              {timeBlock}
+            />{/if}
+        </div>
       {/snippet}
 
       {#snippet bottom({ isActive, setIsActive })}
@@ -180,4 +210,27 @@
     </FloatingControls>
   {/snippet}
 </Selectable>
+
 <!-- eslint-enable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Re-enable scorecard compatibility suppressions after this file. -->
+
+<style>
+  .edit-toolbar {
+    display: flex;
+    gap: var(--size-2-1);
+    align-items: center;
+  }
+
+  .lock-control {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+
+    padding: var(--size-2-1) var(--size-2-2);
+
+    color: var(--text-muted);
+
+    background: var(--background-primary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--size-4-1);
+  }
+</style>

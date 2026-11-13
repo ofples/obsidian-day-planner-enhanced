@@ -1,8 +1,9 @@
 import { flushSync, mount, unmount } from "svelte";
 import { writable } from "svelte/store";
 import { afterEach, expect, test, vi } from "vitest";
-import type { TaskService } from "../src/tasks/service";
+
 import type { GoogleCalendarSync } from "../src/google-calendar/service";
+import type { TaskService } from "../src/tasks/service";
 import Connections from "../src/ui/components/planner-connections.svelte";
 
 let component: ReturnType<typeof mount> | undefined;
@@ -74,31 +75,36 @@ test("shows connected Todoist account and successful Google connection", async (
   });
   let connected = false;
   const signIn = vi.fn(async () => {});
+  const disconnect = vi.fn(() =>
+    state.update((value) => ({ ...value, connected: false })),
+  );
   const calendar = {
     isConnected: () => connected,
     connect: async () => {
       connected = true;
     },
+    disconnect: vi.fn(() => {
+      connected = false;
+    }),
   };
   component = mount(Connections, {
     target,
     props: {
-      service: { state, signIn } as unknown as TaskService,
+      service: { state, signIn, disconnect } as unknown as TaskService,
       calendar: calendar as unknown as GoogleCalendarSync,
       close: vi.fn(),
     },
   });
   flushSync();
   expect(target.textContent).toContain("Connected as Example account");
-  const options = target.querySelector<HTMLDetailsElement>("details")!;
-  expect(options.open).toBe(false);
-  expect(options.querySelector("summary")?.textContent).toContain(
-    "Account options",
-  );
-  options.open = true;
-  options.querySelector<HTMLInputElement>('input[type="checkbox"]')!.click();
+  expect(target.querySelector("details")).toBeNull();
   Array.from(target.querySelectorAll(".connection-card"))[1]!
     .querySelector<HTMLButtonElement>("button")!
+    .click();
+  expect(disconnect).toHaveBeenCalledOnce();
+  flushSync();
+  target
+    .querySelector<HTMLButtonElement>('[aria-label="Sign in with Todoist"]')!
     .click();
   expect(signIn).toHaveBeenCalledExactlyOnceWith(true);
   Array.from(target.querySelectorAll("button"))
@@ -112,5 +118,11 @@ test("shows connected Todoist account and successful Google connection", async (
   expect(
     target.querySelector<HTMLButtonElement>(".connection-card button")
       ?.textContent,
-  ).toContain("Reconnect");
+  ).toContain("Sign out");
+  target
+    .querySelector<HTMLButtonElement>(
+      '[aria-label="Sign out of Google Calendar"]',
+    )!
+    .click();
+  expect(calendar.disconnect).toHaveBeenCalledOnce();
 });

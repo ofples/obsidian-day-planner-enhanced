@@ -9,6 +9,9 @@ export const taskViewStateSchema = z.object({
   projectId: z.string().default(""),
   selectedId: z.string().nullable().default(null),
   collapsed: z.array(z.string()).default([]),
+  source: z.enum(["todoist", "notes"]).optional(),
+  showAdded: z.boolean().optional(),
+  scannedNotePaths: z.array(z.string()).optional(),
 });
 export type TaskViewState = z.infer<typeof taskViewStateSchema>;
 
@@ -60,6 +63,7 @@ export function taskGroups(
   snapshot: TaskSnapshot,
   prefs: TaskViewState,
   now: DateTime = DateTime.now(),
+  excludedIds: ReadonlySet<string> = new Set(),
 ): TaskBrowserGroup[] {
   const tasks = snapshot.tasks
     .filter((task) => !task.completed)
@@ -73,6 +77,7 @@ export function taskGroups(
     tasks
       .filter(
         (task) =>
+          !excludedIds.has(task.id) &&
           (!prefs.projectId || task.projectId === prefs.projectId) &&
           [
             task.title,

@@ -34,6 +34,26 @@ const prefs = taskViewStateSchema.parse({});
 const now = DateTime.fromISO("2026-11-10T20:00:00Z");
 
 describe("task browser grouping", () => {
+  test("excludes added tasks while preserving parent context, and restores them when cleared", () => {
+    const data = snapshot([
+      task("parent"),
+      task("child", { parentId: "parent" }),
+      task("new", { parentId: "parent" }),
+    ]);
+    const hidden = taskGroups(data, prefs, now, new Set(["parent", "child"]));
+    expect(hidden[0]?.count).toBe(1);
+    expect(hidden[0]?.rows.map((row) => [row.task.id, row.context])).toEqual([
+      ["parent", true],
+      ["new", false],
+    ]);
+    const shown = taskGroups(data, prefs, now, new Set());
+    expect(shown[0]?.count).toBe(1);
+    expect(shown[0]?.rows.map((row) => row.task.id)).toEqual([
+      "parent",
+      "child",
+      "new",
+    ]);
+  });
   test("date-only values and absolute instants use account day near midnight", () => {
     expect(
       taskDay(task("date", { due: due("2026-11-11") }), "America/Los_Angeles"),
