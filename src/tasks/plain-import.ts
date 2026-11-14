@@ -7,9 +7,11 @@ import { locateSource } from "../service/source-identity";
 import { hasTaskLock } from "../util/task-lock";
 
 import { parseCaptureCandidates } from "./capture-parser";
+import { rebaseDropOffset } from "./editor-drop";
 import {
   indentTaskSubtree,
   scheduleNoteTitle,
+  taskDropBoundary,
   subtaskInsertTarget,
 } from "./schedule-markdown";
 import type { ScheduleInterval } from "./schedule-types";
@@ -360,106 +362,129 @@ export class PlainTaskImporter {
         ...(previous ? [previous.path] : []),
       ]);
       if (previous) await this.assertUnlocked(previous);
-      return this.calendar.editNotes(async (notes) => {
-        if (saved) {
-          const current = await Promise.all(
-            saved.edits.map((edit) => this.host.read(edit.path)),
-          );
-          if (
-            current.every((text, index) => text === saved.edits[index]!.after)
-          )
+      return this.calendar.editNotes(
+        async (notes) => {
+          if (saved) {
+            const current = await Promise.all(
+              saved.edits.map((edit) => this.host.read(edit.path)),
+            );
+            if (
+              current.every((text, index) => text === saved.edits[index]!.after)
+            )
+              return saved.source;
+            if (
+              !current.every(
+                (text, index) => text === saved.edits[index]!.before,
+              )
+            )
+              throw new Error(
+                "The note changed during a pending task import. Review its saved state before retrying.",
+              );
+            await notes.applyEdits(saved.edits);
             return saved.source;
-          if (
-            !current.every((text, index) => text === saved.edits[index]!.before)
-          )
-            throw new Error(
-              "The note changed during a pending task import. Review its saved state before retrying.",
+          }
+          const before = await this.host.read(target.path);
+          if (before === null)
+            throw new Error("The destination note is missing.");
+          let after = before;
+          let offset =
+            before === target.before
+              ? target.offset
+              : taskDropBoundary(
+                  before,
+                  rebaseDropOffset(target.before, before, target.offset),
+                );
+          let parent = target.parent;
+          if (parent && before !== target.before) {
+            const from = locateSource(before, parent);
+            if (from < 0)
+              throw new Error(
+                "The parent task changed. Drop it on the updated task.",
+              );
+            parent = { ...parent, from };
+          }
+          const edits: { path: string; before: string; after: string }[] = [];
+          let sourceIndent = "";
+          if (previous) {
+            const text =
+              previous.path === target.path
+                ? before
+                : await this.host.read(previous.path);
+            const from = text === null ? -1 : locateSource(text, previous);
+            if (text === null || from < 0)
+              throw new Error(
+                "The source task changed. Refresh and drag it again.",
+              );
+            if (
+              previous.path === target.path &&
+              parent &&
+              parent.from >= from &&
+              parent.from < from + previous.raw.length
+            )
+              throw new Error("A task cannot contain itself or its subtasks.");
+            sourceIndent = text.slice(
+              text.lastIndexOf("\n", from - 1) + 1,
+              from,
             );
-          await notes.applyEdits(saved.edits);
-          return saved.source;
-        }
-        const before = await this.host.read(target.path);
-        if (before !== target.before)
-          throw new Error("The destination note changed. Drop the task again.");
-        let after = before;
-        let offset = target.offset;
-        const edits: { path: string; before: string; after: string }[] = [];
-        let sourceIndent = "";
-        if (previous) {
-          const text =
-            previous.path === target.path
-              ? before
-              : await this.host.read(previous.path);
-          const from = text === null ? -1 : locateSource(text, previous);
-          if (text === null || from < 0)
-            throw new Error(
-              "The source task changed. Refresh and drag it again.",
+            const removed =
+              text.slice(0, from) + text.slice(from + previous.raw.length);
+            if (previous.path === target.path) {
+              after = removed;
+              if (offset > from) offset -= previous.raw.length;
+            } else
+              edits.push({ path: previous.path, before: text, after: removed });
+          }
+          const lines = raw.split(/\r?\n/);
+          const range = getTimeRangeMatch(lines[0] ?? "");
+          if (range)
+            lines[0] = (
+              lines[0]!.slice(0, range.startIndex).trimEnd() +
+              " " +
+              lines[0]!.slice(range.endIndex).trimStart()
+            ).trimEnd();
+          if (target.timePrefix)
+            lines[0] = lines[0]!.replace(
+              /^(\s*(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?)/,
+              `$1${target.timePrefix} `,
             );
-          if (
-            previous.path === target.path &&
-            target.parent &&
-            target.parent.from >= from &&
-            target.parent.from < from + previous.raw.length
-          )
-            throw new Error("A task cannot contain itself or its subtasks.");
-          sourceIndent = text.slice(text.lastIndexOf("\n", from - 1) + 1, from);
-          const removed =
-            text.slice(0, from) + text.slice(from + previous.raw.length);
-          if (previous.path === target.path) {
-            after = removed;
-            if (offset > from) offset -= previous.raw.length;
-          } else
-            edits.push({ path: previous.path, before: text, after: removed });
-        }
-        const lines = raw.split(/\r?\n/);
-        const range = getTimeRangeMatch(lines[0] ?? "");
-        if (range)
-          lines[0] = (
-            lines[0]!.slice(0, range.startIndex).trimEnd() +
-            " " +
-            lines[0]!.slice(range.endIndex).trimStart()
-          ).trimEnd();
-        if (target.timePrefix)
-          lines[0] = lines[0]!.replace(
-            /^(\s*(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?)/,
-            `$1${target.timePrefix} `,
+          const newline = before.includes("\r\n") ? "\r\n" : "\n";
+          const indent = parent
+            ? before.slice(
+                before.lastIndexOf("\n", parent.from - 1) + 1,
+                parent.from,
+              ) +
+              parent.raw
+                .match(/^(?:[-*+]|\d+[.)])[ \t]+/)![0]
+                .replace(/[^\t]/g, " ")
+            : "";
+          const content = indentTaskSubtree(
+            lines.join(newline),
+            sourceIndent,
+            indent,
+            newline,
           );
-        const newline = before.includes("\r\n") ? "\r\n" : "\n";
-        const parent = target.parent;
-        const indent = parent
-          ? before.slice(
-              before.lastIndexOf("\n", parent.from - 1) + 1,
-              parent.from,
-            ) +
-            parent.raw
-              .match(/^(?:[-*+]|\d+[.)])[ \t]+/)![0]
-              .replace(/[^\t]/g, " ")
-          : "";
-        const content = indentTaskSubtree(
-          lines.join(newline),
-          sourceIndent,
-          indent,
-          newline,
-        );
-        const prefix = offset && after[offset - 1] !== "\n" ? newline : "";
-        const suffix = /^\r?\n/.test(after.slice(offset)) ? "" : newline;
-        after =
-          after.slice(0, offset) +
-          prefix +
-          content +
-          suffix +
-          after.slice(offset);
-        edits.push({ path: target.path, before, after });
-        const source = {
-          path: target.path,
-          from: offset + prefix.length + indent.length,
-          raw: content.trimStart(),
-          title: lines[0]!,
-        };
-        await prepare?.({ edits, source });
-        await notes.applyEdits(edits);
-        return source;
-      });
+          const prefix = offset && after[offset - 1] !== "\n" ? newline : "";
+          const suffix = /^\r?\n/.test(after.slice(offset)) ? "" : newline;
+          after =
+            after.slice(0, offset) +
+            prefix +
+            content +
+            suffix +
+            after.slice(offset);
+          edits.push({ path: target.path, before, after });
+          const source = {
+            path: target.path,
+            from: offset + prefix.length + indent.length,
+            raw: content.trimStart(),
+            title: lines[0]!,
+          };
+          await prepare?.({ edits, source });
+          await notes.applyEdits(edits);
+          return source;
+        },
+        () =>
+          this.host.flush([target.path, ...(previous ? [previous.path] : [])]),
+      );
     });
   }
 

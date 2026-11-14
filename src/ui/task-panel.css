@@ -611,9 +611,12 @@
 }
 
 .dp-task-panel .task-import-circle {
+  flex-shrink: 0;
+
   width: 15px;
   height: 15px;
   margin-top: 3px;
+  padding: 0;
 
   border: 1.3px solid var(--tp-muted);
   border-radius: 50%;

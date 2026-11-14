@@ -2371,6 +2371,29 @@ describe("linked task scheduling", () => {
     h.service.stop();
   });
 
+  test("later Markdown drops rebase over earlier insertions into the same note", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    const other = { ...root, id: "other-import", title: "Other import" };
+    h.tasks.set(other.id, other);
+    await h.service.refresh();
+    const path = "Projects/Queued.md",
+      before = "# Project\n";
+    h.file(path);
+    h.texts.set(path, before);
+    const target = { path, before, offset: before.length };
+    await h.scheduler.insertFromPane(root.id, target);
+    await h.scheduler.insertFromPane(other.id, target);
+    const after = h.texts.get(path)!;
+    expect(after.indexOf("- [ ] Other import")).toBeGreaterThan(
+      after.indexOf("- [ ] Work"),
+    );
+    expect(after).toContain("- [ ] Child");
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
   test("plain pane insertion and nesting preserve subtree without opt-in or provider writes", async () => {
     const h = await harness();
     h.setLinkedSync(false);
@@ -2511,7 +2534,7 @@ describe("linked task scheduling", () => {
     h.service.stop();
   });
 
-  test("an untouched date-only native preview creates no note, event or provider command", async () => {
+  test("a date-only Todoist task stays out of the planner and creates no note or event", async () => {
     const h = await harness();
     h.tasks.set(root.id, {
       ...root,
@@ -2523,7 +2546,7 @@ describe("linked task scheduling", () => {
       h.service.registry.snapshot(),
       defaultSettings,
     );
-    expect(preview?.isAllDayEvent).toBe(true);
+    expect(preview).toBeUndefined();
     expect(h.texts.size).toBe(0);
     expect(h.events.size).toBe(0);
     expect(h.apply).not.toHaveBeenCalled();

@@ -93,6 +93,7 @@ import {
 import type { TaskDeletionController } from "./tasks/deletion";
 import { createTaskDeletionController } from "./tasks/deletion-obsidian";
 import { taskDragMime } from "./tasks/drag";
+import { taskDropOffset } from "./tasks/editor-drop";
 import { NoteTaskDrag } from "./tasks/note-drag";
 import { createTaskService } from "./tasks/obsidian";
 import type { TaskReconciler } from "./tasks/reconcile";
@@ -505,7 +506,7 @@ export default class DayPlanner extends Plugin {
         void (async () => {
           const { task, id } = scheduler.drag.accept(event.dataTransfer!);
           const before = editor.getValue(),
-            offset = editor.posToOffset(editor.getCursor());
+            offset = taskDropOffset(editor, event);
           if (
             !view.file ||
             (event.target as HTMLElement | null)?.closest?.(

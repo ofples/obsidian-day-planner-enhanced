@@ -100,7 +100,7 @@ describe("Todoist calendar previews", () => {
   test("only suppresses the weak link's matching recurring occurrence", () => {
     const recurring = task("root", {
       due: {
-        date: "2026-11-13",
+        date: "2026-11-13T09:30:00Z",
         recurring: true,
         text: "daily",
         timezone: null,
@@ -159,17 +159,17 @@ describe("Todoist calendar previews", () => {
     expect({ browser, settings }).toEqual(before);
   });
 
-  test("retains a date-only local day as an all-day preview", () => {
+  test("keeps date-only Todoist tasks out of the planner header", () => {
     const dated = task("day", {
       due: { date: "2026-11-13", recurring: false, text: "", timezone: null },
     });
-    const [preview] = taskCalendarPreviews(
-      { connected: true, snapshot: snapshot([dated]) },
-      registry(),
-      settings,
-    );
-    expect(preview?.isAllDayEvent).toBe(true);
-    expect(preview?.startTime.format("YYYY-MM-DD")).toBe("2026-11-13");
+    expect(
+      taskCalendarPreviews(
+        { connected: true, snapshot: snapshot([dated]) },
+        registry(),
+        settings,
+      ),
+    ).toEqual([]);
   });
 
   test("uses task duration in days as minutes and account timezone for floating due values", () => {
@@ -368,7 +368,7 @@ describe("Todoist calendar previews", () => {
     const current = task("recurring", {
       completionCount: 2,
       due: {
-        date: "2026-11-13",
+        date: "2026-11-13T09:30:00Z",
         recurring: true,
         text: "every day",
         timezone: "America/New_York",
@@ -377,7 +377,7 @@ describe("Todoist calendar previews", () => {
     const earlier = {
       ...current,
       completionCount: 1,
-      due: { ...current.due!, date: "2026-11-12" },
+      due: { ...current.due!, date: "2026-11-12T09:30:00Z" },
     };
     const browser = { connected: true, snapshot: snapshot([current]) };
     expect(

@@ -154,6 +154,7 @@ export class GoogleCalendarSync {
   private state!: CalendarSyncState;
   private auth!: GoogleCalendarAuth;
   private busy = false;
+  private noteEdits: Promise<unknown> = Promise.resolve();
   private stopped = false;
   private lastSaved = "";
   private lastError = "";
@@ -355,22 +356,29 @@ export class GoogleCalendarSync {
       notes: ObsidianCalendarNotes,
       blocks: LocalBlock[],
     ) => Promise<T>,
+    prepare?: () => Promise<void>,
   ): Promise<T> {
-    if (this.busy || this.stopped || this.edits?.isWriting)
-      throw new Error(
-        "Wait for the current calendar operation to finish, then retry scheduling.",
-      );
-    this.busy = true;
-    try {
-      const { notes } = this.noteContext(this.getSettings(), true);
-      const blocks = await notes.scan();
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Unload can stop the service while scanning notes.
+    const queued = this.noteEdits.then(async () => {
+      while (!this.stopped && (this.busy || this.edits?.isWriting))
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
       if (this.stopped)
         throw new Error("Reopen Day Planner before scheduling this task.");
-      return await operation(notes, blocks);
-    } finally {
-      this.busy = false;
-    }
+      this.busy = true;
+      try {
+        await prepare?.();
+        const { notes } = this.noteContext(this.getSettings(), true);
+        const blocks = await notes.scan();
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Unload can stop the service while scanning notes.
+        if (this.stopped)
+          throw new Error("Reopen Day Planner before scheduling this task.");
+        return await operation(notes, blocks);
+      } finally {
+        this.busy = false;
+        this.queueAutomaticSync();
+      }
+    });
+    this.noteEdits = queued.catch(() => {});
+    return queued;
   }
 
   async syncProjection(uid: string, snapshot: CalendarSnapshot) {

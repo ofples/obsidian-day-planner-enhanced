@@ -16,7 +16,7 @@ import type { TaskBrowserState } from "./service";
 import type { ProviderTask } from "./types";
 import { taskLinkIdentity } from "./weak-links";
 
-/** Dated provider tasks are visible without creating notes or calendar events.
+/** Timed provider tasks are visible without creating notes or calendar events.
  * A canonical Markdown link owns the display after an occurrence is scheduled. */
 export function taskCalendarPreviews(
   browser: Pick<TaskBrowserState, "connected" | "snapshot">,
@@ -77,6 +77,7 @@ export function taskCalendarPreviews(
     if (
       task.completed ||
       !task.due ||
+      !task.due.date.includes("T") ||
       task.id.startsWith("local-") ||
       (weakLinks.has(task.id) &&
         (!task.due.recurring ||
@@ -101,16 +102,11 @@ export function taskCalendarPreviews(
         )
     )
       return [];
-    const dateOnly = /^\d{4}-\d{2}-\d{2}$/.test(task.due.date);
     const date = DateTime.fromISO(task.due.date, {
-      zone: dateOnly
-        ? DateTime.local().zoneName
-        : (task.due.timezone ?? snapshot.account.timezone),
+      zone: task.due.timezone ?? snapshot.account.timezone,
     });
     if (!date.isValid) return [];
-    const startTime = dateOnly
-      ? window.moment(task.due.date, "YYYY-MM-DD", true)
-      : window.moment(date.toISO());
+    const startTime = window.moment(date.toISO());
     if (!startTime.isValid()) return [];
     const durationMinutes = task.duration
       ? task.duration.amount * (task.duration.unit === "day" ? 1440 : 1)
@@ -125,8 +121,8 @@ export function taskCalendarPreviews(
           taskId: task.id,
         },
         startTime,
-        durationMinutes: dateOnly ? 1440 : durationMinutes,
-        isAllDayEvent: dateOnly,
+        durationMinutes,
+        isAllDayEvent: false,
         summary: task.title,
         description: newTaskMarkdown(task, [], snapshot, settings.taskCapture),
         rsvpStatus: "ACCEPTED",
