@@ -1,6 +1,7 @@
 import type { List, ListItem } from "mdast";
 
 import { fromMarkdown } from "../mdast/mdast";
+import { canonicalTaskUrl } from "../tasks/weak-links";
 import { exportPlainText } from "../util/schedule-export";
 
 export const subtasksStart = "<!-- day-planner-subtasks:start -->";
@@ -82,6 +83,70 @@ export function readStructuredDescription(value: string) {
     tags: tags.map((tag) => tag.slice(1)),
     subtasks: match[2]!,
     description: prefix + suffix,
+  };
+}
+
+/** Human-readable Google description; task checkboxes use unmistakable symbols. */
+export function plainCalendarDescription(
+  description: string,
+  subtasks: string,
+  taskUrl?: string | null,
+) {
+  validateStructuredSubtasks(subtasks);
+  const checklist = subtasks
+    .split(/\r?\n/)
+    .map((line) =>
+      line.replace(
+        /^(\s*)[-*+]\s+\[([ xX])\]\s*/,
+        (_, indent: string, status: string) =>
+          `${indent}${status === " " ? "⬜" : "✅"} `,
+      ),
+    )
+    .join("\n");
+  return [
+    description.trim(),
+    checklist.trimEnd(),
+    taskUrl ? `🔗 ${taskUrl}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+/** Split the user-readable form while leaving ordinary prose and links intact. */
+export function readPlainCalendarDescription(value: string) {
+  const prose: string[] = [],
+    tasks: string[] = [];
+  let taskUrl: string | null = null;
+  let inTasks = false;
+  for (const line of value.split(/\r?\n/)) {
+    const link = line.match(/^🔗\s+(https:\/\/\S+)\s*$/i);
+    const url = link && canonicalTaskUrl(link[1]!);
+    if (url) {
+      taskUrl = url;
+      continue;
+    }
+    const task = line.match(/^(\s*)(⬜|✅)\s+(.*)$/);
+    if (task) {
+      inTasks = true;
+      tasks.push(`${task[1]}- [${task[2] === "✅" ? "x" : " "}] ${task[3]}`);
+      continue;
+    }
+    if (/^\s*(?:[-*+]|\d+[.)])\s+/.test(line)) {
+      inTasks = true;
+      tasks.push(line);
+      continue;
+    }
+    if (inTasks && /^\s+\S/.test(line)) {
+      tasks.push(line);
+      continue;
+    }
+    inTasks = false;
+    prose.push(line);
+  }
+  return {
+    description: prose.join("\n").trim(),
+    subtasks: tasks.join("\n").trim(),
+    taskUrl,
   };
 }
 

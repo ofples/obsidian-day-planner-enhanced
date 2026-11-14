@@ -9,6 +9,7 @@ import {
   RequestTransientError,
 } from "../service/request-gate";
 import type { DayPlannerSettings } from "../settings";
+import { stripTaskLink, taskLinkUrl } from "../tasks/weak-links";
 
 import {
   googleQuotaError,
@@ -20,7 +21,8 @@ import { isTodoistCalendarExport } from "./exporter";
 import {
   renderSubtasks,
   withSubtasks,
-  structuredDescription,
+  plainCalendarDescription,
+  structuredStart,
 } from "./subtasks";
 import { canonicalSnapshotOf } from "./types";
 import type {
@@ -359,7 +361,7 @@ export class GoogleCalendarApi implements CalendarApi {
 
   private body(snapshot: CalendarSnapshot) {
     return {
-      summary: snapshot.title,
+      summary: stripTaskLink(snapshot.title),
       start: { dateTime: snapshot.start },
       end: { dateTime: snapshot.end },
       ...(this.colorForSnapshot
@@ -396,16 +398,16 @@ export class GoogleCalendarApi implements CalendarApi {
           ...(snapshot.colorId !== undefined
             ? { colorId: snapshot.colorId }
             : {}),
-          description: structuredDescription(
+          description: plainCalendarDescription(
             snapshot.description ?? "",
-            snapshot.tags ?? [],
             snapshot.subtasks ?? "",
+            snapshot.taskUrl,
           ),
           extendedProperties: {
             private: {
               dayPlannerVault: this.namespace,
               dayPlannerBlock: uid,
-              dayPlannerSchemaVersion: "3",
+              dayPlannerSchemaVersion: "4",
               dayPlannerTags: tags,
             },
           },
@@ -450,7 +452,8 @@ export class GoogleCalendarApi implements CalendarApi {
           "Google event cannot be represented as a timed planner block.",
         );
       const body: Record<string, unknown> = {};
-      if (snapshot.title !== current.title) body.summary = snapshot.title;
+      if (snapshot.title !== current.title || taskLinkUrl(event.summary ?? ""))
+        body.summary = stripTaskLink(snapshot.title);
       if (Date.parse(snapshot.start) !== Date.parse(current.start))
         body.start = { dateTime: snapshot.start };
       if (Date.parse(snapshot.end) !== Date.parse(current.end))
@@ -463,22 +466,31 @@ export class GoogleCalendarApi implements CalendarApi {
       const tags = snapshot.tags ?? current.tags ?? [];
       const subtasks = snapshot.subtasks ?? current.subtasks ?? "";
       const description = snapshot.description ?? current.description ?? "";
+      const taskUrl =
+        snapshot.taskUrl === undefined ? current.taskUrl : snapshot.taskUrl;
+      const desiredDescription = plainCalendarDescription(
+        description,
+        subtasks,
+        taskUrl,
+      );
       if (
-        JSON.stringify(tags) !== JSON.stringify(current.tags) ||
         subtasks !== current.subtasks ||
-        description !== current.description
+        description !== current.description ||
+        taskUrl !== current.taskUrl ||
+        Boolean(taskUrl && !(event.description ?? "").includes(taskUrl)) ||
+        (event.description ?? "").includes(structuredStart)
       )
-        body.description = structuredDescription(description, tags, subtasks);
+        body.description = desiredDescription;
       const encoded = this.structuredTags({ ...snapshot, tags });
       if (
         event.extendedProperties?.private?.["dayPlannerTags"] !== encoded ||
-        event.extendedProperties.private["dayPlannerSchemaVersion"] !== "3"
+        event.extendedProperties.private["dayPlannerSchemaVersion"] !== "4"
       )
         body.extendedProperties = {
           private: {
             ...event.extendedProperties?.private,
             dayPlannerTags: encoded,
-            dayPlannerSchemaVersion: "3",
+            dayPlannerSchemaVersion: "4",
           },
         };
       if (!Object.keys(body).length) return event;
@@ -519,7 +531,7 @@ export class GoogleCalendarApi implements CalendarApi {
             ...event.extendedProperties?.private,
             dayPlannerVault: this.namespace,
             dayPlannerBlock: uid,
-            dayPlannerSchemaVersion: "3",
+            dayPlannerSchemaVersion: "4",
             dayPlannerTags: this.structuredTags(snapshot),
           },
         },

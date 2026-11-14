@@ -18,6 +18,7 @@ export const taskSchema = z.object({
   completed: z.boolean(),
   completionCount: z.number().int().nonnegative().optional(),
   order: z.number(),
+  createdAt: z.string().optional(),
   duration: taskDurationSchema.nullable().optional(),
   due: z
     .object({

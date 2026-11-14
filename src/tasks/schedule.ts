@@ -51,6 +51,7 @@ import {
 import type { TaskService } from "./service";
 import type { TaskSource } from "./source";
 import { TaskReadError, type ProviderTask } from "./types";
+import { formatTaskLink } from "./weak-links";
 
 export class TaskProjectionConflict extends TaskReadError {}
 
@@ -181,7 +182,7 @@ export class TaskScheduler {
       accountId: snapshot.account.id,
       taskId,
     });
-    const raw = withoutTaskCaptureTag(
+    let raw = withoutTaskCaptureTag(
       newTaskMarkdown(
         task,
         taskSubtree(snapshot, task),
@@ -189,6 +190,15 @@ export class TaskScheduler {
         this.host.settings(),
       ),
     );
+    const lines = raw.split("\n");
+    lines[0] += ` ${formatTaskLink(task.id, task.due?.recurring ? (task.completionCount ?? task.due.date) : undefined)}`;
+    if (task.description.trim())
+      lines.splice(
+        1,
+        0,
+        ...task.description.split(/\r?\n/).map((line) => `  ${line}`),
+      );
+    raw = lines.join("\n");
     return {
       task,
       raw,
@@ -233,7 +243,12 @@ export class TaskScheduler {
 
   async insertFromPane(
     taskId: string,
-    target: { path: string; offset: number; before: string },
+    target: {
+      path: string;
+      offset: number;
+      before: string;
+      timePrefix?: string;
+    },
     id: string = crypto.randomUUID(),
   ) {
     if (this.host.linkedSync?.() !== false)
@@ -242,7 +257,13 @@ export class TaskScheduler {
     await this.importer.runPane(
       key,
       id,
-      JSON.stringify(["insert", raw, target.path, target.offset]),
+      JSON.stringify([
+        "insert",
+        raw,
+        target.path,
+        target.offset,
+        target.timePrefix,
+      ]),
       (savedId, prepare, pending) =>
         this.importer.insert(
           raw,

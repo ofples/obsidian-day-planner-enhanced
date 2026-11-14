@@ -345,6 +345,7 @@ export class PlainTaskImporter {
       offset: number;
       before: string;
       parent?: TaskSource;
+      timePrefix?: string;
     },
     id: string,
     previous?: TaskSource,
@@ -418,6 +419,11 @@ export class PlainTaskImporter {
             " " +
             lines[0]!.slice(range.endIndex).trimStart()
           ).trimEnd();
+        if (target.timePrefix)
+          lines[0] = lines[0]!.replace(
+            /^(\s*(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?)/,
+            `$1${target.timePrefix} `,
+          );
         const newline = before.includes("\r\n") ? "\r\n" : "\n";
         const parent = target.parent;
         const indent = parent

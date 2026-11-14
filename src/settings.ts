@@ -59,6 +59,7 @@ export type TimelineColumns = Record<TimelineColumnType, boolean>;
 
 export interface DayPlannerSettings {
   experimentalTodoistSync: boolean;
+  weakTodoistSync: boolean;
   taskCapture: TaskCaptureSettings;
   googleCalendar: import("./google-calendar/service").GoogleCalendarSettings;
   progressIndicator: "mini-timeline" | "pie" | "bar" | "none";
@@ -106,6 +107,7 @@ export interface DayPlannerSettings {
 
 export const defaultSettings: DayPlannerSettings = {
   experimentalTodoistSync: false,
+  weakTodoistSync: true,
   taskCapture: taskCaptureSettingsSchema.parse({}),
   googleCalendar: {
     clientId: "",

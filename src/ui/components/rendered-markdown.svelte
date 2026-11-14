@@ -10,6 +10,7 @@
   import { createRenderMarkdownAttachment } from "../../util/dom";
   import { getMinutesSinceMidnight } from "../../util/moment";
   import { filterVisibleTaskChildren } from "../../util/task-status";
+  import { withoutDisplayedLockTags } from "../../util/task-lock";
   import {
     createTimestampParts,
     isCompleted,
@@ -57,7 +58,11 @@
           $settingsStore.hiddenTaskStatuses,
         ),
   );
-  const { listItem, nestedListItems } = $derived(
+  const {
+    listItem: rawListItem,
+    nestedListItems: rawNestedListItems,
+    paragraphs,
+  } = $derived(
     toRenderableMarkdown(
       { ...timeBlock, children: visibleChildren },
       {
@@ -65,6 +70,12 @@
         showEmbedsInTaskBlocks: $settingsStore.showEmbedsInTaskBlocks,
       },
     ),
+  );
+  const listItem = $derived(withoutDisplayedLockTags(rawListItem));
+  const nestedListItems = $derived(
+    rawNestedListItems === undefined
+      ? undefined
+      : withoutDisplayedLockTags(rawNestedListItems),
   );
   const sourcePath = $derived(
     timeBlock.source === "unwritten" ? "/" : timeBlock.path,
@@ -281,6 +292,17 @@
   {/snippet}
 
   {#snippet contents()}
+    {#if paragraphs}
+      <div
+        class="markdown-wrapper task-description"
+        {@attach createRenderMarkdownAttachment({
+          renderMarkdown,
+          markdown: paragraphs,
+          sourcePath,
+          taskLines: [],
+        })}
+      ></div>
+    {/if}
     {#if $settingsStore.showSubtasksInTaskBlocks && nestedListItems}
       <div
         class={[
@@ -289,7 +311,9 @@
           useStackedHeader && "is-stacked-header",
         ]}
         title={nestedItems
-          .map((item) => item.text.replace(/<!--.*?-->/g, ""))
+          .map((item) =>
+            withoutDisplayedLockTags(item.text.replace(/<!--.*?-->/g, "")),
+          )
           .join(" · ")}
         {@attach observeNestedLayout}
         {@attach createRenderMarkdownAttachment({

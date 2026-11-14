@@ -1,5 +1,31 @@
 import { parseCaptureCandidates } from "../tasks/capture-parser";
 
+/** Hide only actual #locked tags from rendered text; source Markdown stays intact. */
+export function withoutDisplayedLockTags(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => {
+      if (!/#locked/i.test(line)) return line;
+      const prefix = "- [ ] ";
+      const tags =
+        parseCaptureCandidates("", prefix + line)[0]?.tags.filter(
+          (tag) => tag.name.toLowerCase() === "locked",
+        ) ?? [];
+      let result = line;
+      for (const tag of tags.toReversed()) {
+        const start = tag.from - prefix.length,
+          end = tag.to - prefix.length;
+        result =
+          result.slice(
+            0,
+            start > 0 && result[start - 1] === " " ? start - 1 : start,
+          ) + result.slice(end);
+      }
+      return result;
+    })
+    .join("\n");
+}
+
 /** Only a real tag on the block's first line locks that block. */
 export function hasTaskLock(text: string): boolean {
   const first = text.split(/\r?\n/, 1)[0] ?? "";

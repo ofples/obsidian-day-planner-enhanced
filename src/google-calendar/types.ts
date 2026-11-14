@@ -1,4 +1,9 @@
-import { readStructuredDescription } from "./subtasks";
+import { stripTaskLink, taskLinkUrl } from "../tasks/weak-links";
+
+import {
+  readPlainCalendarDescription,
+  readStructuredDescription,
+} from "./subtasks";
 
 export interface CalendarSnapshot {
   title: string;
@@ -8,6 +13,7 @@ export interface CalendarSnapshot {
   colorId?: string | null;
   subtasks?: string;
   description?: string;
+  taskUrl?: string | null;
 }
 
 export interface GoogleEvent {
@@ -154,7 +160,8 @@ export function sameCanonicalSnapshot(
     JSON.stringify(a.tags ?? []) === JSON.stringify(b.tags ?? []) &&
     (a.colorId ?? null) === (b.colorId ?? null) &&
     (a.subtasks ?? "") === (b.subtasks ?? "") &&
-    (a.description ?? "") === (b.description ?? "")
+    (a.description ?? "") === (b.description ?? "") &&
+    (a.taskUrl ?? null) === (b.taskUrl ?? null)
   );
 }
 
@@ -195,6 +202,9 @@ export function canonicalSnapshotOf(
   const snapshot = snapshotOf(event, "");
   if (!snapshot) return null;
   const fields = readStructuredDescription(event.description ?? "");
+  const plain = readPlainCalendarDescription(
+    fields?.description ?? event.description ?? "",
+  );
   let tags = fields?.tags ?? [];
   if (event.extendedProperties?.private?.["dayPlannerTags"]) {
     let parsed: unknown;
@@ -227,10 +237,12 @@ export function canonicalSnapshotOf(
   }
   return {
     ...snapshot,
+    title: stripTaskLink(snapshot.title),
     tags,
     colorId: event.colorId ?? null,
-    subtasks: fields?.subtasks ?? "",
-    description: fields?.description ?? event.description ?? "",
+    subtasks: fields?.subtasks ?? plain.subtasks,
+    description: plain.description,
+    taskUrl: plain.taskUrl ?? taskLinkUrl(event.summary ?? "") ?? null,
   };
 }
 

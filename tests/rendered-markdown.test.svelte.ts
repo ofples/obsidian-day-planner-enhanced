@@ -35,6 +35,39 @@ afterEach(() => {
 });
 
 describe("RenderedMarkdown", () => {
+  test("displays the task description while hiding its lock tag", async () => {
+    const target = document.createElement("div");
+    document.body.append(target);
+    const renderMarkdown = vi.fn((element: HTMLElement, text: string) => {
+      element.textContent = text;
+      return () => {};
+    });
+    const context = new Map<string, unknown>([
+      [
+        obsidianContextKey,
+        {
+          renderMarkdown,
+          settingsStore: writable(defaultSettingsForTests),
+          toggleCheckboxInFile: vi.fn(),
+        },
+      ],
+    ]);
+    const component = mount(RenderedMarkdown, {
+      target,
+      context,
+      props: {
+        timeBlock: {
+          ...baseTimeBlock,
+          text: "09:00 - 10:00 Work #locked\nDescription text",
+        },
+      },
+    });
+    flushSync();
+    expect(target.textContent).toContain("Work");
+    expect(target.textContent).toContain("Description text");
+    expect(target.textContent).not.toContain("#locked");
+    await unmount(component);
+  });
   test("narrow blocks use a subtask count and a readable stacked header when two lines fit", () => {
     const observed: Array<() => void> = [];
     vi.stubGlobal(

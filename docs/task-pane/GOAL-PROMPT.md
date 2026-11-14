@@ -6,6 +6,12 @@ Read `docs/task-pane/README.md`, `USER-STORIES.md`, `TECHNICAL-SPEC.md`, `ACCEPT
 
 The production baseline is `82ae46ff` on `feat/google-calendar-sync`. Develop on `feat/task-pane-todoist` in its separate worktree. Keep the baseline checkout available for hotfixes. Incorporate subsequent hotfix commits and verify the combined tree before installation.
 
+The default workflow uses best-effort Todoist links in Markdown. Each imported root carries one chain link. Names and checkboxes synchronize while the link remains. Subtasks stay plain Markdown, local descriptions export to Google, and Todoist due dates stay unchanged. Startup observations seed an in-memory baseline. Keep provider commands serialized, version-checked, bounded and idempotent within the session. Preserve the existing Google calendar identity and conflict machinery.
+
+Default UI acceptance covers Overview/Notes/Todoist sources, selected-note consumption filtering, project sorting, sidebar completion, immediate Markdown insertion with adjacent time slots, description rendering, hidden lock tags and preview deduplication. Use the latest implementation record for completed acceptance and residual limitations.
+
+The following M1 through M6 decisions govern experimental mode.
+
 Deliver M1 through M6 in order, with reviewable commits. Start with a secure, cached, dockable Todoist browser. Extend it with durable edits and #todoist capture, linked day/week/Markdown scheduling, bidirectional reconciliation, recurrence, subtasks and recovery. Update milestone and acceptance records after meaningful changes. Continue authorized work autonomously through recoverable failures.
 
 Use these product decisions throughout.

@@ -5,6 +5,7 @@ import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 import type { ImportedTaskSource } from "../src/tasks/plain-import";
 import { taskOccurrenceKey } from "../src/tasks/schedule-types";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
+import { formatTaskLink } from "../src/tasks/weak-links";
 
 const task = (id: string, parentId: string | null = null): ProviderTask => ({
   id,
@@ -56,6 +57,32 @@ const find = (
   });
 
 describe("imported tasks in the current note", () => {
+  test("recognizes an explicit root Todoist link without a saved receipt", () => {
+    const root = task("root"),
+      child = task("child", "root");
+    const linked = `- [ ] Root ${formatTaskLink("root")}\n  - [ ] Child ${formatTaskLink("child")}`;
+    expect(find([root, child], linked, {})).toEqual(new Set(["root", "child"]));
+    expect(find([root, child], "- [ ] Root", {})).toEqual(new Set());
+  });
+
+  test("only hides the linked recurring occurrence", () => {
+    const root = {
+      ...task("root"),
+      due: {
+        date: "2026-11-14",
+        text: "daily",
+        timezone: null,
+        recurring: true,
+      },
+      completionCount: 2,
+    };
+    expect(find([root], `- [ ] Root ${formatTaskLink("root", 2)}`, {})).toEqual(
+      new Set(["root"]),
+    );
+    expect(find([root], `- [ ] Root ${formatTaskLink("root", 1)}`, {})).toEqual(
+      new Set(),
+    );
+  });
   test("verifies each placement independently, and restores visibility for a deleted copy", () => {
     const root = task("root"),
       child = task("child", "root");

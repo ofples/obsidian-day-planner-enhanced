@@ -42,6 +42,7 @@
 
 {#if simpleMode}
   <SimpleTasksPane
+    completeTask={legacy.completeTask}
     connections={openConnections}
     {noteContext}
     {noteDrag}
@@ -52,6 +53,7 @@
     schedule={scheduleImported ?? (() => {})}
     scheduler={legacy.scheduler}
     service={legacy.service}
+    weakCompletionEnabled={Boolean($settings?.weakTodoistSync)}
   />
 {:else}
   <TasksPane {...legacy} />

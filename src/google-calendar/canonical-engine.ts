@@ -23,6 +23,7 @@ const fields = [
   "tags",
   "subtasks",
   "description",
+  "taskUrl",
   "colorId",
 ] as const;
 type Field = (typeof fields)[number];
@@ -60,6 +61,9 @@ function copyField(
       break;
     case "description":
       target.description = source.description ?? "";
+      break;
+    case "taskUrl":
+      target.taskUrl = source.taskUrl ?? null;
       break;
     case "colorId":
       target.colorId = source.colorId ?? null;

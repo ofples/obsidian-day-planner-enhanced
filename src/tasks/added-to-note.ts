@@ -10,6 +10,7 @@ import type { ImportedTaskSource } from "./plain-import";
 import { taskOccurrenceKey } from "./schedule-types";
 import type { TaskSource } from "./source";
 import type { TaskSnapshot } from "./types";
+import { taskLinkIdentity } from "./weak-links";
 
 /** Verify saved import receipts against current note content and source identities. */
 export function tasksAddedToNote({
@@ -30,6 +31,16 @@ export function tasksAddedToNote({
   const added = new Set<string>();
   const byId = new Map(snapshot.tasks.map((task) => [task.id, task]));
   const inNote = candidates.filter((candidate) => candidate.path === path);
+  for (const candidate of inNote) {
+    const link = taskLinkIdentity(candidate.raw);
+    const task = link && byId.get(link.taskId);
+    if (
+      task &&
+      (!task.due?.recurring ||
+        link.occurrence === String(task.completionCount ?? task.due.date))
+    )
+      added.add(task.id);
+  }
   const title = (candidate: CaptureCandidate) =>
     captureTitle(candidate, new Set(candidate.tags.map((tag) => tag.name)));
   const sources: ReadonlyArray<readonly [string, ImportedTaskSource]> =
@@ -38,6 +49,7 @@ export function tasksAddedToNote({
       : Object.entries(imports as Record<string, ImportedTaskSource>);
   const visited = new Set<string>();
   for (const [key, source] of sources) {
+    if (taskLinkIdentity(source.raw)) continue;
     const fingerprint = JSON.stringify([
       key,
       source.path,

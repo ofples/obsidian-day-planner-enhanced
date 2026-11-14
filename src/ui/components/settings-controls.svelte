@@ -65,6 +65,19 @@
         ),
     );
 
+    new SettingGroup(el).setHeading("Linked tasks").addSetting((setting) =>
+      setting
+        .setName("Sync linked Todoist tasks")
+        .setDesc(
+          "Sync names and checkboxes while a Todoist link remains in the task. Reconnect Todoist if editing permission is needed.",
+        )
+        .addToggle((toggle) =>
+          toggle.setValue($settings.weakTodoistSync).onChange((value) => {
+            $settings = { ...$settings, weakTodoistSync: value };
+          }),
+        ),
+    );
+
     new SettingGroup(el).setHeading("Experimental").addSetting((setting) =>
       setting
         .setName("Two-way Todoist sync")

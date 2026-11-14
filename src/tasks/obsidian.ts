@@ -7,6 +7,7 @@ import { TodoistAuth } from "./todoist-auth";
 export function createTaskService(
   plugin: Plugin,
   writesEnabled: () => boolean = () => true,
+  weakWritesEnabled: () => boolean = () => false,
 ) {
   let active = true;
   plugin.register(() => {
@@ -73,6 +74,7 @@ export function createTaskService(
     (write) => auth().connect(write),
     (token) => auth().commit(token),
     (token) => auth().discard(token),
+    weakWritesEnabled,
   );
   return service;
 }

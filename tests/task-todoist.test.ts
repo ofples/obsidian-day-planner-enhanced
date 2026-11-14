@@ -53,6 +53,18 @@ function pages(taskPage: (url: URL) => unknown) {
 }
 
 describe("Todoist complete snapshots", () => {
+  test("retains the provider task creation date while accepting older responses", async () => {
+    pages(() => ({
+      results: [
+        { ...task, added_at: "2026-11-14T01:02:03Z" },
+        { ...task, id: "old" },
+      ],
+      next_cursor: null,
+    }));
+    const snapshot = await new TodoistProvider("credential").read();
+    expect(snapshot.tasks[0]?.createdAt).toBe("2026-11-14T01:02:03Z");
+    expect(snapshot.tasks[1]?.createdAt).toBeUndefined();
+  });
   test("reports provider duration capability without storing other user fields", async () => {
     pages(() => ({ results: [task], next_cursor: null }));
     const request = vi.mocked(requestUrl).getMockImplementation()!;

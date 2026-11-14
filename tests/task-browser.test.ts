@@ -34,6 +34,53 @@ const prefs = taskViewStateSchema.parse({});
 const now = DateTime.fromISO("2026-11-10T20:00:00Z");
 
 describe("task browser grouping", () => {
+  test("project sorting changes sibling order while keeping descendants with their parent", () => {
+    const data = snapshot([
+      task("late", {
+        priority: 1,
+        order: 1,
+        createdAt: "2026-01-01T00:00:00Z",
+        due: due("2026-12-01"),
+      }),
+      task("child", { parentId: "late", order: 1 }),
+      task("urgent", {
+        priority: 4,
+        order: 2,
+        createdAt: "2026-11-01T00:00:00Z",
+        due: due("2026-11-01"),
+      }),
+    ]);
+    for (const sortBy of ["priority", "due", "created"] as const) {
+      expect(
+        taskGroups(
+          data,
+          { ...prefs, groupBy: "project", sortBy },
+          now,
+        )[0]?.rows.map((row) => row.task.id),
+      ).toEqual(["urgent", "late", "child"]);
+    }
+    expect(
+      taskGroups(
+        data,
+        { ...prefs, groupBy: "project", sortBy: "defined" },
+        now,
+      )[0]?.rows.map((row) => row.task.id),
+    ).toEqual(["late", "child", "urgent"]);
+  });
+
+  test("sorts timed due dates by their actual instants", () => {
+    const data = snapshot([
+      task("later", { due: due("2026-11-11T09:00:00+05:30") }),
+      task("earlier", { due: due("2026-11-11T05:00:00+02:00") }),
+    ]);
+    expect(
+      taskGroups(
+        data,
+        { ...prefs, groupBy: "project", sortBy: "due" },
+        now,
+      )[0]?.rows.map((row) => row.task.id),
+    ).toEqual(["earlier", "later"]);
+  });
   test("excludes added tasks while preserving parent context, and restores them when cleared", () => {
     const data = snapshot([
       task("parent"),

@@ -99,12 +99,14 @@ import type { TaskReconciler } from "./tasks/reconcile";
 import { createTaskReconciler } from "./tasks/reconcile-obsidian";
 import type { TaskScheduler } from "./tasks/schedule";
 import {
+  adjacentTaskDropInterval,
+  taskDropBoundary,
   taskDropAllowed,
-  taskDropUsesPlanner,
 } from "./tasks/schedule-markdown";
 import { createTaskScheduler } from "./tasks/schedule-obsidian";
 import { taskOccurrenceKey } from "./tasks/schedule-types";
 import type { TaskService } from "./tasks/service";
+import { createWeakTaskSync } from "./tasks/weak-sync-obsidian";
 import { createGetTasksApi } from "./tasks-plugin";
 import type { EditableTimeBlock, RemoteTimeBlock } from "./time-block-types";
 import type { ObsidianContext, OnUpdateFn, PointerDateTime } from "./types";
@@ -300,6 +302,7 @@ export default class DayPlanner extends Plugin {
     this.taskService = createTaskService(
       this,
       () => this.getSettings().experimentalTodoistSync === true,
+      () => this.getSettings().weakTodoistSync !== false,
     );
     let tasksReady = false;
     try {
@@ -430,6 +433,13 @@ export default class DayPlanner extends Plugin {
         this.settingsStore,
         this.workspaceFacade,
       );
+      createWeakTaskSync(
+        this,
+        this.taskService,
+        store,
+        () => this.getSettings(),
+        this.transactionWriter,
+      );
       this.taskReconciler = createTaskReconciler(
         this,
         this.taskService,
@@ -506,48 +516,29 @@ export default class DayPlanner extends Plugin {
             throw new Error(
               "Drop the task on an editable Markdown line outside code, comments and properties.",
             );
-          const date = this.periodicNotes.getDateFromFile(view.file, "day");
-          const heading = this.getSettings().plannerHeading;
-          if (date && taskDropUsesPlanner(before, offset, heading)) {
-            const start = date
-              .clone()
-              .startOf("day")
-              .add(this.getSettings().startHour, "hours");
-            new TaskScheduleModal(
-              this.app,
-              scheduler,
-              task,
-              this.getSettings().defaultDurationMinutes,
-              {
-                start: start.toISOString(),
-                end: start
-                  .clone()
-                  .add(
-                    scheduler.duration(
-                      task,
-                      this.getSettings().defaultDurationMinutes,
-                    ),
-                    "minutes",
-                  )
-                  .toISOString(),
-              },
-            ).open();
-            return;
-          }
-          if (
-            this.getSettings().experimentalTodoistSync &&
-            scheduler.projection(task.id)?.interval &&
-            !(await askForConfirmation({
-              app: this.app,
-              title: "Move task out of its schedule?",
-              text: "Move the linked task to this note and remove its managed Google event. Its Todoist date stays available.",
-              cta: "Move task",
-            }))
-          )
-            return;
+          const date =
+            this.periodicNotes.getDateFromFile(view.file, "day") ??
+            window.moment().startOf("day");
+          const boundary = taskDropBoundary(before, offset);
+          const interval = adjacentTaskDropInterval(
+            before,
+            boundary,
+            date,
+            this.getSettings(),
+            scheduler.duration(task, this.getSettings().defaultDurationMinutes),
+          );
           await scheduler.insertFromPane(
             task.id,
-            { path: view.file.path, offset, before },
+            {
+              path: view.file.path,
+              offset: boundary,
+              before,
+              ...(interval
+                ? {
+                    timePrefix: `${window.moment(interval.start).format(this.getSettings().timestampFormat)} - ${window.moment(interval.end).format(this.getSettings().timestampFormat)}`,
+                  }
+                : {}),
+            },
             id,
           );
         })().catch(

@@ -18,7 +18,7 @@
   import { readable, type Readable, type Writable } from "svelte/store";
 
   import { tasksAddedToNote } from "../../tasks/added-to-note";
-  import { taskGroups, type TaskViewState } from "../../tasks/browser";
+  import { taskDay, taskGroups, type TaskViewState } from "../../tasks/browser";
   import type { CaptureCandidate } from "../../tasks/capture-parser";
   import type { NoteTaskDrag } from "../../tasks/note-drag";
   import { noteTaskRows } from "../../tasks/note-list";
@@ -43,6 +43,8 @@
     resolveImported,
     connections,
     schedule,
+    completeTask,
+    weakCompletionEnabled = true,
     openNote,
   }: {
     service: TaskService;
@@ -54,6 +56,8 @@
     resolveImported?: (uid: string) => TaskSource | undefined;
     connections?: () => void;
     schedule: (task: ProviderTask) => void;
+    completeTask?: (task: ProviderTask) => void;
+    weakCompletionEnabled?: boolean;
     openNote: (path: string, line: number) => void;
   } = $props();
   const browser = $derived(service.state);
@@ -74,16 +78,53 @@
       : new Set<string>();
   });
   const grouping = $derived($preferences.groupBy);
-  const groups = $derived(
-    snapshot
+  const groups = $derived.by(() => {
+    if (snapshot && source === "overview") {
+      const now = DateTime.now().setZone(snapshot.account.timezone);
+      const today = now.toISODate() ?? "";
+      const buckets = [
+        {
+          id: "priority",
+          label: "High priority",
+          matches: (task: ProviderTask) => task.priority === 4,
+        },
+        {
+          id: "today",
+          label: "Overdue and today",
+          matches: (task: ProviderTask) => {
+            const due = taskDay(task, snapshot.account.timezone);
+            return Boolean(due && due <= today);
+          },
+        },
+      ];
+      return buckets.flatMap((bucket) => {
+        const excluded = new Set(
+          snapshot.tasks
+            .filter(
+              (task) =>
+                !bucket.matches(task) ||
+                (!$preferences.showAdded && addedIds.has(task.id)),
+            )
+            .map((task) => task.id),
+        );
+        return taskGroups(snapshot, $preferences, now, excluded).map(
+          (group) => ({
+            ...group,
+            id: `${bucket.id}:${group.id}`,
+            label: `${bucket.label} · ${group.label}`,
+          }),
+        );
+      });
+    }
+    return snapshot
       ? taskGroups(
           snapshot,
           $preferences,
           undefined,
           $preferences.showAdded ? undefined : addedIds,
         )
-      : [],
-  );
+      : [];
+  });
   function scanOtherNotes() {
     $preferences = {
       ...$preferences,
@@ -93,15 +134,17 @@
     };
   }
   const completeGroups = $derived(
-    snapshot
-      ? taskGroups(snapshot, {
-          groupBy: grouping,
-          query: "",
-          projectId: "",
-          selectedId: null,
-          collapsed: [],
-        })
-      : [],
+    source === "overview"
+      ? groups
+      : snapshot
+        ? taskGroups(snapshot, {
+            groupBy: grouping,
+            query: "",
+            projectId: "",
+            selectedId: null,
+            collapsed: [],
+          })
+        : [],
   );
   const rowCache = new TaskRenderCache();
   const renderedGroups = $derived(
@@ -189,6 +232,11 @@
     </div>
     <div class="task-source-tabs" aria-label="Task sources" role="tablist">
       <button
+        aria-selected={source === "overview"}
+        onclick={() => ($preferences = { ...$preferences, source: "overview" })}
+        role="tab">Overview</button
+      >
+      <button
         aria-selected={source === "todoist"}
         onclick={() => ($preferences = { ...$preferences, source: "todoist" })}
         role="tab"
@@ -251,6 +299,24 @@
           </select><ChevronDown size={13} /></label
         >
       </div>{/if}
+    {#if source === "todoist" && $preferences.groupBy === "project"}<label
+        >Sort
+        <select
+          aria-label="Sort project tasks"
+          onchange={(event: Event & { currentTarget: HTMLSelectElement }) =>
+            ($preferences = {
+              ...$preferences,
+              sortBy: event.currentTarget.value as TaskViewState["sortBy"],
+            })}
+          value={$preferences.sortBy ?? "defined"}
+        >
+          <option value="defined">Defined order</option><option value="priority"
+            >Priority</option
+          ><option value="due">Due date</option><option value="created"
+            >Date added</option
+          >
+        </select></label
+      >{/if}
     <div class="task-note-filter">
       <span
         title={source === "notes"
@@ -291,6 +357,17 @@
     </div>{/if}
   <div class="task-body">
     <div class="task-list-area">
+      {#if source === "overview"}<NoteTasksSection
+          candidates={$noteTasks}
+          currentPath={$noteContext.currentPath}
+          {noteDrag}
+          {openNote}
+          query={$preferences.query}
+          remove={() => {}}
+          scan={scanOtherNotes}
+          scannedPaths={[]}
+          showAdded={Boolean($preferences.showAdded)}
+        />{/if}
       {#if source === "notes"}<NoteTasksSection
           candidates={$noteTasks}
           currentPath={$noteContext.currentPath}
@@ -372,7 +449,17 @@
                           size={13}
                         />{:else}<ChevronDown size={13} />{/if}
                     </button>{/if}
-                  <span class="task-import-circle" aria-hidden="true"></span>
+                  <button
+                    class="task-import-circle"
+                    aria-checked="false"
+                    aria-label={`Complete ${row.task.title}`}
+                    disabled={!$browser.connected ||
+                      !completeTask ||
+                      !weakCompletionEnabled}
+                    onclick={() => completeTask?.(row.task)}
+                    role="checkbox"
+                    title="Complete task"
+                  ></button>
                   <div class="task-row-content">
                     <button
                       class="task-row"

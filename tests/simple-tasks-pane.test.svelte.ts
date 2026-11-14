@@ -65,7 +65,8 @@ function fixture(connected = true) {
   );
   const connections = vi.fn(),
     schedule = vi.fn(),
-    openNote = vi.fn();
+    openNote = vi.fn(),
+    completeTask = vi.fn();
   return {
     browser,
     service,
@@ -76,6 +77,7 @@ function fixture(connected = true) {
     connections,
     schedule,
     openNote,
+    completeTask,
   };
 }
 
@@ -99,10 +101,12 @@ test("connected read-only pane schedules or drags the actual task and exposes ac
     .click();
   flushSync();
   expect(
-    target.querySelector(
-      '.task-checkbox, [aria-label^="Complete"], [aria-label^="Actions for"]',
-    ),
+    target.querySelector('.task-checkbox, [aria-label^="Actions for"]'),
   ).toBeNull();
+  target
+    .querySelector<HTMLButtonElement>('[aria-label="Complete Provider work"]')!
+    .click();
+  expect(h.completeTask).toHaveBeenCalledWith(task);
   target
     .querySelector<HTMLButtonElement>('[aria-label="Schedule Provider work"]')!
     .click();
@@ -197,6 +201,48 @@ test("copy-only pane preserves project filtering, dates and nested-task collapse
   project.value = "project";
   project.dispatchEvent(new Event("change", { bubbles: true }));
   expect(get(h.preferences).projectId).toBe("project");
+  await unmount(component);
+  target.remove();
+});
+
+test("completion requires weak editing but does not require legacy writable state", async () => {
+  const h = fixture();
+  const props = $state({ ...h, weakCompletionEnabled: false });
+  const target = document.createElement("div");
+  document.body.append(target);
+  const component = mount(SimpleTasksPane, { target, props });
+  flushSync();
+  const checkbox = target.querySelector<HTMLButtonElement>(
+    '[aria-label="Complete Provider work"]',
+  )!;
+  expect(get(h.browser).writable).toBe(false);
+  expect(checkbox.disabled).toBe(true);
+  props.weakCompletionEnabled = true;
+  flushSync();
+  expect(checkbox.disabled).toBe(false);
+  checkbox.click();
+  expect(h.completeTask).toHaveBeenCalledOnce();
+  await unmount(component);
+  target.remove();
+});
+
+test("overview shows current note and high-priority Todoist tasks", async () => {
+  const h = fixture();
+  h.browser.update((state) => ({
+    ...state,
+    snapshot: { ...snapshot, tasks: [{ ...task, priority: 4 }] },
+  }));
+  const target = document.createElement("div");
+  document.body.append(target);
+  const component = mount(SimpleTasksPane, { target, props: h });
+  flushSync();
+  Array.from(target.querySelectorAll<HTMLButtonElement>('[role="tab"]'))
+    .find((button) => button.textContent?.includes("Overview"))!
+    .click();
+  flushSync();
+  expect(target.textContent).toContain("Local reading");
+  expect(target.textContent).toContain("High priority");
+  expect(target.textContent).toContain("Provider work");
   await unmount(component);
   target.remove();
 });

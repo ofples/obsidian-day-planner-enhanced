@@ -2339,6 +2339,38 @@ describe("linked task scheduling", () => {
     h.service.stop();
   });
 
+  test("weak imports retain a single root link and description while adjacent insertion assigns the supplied time", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    h.tasks.set(root.id, {
+      ...root,
+      description: "Bring the measurements\n> Discuss alternatives",
+    });
+    await h.service.refresh();
+    const path = "Projects/Adjacent.md";
+    const before = "# Schedule\n- [ ] 09:00 - 09:30 Existing\n";
+    h.file(path);
+    h.texts.set(path, before);
+    await h.scheduler.insertFromPane(root.id, {
+      path,
+      before,
+      offset: before.length,
+      timePrefix: "09:30 - 10:00",
+    });
+    const after = h.texts.get(path)!;
+    expect(after).toContain("- [ ] 09:30 - 10:00 Work");
+    expect(after).toContain(
+      "  Bring the measurements\n  > Discuss alternatives",
+    );
+    expect(after.match(/https:\/\/app.todoist.com\/app\/task\//g)).toHaveLength(
+      1,
+    );
+    expect(after).toContain("  - [ ] Child");
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
   test("plain pane insertion and nesting preserve subtree without opt-in or provider writes", async () => {
     const h = await harness();
     h.setLinkedSync(false);

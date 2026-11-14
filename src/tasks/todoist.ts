@@ -37,6 +37,7 @@ function normalizeTask(task: z.infer<typeof remoteTaskSchema>): ProviderTask {
     parentId: task.parent_id,
     labels: task.labels,
     priority: task.priority,
+    ...(task.added_at ? { createdAt: task.added_at } : {}),
     completed: task.checked,
     ...(task.completed_count !== undefined
       ? { completionCount: task.completed_count }
@@ -79,6 +80,7 @@ const projectSchema = z.object({
   inbox_project: z.boolean().optional(),
 });
 const remoteTaskSchema = z.object({
+  added_at: z.string().optional(),
   duration: taskDurationSchema.nullable().optional(),
   id: resourceId,
   project_id: resourceId,

@@ -14,6 +14,7 @@ import { newTaskMarkdown } from "./schedule-markdown";
 import { taskOccurrenceKey } from "./schedule-types";
 import type { TaskBrowserState } from "./service";
 import type { ProviderTask } from "./types";
+import { taskLinkIdentity } from "./weak-links";
 
 /** Dated provider tasks are visible without creating notes or calendar events.
  * A canonical Markdown link owns the display after an occurrence is scheduled. */
@@ -26,6 +27,29 @@ export function taskCalendarPreviews(
 ): WithDuration<RemoteTimeBlock>[] {
   const snapshot = browser.snapshot;
   if (!browser.connected || !snapshot) return [];
+  const weakLinks = new Map<string, Set<string | undefined>>();
+  if (snapshot.provider === "todoist") {
+    for (const block of localBlocks) {
+      if (block.source === "unwritten") continue;
+      const pending: Array<{
+        text: string;
+        children?: import("../redux/index/index-slice").ListItemEntryWithChildren[];
+      }> = [block];
+      while (pending.length) {
+        const item = pending.pop()!;
+        const link =
+          typeof item.text === "string"
+            ? taskLinkIdentity(item.text)
+            : undefined;
+        if (link) {
+          const occurrences = weakLinks.get(link.taskId) ?? new Set();
+          occurrences.add(link.occurrence);
+          weakLinks.set(link.taskId, occurrences);
+        }
+        if (item.children) pending.push(...item.children);
+      }
+    }
+  }
   const linked = new Map<string, (ProviderTask | null)[]>();
   for (const [uid, link] of Object.entries(registry.links)) {
     if (
@@ -54,6 +78,11 @@ export function taskCalendarPreviews(
       task.completed ||
       !task.due ||
       task.id.startsWith("local-") ||
+      (weakLinks.has(task.id) &&
+        (!task.due.recurring ||
+          weakLinks
+            .get(task.id)
+            ?.has(String(task.completionCount ?? task.due.date)))) ||
       linked
         .get(task.id)
         ?.some(

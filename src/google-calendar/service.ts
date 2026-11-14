@@ -59,6 +59,7 @@ const snapshotSchema = z.object({
   colorId: z.string().nullable().optional(),
   subtasks: z.string().optional(),
   description: z.string().optional(),
+  taskUrl: z.string().nullable().optional(),
 });
 const blockSchema = z.object({
   uid: z.string(),
@@ -829,6 +830,7 @@ export class GoogleCalendarSync {
         ["Subtasks", "subtasks"],
         ["Color", "colorId"],
         ["Description", "description"],
+        ["Todoist link", "taskUrl"],
       ];
       for (const [label, field] of fields) {
         const mineValue = mine[field],

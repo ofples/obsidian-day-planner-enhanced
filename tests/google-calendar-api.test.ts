@@ -42,6 +42,85 @@ beforeEach(() => {
 });
 
 describe("Google REST transport", () => {
+  test("migrates an unchanged v3 event description to the clean format", async () => {
+    const api = new GoogleCalendarApi(
+      { token: async () => "credential" } as unknown as GoogleCalendarAuth,
+      "client",
+      "calendar",
+      "namespace",
+      () => true,
+      true,
+    );
+    const existing = {
+      ...event,
+      summary: snapshot.title,
+      description:
+        "Paragraph one\n\nParagraph two\n\n--- Day Planner fields ---\nTags: #work\nSubtasks:\n- [ ] First\n  - [x] Nested\n--- End Day Planner fields ---",
+      extendedProperties: {
+        private: {
+          dayPlannerVault: "namespace",
+          dayPlannerBlock: "id",
+          dayPlannerTags: '["work"]',
+          dayPlannerSchemaVersion: "3",
+        },
+      },
+    };
+    vi.mocked(requestUrl).mockResolvedValue(response(200, existing));
+    await api.update(existing, {
+      ...snapshot,
+      tags: ["work"],
+      subtasks: "- [ ] First\n  - [x] Nested",
+      description: "Paragraph one\n\nParagraph two",
+      colorId: null,
+    });
+    const body = JSON.parse(
+      (vi.mocked(requestUrl).mock.calls[0]![0] as { body: string }).body,
+    );
+    expect(body.description).toBe(
+      "Paragraph one\n\nParagraph two\n\n⬜ First\n  ✅ Nested",
+    );
+    expect(body.extendedProperties.private).toMatchObject({
+      dayPlannerVault: "namespace",
+      dayPlannerBlock: "id",
+      dayPlannerSchemaVersion: "4",
+      dayPlannerTags: '["work"]',
+    });
+    expect(body.summary).toBeUndefined();
+  });
+  test("moves a Todoist chain from the Google summary to its readable description", async () => {
+    const api = new GoogleCalendarApi(
+      { token: async () => "credential" } as unknown as GoogleCalendarAuth,
+      "client",
+      "calendar",
+      "namespace",
+      () => true,
+      true,
+    );
+    const source = {
+      ...event,
+      summary: "Plan [🔗](https://app.todoist.com/app/task/abc)",
+      description: "Details",
+      extendedProperties: {
+        private: { dayPlannerTags: "[]", dayPlannerSchemaVersion: "4" },
+      },
+    };
+    vi.mocked(requestUrl).mockResolvedValue(response(200, source));
+    await api.update(source, {
+      ...snapshot,
+      title: "Plan",
+      tags: [],
+      subtasks: "",
+      description: "Details",
+      taskUrl: "https://app.todoist.com/app/task/abc",
+    });
+    const body = JSON.parse(
+      (vi.mocked(requestUrl).mock.calls[0]![0] as { body: string }).body,
+    );
+    expect(body.summary).toBe("Plan");
+    expect(body.description).toContain(
+      "🔗 https://app.todoist.com/app/task/abc",
+    );
+  });
   test("canonical linking checks ownership and metadata bounds before writing", async () => {
     const token = vi.fn(async () => "test-access-token");
     const api = new GoogleCalendarApi(
@@ -77,7 +156,7 @@ describe("Google REST transport", () => {
       dayPlannerVault: "namespace",
       dayPlannerBlock: "uid",
       dayPlannerTags: '["work"]',
-      dayPlannerSchemaVersion: "3",
+      dayPlannerSchemaVersion: "4",
     });
   });
   test("canonical updates patch only changed fields and retain conditional version", async () => {
@@ -114,6 +193,10 @@ describe("Google REST transport", () => {
     };
     expect(JSON.parse(arg.body)).toEqual({
       end: { dateTime: "2026-11-11T06:00:00.000Z" },
+      description: "Details\n\n⬜ Child",
+      extendedProperties: {
+        private: { dayPlannerTags: '["work"]', dayPlannerSchemaVersion: "4" },
+      },
     });
     expect(arg.headers["If-Match"]).toBe(existing.etag);
   });

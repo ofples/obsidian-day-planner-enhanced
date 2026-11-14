@@ -5,7 +5,11 @@ import {
   type GoogleEvent,
 } from "../src/google-calendar/types";
 import { normalizeLocalSnapshot } from "../src/google-calendar/markdown";
-import { structuredDescription } from "../src/google-calendar/subtasks";
+import {
+  plainCalendarDescription,
+  readPlainCalendarDescription,
+  structuredDescription,
+} from "../src/google-calendar/subtasks";
 import { renderBlock } from "../src/google-calendar/markdown";
 import { defaultSettings } from "../src/settings";
 import moment from "moment";
@@ -58,6 +62,7 @@ describe("canonical Calendar fields", () => {
       subtasks: "- [x] Done\n  - [ ] Next",
       description: "Bring notes",
       colorId: null,
+      taskUrl: null,
     });
   });
 
@@ -110,7 +115,7 @@ describe("canonical Calendar fields", () => {
       description: "Bring notes\nSecond line",
     };
     const raw = renderBlock("uid", input, defaultSettings, previous);
-    expect(raw).toContain("Extra local text");
+    expect(raw).not.toContain("Extra local text");
     expect(raw).not.toContain("Before");
     const decoded = normalizeLocalSnapshot({
       uid: "uid",
@@ -121,5 +126,71 @@ describe("canonical Calendar fields", () => {
     expect(decoded.tags).toEqual(input.tags);
     expect(decoded.description).toBe(input.description);
     expect(decoded.subtasks).toBe(input.subtasks);
+  });
+
+  test("clean Google descriptions preserve prose and editable nested checklist", () => {
+    const body = plainCalendarDescription(
+      "Notes\n> Quoted",
+      "- [ ] First\n  - [x] Nested",
+      "https://app.todoist.com/app/task/abc",
+    );
+    expect(body).not.toContain("Day Planner fields");
+    expect(body).toContain("⬜ First\n  ✅ Nested");
+    expect(readPlainCalendarDescription(body)).toEqual({
+      description: "Notes\n> Quoted",
+      subtasks: "- [ ] First\n  - [x] Nested",
+      taskUrl: "https://app.todoist.com/app/task/abc",
+    });
+  });
+  test("plain non-checkbox list children survive a Google round trip", () => {
+    const body = plainCalendarDescription(
+      "Notes",
+      "- First\n  continuation\n  - Nested",
+    );
+    expect(readPlainCalendarDescription(body)).toEqual({
+      description: "Notes",
+      subtasks: "- First\n  continuation\n  - Nested",
+      taskUrl: null,
+    });
+  });
+
+  test("reads natural indented prose and authored blockquotes without reserved headings", () => {
+    const raw =
+      "- [ ] 09:00 - 10:00 Plan\n  First line\n  > Authored quote\n  - [ ] Child";
+    const local = normalizeLocalSnapshot({
+      uid: "a",
+      path: "fixture.md",
+      raw,
+      snapshot: times,
+    });
+    expect(local.description).toBe("First line\n> Authored quote");
+    expect(local.subtasks).toBe("- [ ] Child");
+  });
+  test("keeps a Todoist link out of the title and preserves its occurrence marker on a Google pull", () => {
+    const previous =
+      '- [ ] 09:00 - 10:00 Plan [🔗](https://app.todoist.com/app/task/abc "Todoist occurrence=2026-11-14")\n  Notes';
+    const local = normalizeLocalSnapshot({
+      uid: "a",
+      path: "fixture.md",
+      raw: previous,
+      snapshot: times,
+    });
+    expect(local.title).toBe("Plan");
+    expect(local.taskUrl).toBe("https://app.todoist.com/app/task/abc");
+    const changed = renderBlock(
+      "a",
+      { ...local, title: "Renamed" },
+      defaultSettings,
+      previous,
+    );
+    expect(changed).toContain('"Todoist occurrence=2026-11-14"');
+    expect(
+      normalizeLocalSnapshot({
+        uid: "a",
+        path: "fixture.md",
+        raw: changed,
+        snapshot: { ...times, title: "Renamed" },
+      }).taskUrl,
+    ).toBe(local.taskUrl);
   });
 });

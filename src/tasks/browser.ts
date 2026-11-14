@@ -9,7 +9,8 @@ export const taskViewStateSchema = z.object({
   projectId: z.string().default(""),
   selectedId: z.string().nullable().default(null),
   collapsed: z.array(z.string()).default([]),
-  source: z.enum(["todoist", "notes"]).optional(),
+  source: z.enum(["todoist", "notes", "overview"]).optional(),
+  sortBy: z.enum(["defined", "priority", "due", "created"]).optional(),
   showAdded: z.boolean().optional(),
   scannedNotePaths: z.array(z.string()).optional(),
 });
@@ -67,7 +68,19 @@ export function taskGroups(
 ): TaskBrowserGroup[] {
   const tasks = snapshot.tasks
     .filter((task) => !task.completed)
-    .toSorted((a, b) => a.order - b.order || a.id.localeCompare(b.id));
+    .toSorted((a, b) => {
+      const sorting = prefs.sortBy ?? "defined";
+      const primary =
+        sorting === "priority"
+          ? b.priority - a.priority
+          : sorting === "due"
+            ? dueSortValue(a, snapshot.account.timezone) -
+              dueSortValue(b, snapshot.account.timezone)
+            : sorting === "created"
+              ? (b.createdAt ?? "").localeCompare(a.createdAt ?? "")
+              : 0;
+      return primary || a.order - b.order || a.id.localeCompare(b.id);
+    });
   const byId = new Map(tasks.map((task) => [task.id, task]));
   const projects = new Map(
     snapshot.projects.map((project) => [project.id, project]),
@@ -218,4 +231,12 @@ export function taskGroups(
             (projects.get(b.id)?.order ?? Infinity) ||
           a.label.localeCompare(b.label),
     );
+}
+
+function dueSortValue(task: ProviderTask, timezone: string) {
+  if (!task.due) return Infinity;
+  const value = DateTime.fromISO(task.due.date, {
+    zone: task.due.timezone ?? timezone,
+  });
+  return value.isValid ? value.toMillis() : Infinity;
 }

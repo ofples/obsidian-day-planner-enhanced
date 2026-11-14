@@ -76,6 +76,8 @@ export class TaskService {
   private pending?: Promise<void>;
   private closed = false;
   private canWrite = false;
+  private weakTail: Promise<void> = Promise.resolve();
+  private weakCommands = new Map<string, TaskOperation>();
   private refreshAgain = false;
   private stopRestoration?: () => void;
   registry!: TaskRegistry;
@@ -88,7 +90,173 @@ export class TaskService {
     private readonly authenticate?: (write: boolean) => Promise<string>,
     private readonly commitAuthentication?: (token: string) => () => void,
     private readonly discardAuthentication?: (token: string) => void,
+    private readonly weakWritesEnabled: () => boolean = () => false,
   ) {}
+
+  async getWeak(id: string): Promise<ProviderTask | null> {
+    await this.pending;
+    const token = this.storage.getSecret(this.secretKey());
+    if (this.closed || !token) return null;
+    return this.provider(token).get?.(id) ?? null;
+  }
+
+  completeWeak(task: ProviderTask) {
+    return this.changeWeak(task, "complete");
+  }
+
+  changeWeak(
+    task: ProviderTask,
+    change: { title?: string; description?: string } | "complete" | "reopen",
+  ): Promise<void> {
+    const action = this.weakTail.then(async () => {
+      await this.pending;
+      if (this.closed || !this.weakWritesEnabled())
+        throw new TaskReadError("Linked Todoist editing is disabled.");
+      const token = this.storage.getSecret(this.secretKey());
+      const snapshot = this.cache.snapshot;
+      if (!token || !snapshot)
+        throw new TaskReadError("Connect Todoist first.");
+      const generation = this.generation;
+      const operation = this.applyWeak(
+        task,
+        change,
+        token,
+        generation,
+        snapshot,
+      );
+      this.pending = operation;
+      try {
+        await operation;
+      } catch (error) {
+        if (this.isCurrent(generation)) this.fail(error);
+        throw error;
+      } finally {
+        if (this.pending === operation) this.pending = undefined;
+      }
+    });
+    this.weakTail = action.catch(() => {});
+    return action;
+  }
+
+  private async applyWeak(
+    task: ProviderTask,
+    change: { title?: string; description?: string } | "complete" | "reopen",
+    token: string,
+    generation: number,
+    snapshot: TaskSnapshot,
+  ) {
+    const provider = this.provider(token);
+    if (!provider.apply || !provider.get)
+      throw new TaskReadError("Reconnect Todoist to enable task editing.");
+    const current = await provider.get(task.id);
+    if (!this.isCurrent(generation) || !this.weakWritesEnabled()) return;
+    if (!current) throw new TaskReadError("This Todoist task is unavailable.");
+    if (typeof change === "string") {
+      if (
+        task.due?.recurring &&
+        (change === "reopen" ||
+          task.completionCount !== current.completionCount ||
+          task.due.date !== current.due?.date)
+      )
+        return;
+      if (current.completed === (change === "complete")) return;
+    } else {
+      for (const field of ["title", "description"] as const) {
+        if (
+          change[field] !== undefined &&
+          current[field] !== task[field] &&
+          current[field] !== change[field]
+        )
+          throw new TaskReadError(
+            "Todoist changed too. Refresh before editing this task again.",
+          );
+      }
+      if (
+        Object.entries(change).every(
+          ([key, value]) => current[key as "title" | "description"] === value,
+        )
+      )
+        return;
+    }
+    const mutation: TaskMutation =
+      typeof change === "string"
+        ? { kind: change, taskId: task.id }
+        : { kind: "update", taskId: task.id, changes: change };
+    const key = JSON.stringify([
+      snapshot.account.id,
+      task.id,
+      task.completionCount,
+      task.due?.date,
+      mutation,
+    ]);
+    const command = this.weakCommands.get(key) ?? {
+      id: crypto.randomUUID(),
+      tempId: crypto.randomUUID(),
+      provider: snapshot.provider,
+      accountId: snapshot.account.id,
+      mutation,
+      base: current,
+      status: "pending" as const,
+      createdAt: new Date().toISOString(),
+      attempts: 0,
+    };
+    if (this.weakCommands.size >= 100 && !this.weakCommands.has(key))
+      throw new TaskReadError(
+        "Too many unfinished edits. Refresh Todoist before continuing.",
+      );
+    this.weakCommands.set(key, command);
+    if (command.attempts >= 3)
+      throw new TaskReadError(
+        "This edit needs a Todoist refresh before trying again.",
+      );
+    command.attempts++;
+    await provider.apply(command);
+    if (!this.isCurrent(generation)) return;
+    const readback = await provider.get(task.id);
+    if (!this.isCurrent(generation)) return;
+    const verified =
+      typeof change === "string"
+        ? change === "complete" && task.due?.recurring
+          ? Boolean(
+              readback &&
+                ((readback.completionCount ?? 0) >
+                  (current.completionCount ?? 0) ||
+                  readback.due?.date !== current.due?.date),
+            )
+          : Boolean(
+              readback
+                ? readback.completed === (change === "complete")
+                : change === "complete",
+            )
+        : Boolean(
+            readback &&
+              Object.entries(change).every(
+                ([field, value]) =>
+                  readback[field as "title" | "description"] === value,
+              ),
+          );
+    if (!verified)
+      throw new TaskReadError(
+        "Todoist accepted the edit. Refresh to confirm it before trying again.",
+      );
+    this.weakCommands.delete(key);
+    const updated =
+      readback ??
+      (change === "complete" && !task.due?.recurring
+        ? { ...current, completed: true }
+        : current);
+    const cache = {
+      ...this.cache,
+      snapshot: {
+        ...snapshot,
+        tasks: [...snapshot.tasks.filter((row) => row.id !== task.id), updated],
+      },
+    };
+    await this.save(cache);
+    if (!this.isCurrent(generation)) return;
+    this.cache = cache;
+    this.publish({ error: "", needsReconnect: false });
+  }
 
   private secretKey() {
     return `day-planner-tasks-${this.cache.namespace}-todoist`;
@@ -101,7 +269,9 @@ export class TaskService {
   async signIn(replaceAccount = false) {
     if (!this.authenticate)
       throw new Error("Browser sign-in is unavailable on this device.");
-    const token = await this.authenticate(this.writesEnabled());
+    const token = await this.authenticate(
+      this.writesEnabled() || this.weakWritesEnabled(),
+    );
     try {
       await this.connect(token, replaceAccount, this.commitAuthentication);
     } finally {
@@ -998,7 +1168,7 @@ export class TaskService {
       error: "",
       retryAt: undefined,
     }));
-    const operation = this.refreshSnapshot(token, generation);
+    const operation = this.refreshSnapshot(token, generation, manual);
     this.pending = operation;
     return operation.finally(() => {
       if (this.pending === operation) this.pending = undefined;
@@ -1009,7 +1179,11 @@ export class TaskService {
     });
   }
 
-  private async refreshSnapshot(token: string, generation: number) {
+  private async refreshSnapshot(
+    token: string,
+    generation: number,
+    manual = false,
+  ) {
     try {
       const provider = this.provider(token);
       let snapshot = await provider.read();
@@ -1038,6 +1212,9 @@ export class TaskService {
       await this.save(cache);
       if (!this.isCurrent(generation)) return;
       this.cache = cache;
+      if (manual)
+        for (const command of this.weakCommands.values())
+          if (command.accountId === snapshot.account.id) command.attempts = 0;
       this.publish({ connected: true, loading: false, error: "" });
     } catch (error) {
       if (this.isCurrent(generation)) this.fail(error);

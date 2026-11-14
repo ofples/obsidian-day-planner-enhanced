@@ -1,8 +1,11 @@
 import type { Nodes } from "mdast";
+import type { Moment } from "moment";
 
+import { parseBlocks } from "../google-calendar/markdown";
 import { toMarkdown } from "../mdast/mdast";
 import { fromMarkdown } from "../mdast/mdast";
 import { getTimeRangeMatch } from "../parser/parser";
+import type { DayPlannerSettings } from "../settings";
 import { exportPlainText } from "../util/schedule-export";
 
 import {
@@ -10,6 +13,71 @@ import {
   type TaskCaptureSettings,
 } from "./capture-settings";
 import { TaskReadError, type ProviderTask, type TaskSnapshot } from "./types";
+
+/** A drop immediately before or after a timed root takes the adjacent slot. */
+export function adjacentTaskDropInterval(
+  text: string,
+  offset: number,
+  day: Moment,
+  settings: DayPlannerSettings,
+  durationMinutes: number,
+) {
+  const blocks = parseBlocks(text, day.format("YYYY-MM-DD"), {
+    ...settings,
+    plannerHeading: "",
+  });
+  for (const block of blocks) {
+    if (offset > block.from && offset < block.to) return null;
+  }
+  const gap = (value: string) => /^[\t ]*(?:\r?\n[\t ]*)?$/.test(value);
+  const previous = blocks
+    .filter((block) => block.to <= offset && gap(text.slice(block.to, offset)))
+    .at(-1);
+  const next = blocks.find(
+    (block) => block.from >= offset && gap(text.slice(offset, block.from)),
+  );
+  if (previous) {
+    const start = window.moment(previous.snapshot.end);
+    return {
+      start: start.toISOString(),
+      end: start.clone().add(durationMinutes, "minutes").toISOString(),
+    };
+  }
+  if (next) {
+    const end = window.moment(next.snapshot.start);
+    return {
+      start: end.clone().subtract(durationMinutes, "minutes").toISOString(),
+      end: end.toISOString(),
+    };
+  }
+  return null;
+}
+
+/** Place whole list items or lines without splitting existing Markdown. */
+export function taskDropBoundary(text: string, offset: number) {
+  for (const node of fromMarkdown(text).children) {
+    if (node.type !== "list") continue;
+    for (const item of node.children) {
+      const from = item.position?.start.offset;
+      const to = item.position?.end.offset;
+      if (
+        from === undefined ||
+        to === undefined ||
+        offset < from ||
+        offset > to
+      )
+        continue;
+      const headerEnd = text.indexOf("\n", from);
+      const midpoint =
+        (from + (headerEnd < 0 ? to : Math.min(headerEnd, to))) / 2;
+      return offset <= midpoint ? text.lastIndexOf("\n", from - 1) + 1 : to;
+    }
+  }
+  const from = text.lastIndexOf("\n", offset - 1) + 1;
+  const end = text.indexOf("\n", offset);
+  const to = end < 0 ? text.length : end;
+  return offset <= (from + to) / 2 ? from : to;
+}
 
 export function noteTaskSource(
   before: string,

@@ -195,7 +195,11 @@ export class TasksView extends ItemView {
           if (this.scheduler) handle(this.scheduler.retry(id));
         },
         completeTask: (task: ProviderTask) =>
-          handle(this.service.complete(task)),
+          handle(
+            this.settings && !get(this.settings).experimentalTodoistSync
+              ? this.service.completeWeak(task)
+              : this.service.complete(task),
+          ),
         reopenTask: (task: ProviderTask) =>
           handle(this.service.mutate({ kind: "reopen", taskId: task.id })),
         retry: (id: string) => handle(this.service.retryOperation(id)),

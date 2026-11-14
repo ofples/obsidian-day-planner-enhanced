@@ -7,6 +7,7 @@ import { taskAccountKey } from "../src/tasks/capture-settings";
 import { taskCalendarPreviews } from "../src/tasks/calendar-preview";
 import type { TaskRegistryState } from "../src/tasks/registry";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
+import { formatTaskLink } from "../src/tasks/weak-links";
 
 const task = (id: string, patch: Partial<ProviderTask> = {}): ProviderTask => ({
   id,
@@ -61,6 +62,68 @@ const link = (base: ProviderTask, accountId = "account") => ({
 const registry = (links: TaskRegistryState["links"] = {}) => ({ links });
 
 describe("Todoist calendar previews", () => {
+  test("suppresses linked roots and children represented in a timed local block", () => {
+    const root = task("root"),
+      child = task("child", { parentId: "root" }),
+      other = task("other");
+    const block = {
+      source: "dailyNoteDate",
+      path: "fixture.md",
+      text: `09:00 - 10:00 Root ${formatTaskLink("root")}`,
+      children: [{ text: `Child ${formatTaskLink("child")}`, children: [] }],
+    } as unknown as EditableTimeBlock;
+    const previews = taskCalendarPreviews(
+      { connected: true, snapshot: snapshot([root, child, other]) },
+      registry(),
+      settings,
+      [block],
+    );
+    expect(previews.map((item) => item.taskSource?.taskId)).toEqual(["other"]);
+    expect(
+      taskCalendarPreviews(
+        { connected: true, snapshot: snapshot([root]) },
+        registry(),
+        settings,
+        [],
+      ),
+    ).toHaveLength(1);
+    expect(
+      taskCalendarPreviews(
+        { connected: true, snapshot: snapshot([root]) },
+        registry(),
+        settings,
+        [{ ...block, source: "unwritten" } as EditableTimeBlock],
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("only suppresses the weak link's matching recurring occurrence", () => {
+    const recurring = task("root", {
+      due: {
+        date: "2026-11-13",
+        recurring: true,
+        text: "daily",
+        timezone: null,
+      },
+      completionCount: 2,
+    });
+    const makeBlock = (occurrence?: number) =>
+      ({
+        source: "dailyNoteDate",
+        path: "fixture.md",
+        text: `09:00 Root ${formatTaskLink("root", occurrence)}`,
+      }) as EditableTimeBlock;
+    const preview = (occurrence?: number) =>
+      taskCalendarPreviews(
+        { connected: true, snapshot: snapshot([recurring]) },
+        registry(),
+        settings,
+        [makeBlock(occurrence)],
+      );
+    expect(preview(2)).toHaveLength(0);
+    expect(preview(1)).toHaveLength(1);
+    expect(preview()).toHaveLength(1);
+  });
   test("projects timed tasks with stable account-scoped identity, mappings and task duration", () => {
     const data = snapshot([
       task("one", {
