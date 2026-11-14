@@ -536,3 +536,7 @@ Date-only Todoist tasks use the sidebar. The planner header displays note tasks 
 Markdown drops resolve the pointer release through the editor coordinate API. Local note operations queue in arrival order behind active calendar work and local transactions. The queued operation flushes the latest editor state before scanning and rebases its insertion point over intervening text edits. A completed note operation restarts the existing five-second automatic-sync delay. Waiting for a local operation issues no provider requests. Failed operations release the queue, and unloading cancels waiting work.
 
 Installed-app acceptance exercised two provider-task drops while calendar sync was active, with the text cursor deliberately positioned above the release point. Both copies appeared below the intended anchor in order. The planner header had zero Todoist task previews and visible completion controls measured 15 by 15 pixels. Disposable note/import receipts were removed, and installed plugins, calendar identities and connections were preserved.
+
+## Vertical subtask lists
+
+Subtasks render as vertical lists at every block height and width. The full-list button is available on daily-note and Tasks-plugin blocks with visible children, including when the block clips its list. Its position and reserved header space keep it accessible in short blocks. The inline-child layout, narrow-width hiding rules and resize-based mode switching are removed. Checkbox source-line mapping and task descriptions use the existing rendering path.

@@ -145,64 +145,12 @@
   const stackedHeaderRequiredHeightPx = $derived(
     stackedHeaderBaseHeightPx + nestedItemsRequiredHeightPx,
   );
-  let measuredRequiredHeightPx = $state(0);
-  let availableHeightPx = $state<number>();
-  let availableWidthPx = $state<number>();
-  let compactStackHeightPx = $state(30);
-  const inlineNestedItems = $derived(
-    !timeBlock.isAllDayEvent &&
-      nestedItemCount > 0 &&
-      (availableHeightPx ?? blockHeightPx) <
-        Math.max(
-          20 + nestedItemsRequiredHeightPx + 11,
-          measuredRequiredHeightPx,
-        ),
+  const canRevealSubtasks = $derived(
+    nestedItemCount > 0 &&
+      (timeBlock.source === "dailyNoteDate" ||
+        timeBlock.source === "tasksPluginProp") &&
+      Boolean(openNestedItemsEditModal),
   );
-  const narrowChildren = $derived(
-    inlineNestedItems && (availableWidthPx ?? Infinity) < 280,
-  );
-
-  function observeNestedLayout(element: HTMLDivElement) {
-    const layout = element.closest<HTMLElement>(".rendered-markdown");
-    if (!layout || typeof ResizeObserver === "undefined") return;
-    const view = element.ownerDocument.defaultView ?? window;
-    let frame = 0;
-    let measurementKey = "";
-    const measure = () => {
-      frame = 0;
-      if (timeBlock.isAllDayEvent) return;
-      const wasInline = inlineNestedItems;
-      const style = view.getComputedStyle(layout);
-      const key = `${layout.clientWidth}:${style.fontSize}:${style.fontFamily}`;
-      if (key !== measurementKey) {
-        measurementKey = key;
-        measuredRequiredHeightPx = 0;
-      }
-      availableHeightPx = layout.clientHeight || undefined;
-      availableWidthPx = layout.clientWidth || undefined;
-      compactStackHeightPx =
-        Math.ceil((parseFloat(style.fontSize) || 11) * 2.35) + 4;
-      // Measure in the normal layout only. Keeping this value while inline avoids
-      // oscillating between the two modes when the compact row itself fits.
-      if (!wasInline) {
-        measuredRequiredHeightPx =
-          element.getBoundingClientRect().bottom -
-          layout.getBoundingClientRect().top +
-          (parseFloat(style.paddingBottom) || 0);
-      }
-    };
-    const observer = new ResizeObserver(() => {
-      // Apply layout changes after observer delivery, avoiding resize-loop errors.
-      if (frame) view.cancelAnimationFrame(frame);
-      frame = view.requestAnimationFrame(measure);
-    });
-    observer.observe(layout);
-    observer.observe(element);
-    return () => {
-      observer.disconnect();
-      if (frame) view.cancelAnimationFrame(frame);
-    };
-  }
   const useStackedHeader = $derived(
     !isCompact && blockHeightPx >= stackedHeaderRequiredHeightPx,
   );
@@ -236,7 +184,7 @@
     : isCompact
       ? "var(--rendered-markdown-compact-padding, 3px 11px)"
       : "var(--rendered-markdown-timed-padding, 6px 11px 5px)"}
-  class={`rendered-markdown planner-sticky-block-content${inlineNestedItems ? " has-inline-children" : ""}${narrowChildren ? " narrow-children" : ""}${narrowChildren && (availableHeightPx ?? blockHeightPx) < compactStackHeightPx ? " ultra-compact" : ""}`}
+  class={`rendered-markdown planner-sticky-block-content${canRevealSubtasks ? " has-subtasks" : ""}`}
   {bottomDecoration}
   {completed}
 >
@@ -314,8 +262,7 @@
           .map((item) =>
             withoutDisplayedLockTags(item.text.replace(/<!--.*?-->/g, "")),
           )
-          .join(" · ")}
-        {@attach observeNestedLayout}
+          .join("\n")}
         {@attach createRenderMarkdownAttachment({
           renderMarkdown,
           markdown: nestedListItems,
@@ -324,7 +271,7 @@
           onCheckboxLineClick,
         })}
       ></div>
-      {#if inlineNestedItems && (timeBlock.source === "dailyNoteDate" || timeBlock.source === "tasksPluginProp") && openNestedItemsEditModal}
+      {#if canRevealSubtasks}
         <button
           class="subtask-count"
           type="button"
@@ -334,7 +281,11 @@
           onpointerup={(event) => event.stopPropagation()}
           onclick={(event) => {
             event.stopPropagation();
-            openNestedItemsEditModal(timeBlock);
+            if (
+              timeBlock.source === "dailyNoteDate" ||
+              timeBlock.source === "tasksPluginProp"
+            )
+              openNestedItemsEditModal?.(timeBlock);
           }}><ListTree size={12} aria-hidden="true" />{nestedItemCount}</button
         >
       {/if}
@@ -346,6 +297,11 @@
   .subtask-count {
     cursor: pointer;
 
+    position: absolute;
+    z-index: 2;
+    top: 4px;
+    right: 16px;
+
     display: inline-flex;
     flex: 0 0 auto;
     gap: 2px;
@@ -353,7 +309,6 @@
 
     min-width: 0;
     height: 16px;
-    margin-inline-end: 4px;
     padding: 0 3px;
 
     font-size: 10px;
@@ -701,100 +656,7 @@
     white-space: nowrap;
   }
 
-  :global(.rendered-markdown.has-inline-children) {
-    flex-direction: row;
-    gap: 8px;
-    align-items: flex-start;
-  }
-
-  :global(.has-inline-children) .time-summary-row {
-    flex: 0 1 auto;
-    max-width: 60%;
-  }
-
-  :global(.has-inline-children) .lines-after-first-wrapper {
-    overflow: hidden;
-    flex: 1 1 0;
-
-    margin: 0;
-    padding: 0;
-
-    line-height: 1.25;
-    text-overflow: ellipsis;
-    overflow-wrap: anywhere;
-    white-space: normal;
-  }
-
-  :global(.has-inline-children) .lines-after-first-wrapper :global(ul),
-  :global(.has-inline-children) .lines-after-first-wrapper :global(ol),
-  :global(.has-inline-children) .lines-after-first-wrapper :global(li),
-  :global(.has-inline-children) .lines-after-first-wrapper :global(li > p) {
-    display: inline;
-
-    margin: 0;
-    padding: 0;
-
-    line-height: 1.25;
-    white-space: normal;
-  }
-
-  :global(.has-inline-children)
-    .lines-after-first-wrapper
-    :global(ul > li::before),
-  :global(.has-inline-children)
-    .lines-after-first-wrapper
-    :global(ul > li:has(> code)::before),
-  :global(.has-inline-children)
-    .lines-after-first-wrapper
-    :global(ul > li:has(> p > code)::before) {
-    content: " · ";
-
-    position: static;
-    transform: none;
-
-    display: inline;
-
-    background: none;
-  }
-
-  :global(.has-inline-children) .lines-after-first-wrapper :global(hr) {
-    display: none;
-  }
-
-  :global(.has-inline-children)
-    .lines-after-first-wrapper
-    :global(ul > li::after) {
-    display: none;
-  }
-
-  :global(.has-inline-children) .lines-after-first-wrapper :global(li code) {
-    min-width: 0;
-    margin-inline-end: 4px;
-  }
-
-  :global(.narrow-children) {
-    --time-block-content-layout-padding: 2px 7px;
-  }
-
-  :global(.narrow-children) .lines-after-first-wrapper {
-    display: none;
-  }
-
-  :global(.narrow-children) .time-summary-row {
-    flex: 1 1 0;
-    flex-direction: column;
-    gap: 0;
-
-    min-width: 0;
-    max-width: none;
-  }
-
-  :global(.narrow-children) .first-line-wrapper {
-    width: 100%;
-  }
-
-  :global(.narrow-children.ultra-compact) .time-summary-row {
-    flex-direction: row;
-    gap: 3px;
+  :global(.rendered-markdown.has-subtasks) .time-summary-row {
+    padding-inline-end: 56px;
   }
 </style>

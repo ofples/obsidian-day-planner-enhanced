@@ -68,76 +68,47 @@ describe("RenderedMarkdown", () => {
     expect(target.textContent).not.toContain("#locked");
     await unmount(component);
   });
-  test("narrow blocks use a subtask count and a readable stacked header when two lines fit", () => {
-    const observed: Array<() => void> = [];
-    vi.stubGlobal(
-      "ResizeObserver",
-      class {
-        constructor(callback: () => void) {
-          observed.push(callback);
-        }
-        observe() {}
-        disconnect() {}
-      },
-    );
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
-      callback(0);
-      return 1;
-    });
-    const target = document.createElement("div");
-    document.body.appendChild(target);
-    const component = mount(RenderedMarkdown, {
-      target,
-      context: new Map([
-        [
-          obsidianContextKey,
-          {
-            settingsStore: writable(defaultSettingsForTests),
-            renderMarkdown: (element: HTMLElement, text: string) => {
-              element.textContent = text;
-              return () => {};
+  test.each([15, 60])(
+    "%s-minute blocks keep list content and the reveal button",
+    async (durationMinutes) => {
+      const target = document.createElement("div");
+      document.body.appendChild(target);
+      const component = mount(RenderedMarkdown, {
+        target,
+        context: new Map([
+          [
+            obsidianContextKey,
+            {
+              settingsStore: writable(defaultSettingsForTests),
+              renderMarkdown: (element: HTMLElement, text: string) => {
+                element.textContent = text;
+                return () => {};
+              },
+              toggleCheckboxInFile: vi.fn(),
+              openNestedItemsEditModal: vi.fn(),
             },
-            toggleCheckboxInFile: vi.fn(),
-            openNestedItemsEditModal: vi.fn(),
+          ],
+        ]),
+        props: {
+          timeBlock: {
+            ...baseTimeBlock,
+            durationMinutes,
+            children: [createNestedListItem("a", "Long child text", 2)],
           },
-        ],
-      ]),
-      props: {
-        timeBlock: {
-          ...baseTimeBlock,
-          durationMinutes: 15,
-          children: [createNestedListItem("a", "Long child text", 2)],
         },
-      },
-    });
-    flushSync();
-    const layout = target.querySelector<HTMLElement>(".rendered-markdown")!;
-    layout.style.fontSize = "11px";
-    let width = 169,
-      height = 30;
-    Object.defineProperties(layout, {
-      clientWidth: { get: () => width },
-      clientHeight: { get: () => height },
-    });
-    observed[0]!();
-    flushSync();
-    expect(layout.classList.contains("narrow-children")).toBe(true);
-    expect(layout.classList.contains("ultra-compact")).toBe(false);
-    expect(
-      target.querySelector('[aria-label="View all 1 subtasks"]'),
-    ).not.toBeNull();
-    height = 24;
-    observed[0]!();
-    flushSync();
-    expect(layout.classList.contains("ultra-compact")).toBe(true);
-    width = 450;
-    observed[0]!();
-    flushSync();
-    expect(layout.classList.contains("narrow-children")).toBe(false);
-    unmount(component);
-    vi.restoreAllMocks();
-    vi.unstubAllGlobals();
-  });
+      });
+      flushSync();
+      expect(
+        target.querySelector(".lines-after-first-wrapper")?.textContent,
+      ).toContain("Long child text");
+      expect(target.querySelector(".has-inline-children")).toBeNull();
+      expect(target.querySelector(".narrow-children")).toBeNull();
+      expect(
+        target.querySelector('[aria-label="View all 1 subtasks"]'),
+      ).not.toBeNull();
+      await unmount(component);
+    },
+  );
   test("compact children expose a count button without selecting the block", async () => {
     const target = document.createElement("div");
     document.body.append(target);
@@ -181,7 +152,7 @@ describe("RenderedMarkdown", () => {
     expect(openNestedItemsEditModal).toHaveBeenCalledExactlyOnceWith(timeBlock);
     await unmount(component);
   });
-  test("short blocks put children inline without changing checkbox targets; roomy and all-day blocks keep lists", () => {
+  test("short, roomy and all-day blocks keep vertical lists without changing checkbox targets", () => {
     const target = document.createElement("div");
     const settings = writable({ ...defaultSettingsForTests, zoomLevel: 2 });
     const toggleCheckboxInFile = vi.fn(async () => {});
@@ -216,7 +187,7 @@ describe("RenderedMarkdown", () => {
     document.body.appendChild(target);
     const component = mount(RenderedMarkdown, { context, target, props });
     flushSync();
-    expect(target.querySelector(".has-inline-children")).not.toBeNull();
+    expect(target.querySelector(".has-inline-children")).toBeNull();
     expect(
       target.querySelector(".lines-after-first-wrapper")?.getAttribute("title"),
     ).toContain("Call supplier");
