@@ -13,13 +13,24 @@ import type { GoogleCalendarSettings, GoogleCalendarSync } from "./service";
 import { visibleGoogleCalendars } from "./view";
 
 /** Native disclosure works in both searchable settings and the legacy settings tab. */
-export function addGoogleCalendarSetupDetails(container: HTMLElement) {
+export function addGoogleCalendarSetupDetails(
+  container: HTMLElement,
+  custom = false,
+) {
   const document = container.ownerDocument;
   const details = document.createElement("details");
   details.className = "planner-google-setup-details";
   const summary = document.createElement("summary");
   summary.textContent = "How to set up Google Calendar sync";
   details.appendChild(summary);
+  if (!custom) {
+    const instructions = document.createElement("p");
+    instructions.textContent =
+      "Open Connections and choose Sign in with Google. Select your account, approve calendar access, then choose the target calendar for your schedule. The Google app configuration is included in the installed build.";
+    details.appendChild(instructions);
+    container.appendChild(details);
+    return;
+  }
   const intro = document.createElement("p");
   intro.textContent =
     "One-time setup on desktop: create your own Google connection, then choose a calendar for your schedule. You do not need a paid Google Cloud plan.";
@@ -125,14 +136,30 @@ export function googleCalendarSettingDefinitions(
       },
       {
         name: "Advanced Google connection",
-        desc: "Configure the Desktop OAuth client used to sign in and refresh access.",
+        desc: "Optional app configuration for developers and custom Google projects.",
         render: (setting) => {
           const details = setting.descEl.ownerDocument.createElement("details");
           const summary = details.ownerDocument.createElement("summary");
-          summary.textContent = "OAuth client settings";
+          summary.textContent = "Developer options";
           details.appendChild(summary);
           setting.descEl.appendChild(details);
+          const custom = details.ownerDocument.createElement("div");
+          custom.hidden = !getSettings().googleCalendar.useCustomClient;
           new Setting(details)
+            .setName("Use your own Google app")
+            .setDesc(
+              "Use a custom Desktop OAuth client. Changing apps requires signing in again.",
+            )
+            .addToggle((toggle) =>
+              toggle
+                .setValue(getSettings().googleCalendar.useCustomClient)
+                .onChange((useCustomClient) => {
+                  update({ useCustomClient });
+                  custom.hidden = !useCustomClient;
+                }),
+            );
+          details.appendChild(custom);
+          new Setting(custom)
             .setName("Google OAuth client ID")
             .setDesc("Use a Desktop app client with the Calendar API enabled.")
             .addText((control) =>
@@ -141,7 +168,7 @@ export function googleCalendarSettingDefinitions(
                 .onChange((value) => update({ clientId: value.trim() })),
             );
           let secret = "";
-          new Setting(details)
+          new Setting(custom)
             .setName("Google OAuth client secret")
             .setDesc(
               "Stored in Obsidian SecretStorage. Leave blank to keep the saved secret.",
@@ -157,6 +184,7 @@ export function googleCalendarSettingDefinitions(
                 .setButtonText("Save secret")
                 .onClick(() => service().setClientSecret(secret)),
             );
+          addGoogleCalendarSetupDetails(custom, true);
         },
       },
       text(

@@ -11,6 +11,23 @@ vi.mock("obsidian", () => ({
     setDesc(_value: string) {
       return this;
     }
+    addToggle(callback: (control: unknown) => void) {
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      this.container.append(input);
+      const control = {
+        setValue(value: boolean) {
+          input.checked = value;
+          return control;
+        },
+        onChange(handler: (value: boolean) => void) {
+          input.addEventListener("change", () => handler(input.checked));
+          return control;
+        },
+      };
+      callback(control);
+      return this;
+    }
     addText(callback: (control: unknown) => void) {
       const input = document.createElement("input");
       this.container.append(input);
@@ -97,7 +114,16 @@ test("advanced OAuth and color settings are collapsed and retain editable values
   };
   const oauth = render("Advanced Google connection");
   expect(oauth.open).toBe(false);
-  const inputs = oauth.querySelectorAll("input");
+  const custom = oauth.querySelector("div")!;
+  expect(custom.hidden).toBe(true);
+  const toggle = oauth.querySelector<HTMLInputElement>(
+    'input[type="checkbox"]',
+  )!;
+  toggle.checked = true;
+  toggle.dispatchEvent(new Event("change"));
+  expect(update).toHaveBeenCalledWith({ useCustomClient: true });
+  expect(custom.hidden).toBe(false);
+  const inputs = custom.querySelectorAll("input");
   expect(inputs[0]?.value).toBe("existing.apps.googleusercontent.com");
   inputs[0]!.value = "replacement.apps.googleusercontent.com";
   inputs[0]!.dispatchEvent(new Event("change"));
@@ -108,6 +134,10 @@ test("advanced OAuth and color settings are collapsed and retain editable values
   inputs[1]!.dispatchEvent(new Event("change"));
   oauth.querySelector("button")!.click();
   expect(setClientSecret).toHaveBeenCalledWith("new-secret");
+  toggle.checked = false;
+  toggle.dispatchEvent(new Event("change"));
+  expect(custom.hidden).toBe(true);
+  expect(inputs[0]?.value).toBe("replacement.apps.googleusercontent.com");
   const colors = render("Google event colors");
   expect(colors.open).toBe(false);
   expect(colors.textContent).toContain("#work");

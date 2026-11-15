@@ -18,14 +18,22 @@ No existing drop-in bridge for Day Planner Enhanced's daily-note time ranges was
 
 ## Setup
 
-1. Use **Obsidian 1.11.4 or later**. Optional Google sync uses Obsidian SecretStorage. The rest of Day Planner keeps its existing minimum version.
-2. In [Google Cloud Console](https://console.cloud.google.com/), create or select a project and enable **Google Calendar API**. Standard Calendar API use is free; Google may require a billing account when creating a project. No paid resources are needed for this setup.
-3. Configure Google Auth Platform's consent screen. If the app is External and in Testing, add your Google account as a test user. Google's testing-mode refresh tokens can expire after seven days for these scopes; reconnect when needed.
-4. Create an OAuth client with application type **Desktop app**. Copy its client ID and client secret. A Desktop client uses an ephemeral `http://127.0.0.1:<port>/oauth2callback` redirect; do not create a Web client or use the deprecated out-of-band copy/paste flow.
-5. Create a dedicated Google calendar for the schedule. Copy its **Calendar ID** from Google Calendar → Settings → the calendar → Integrate calendar. This is the calendar ID, not its secret ICS URL.
-6. Build this branch with `npm ci` and `npm run build`. Copy `main.js`, `styles.css` and `manifest.json` into the existing `day-planner-enhanced` plugin folder in a **test vault**, then reload Obsidian. Keep a copy of the previous plugin files outside the vault if replacing an installation.
-7. Open Settings → Day Planner Enhanced → **Google Calendar two-way sync**. Expand **How to set up Google Calendar sync** for inline instructions, official setup links and troubleshooting. Enter the client ID, save the client secret, and enter the target calendar ID. Click **Connect** and finish consent in your browser. Under Google Auth Platform → Data Access, the requested scopes are `https://www.googleapis.com/auth/calendar.events` and `https://www.googleapis.com/auth/calendar.calendarlist.readonly`.
-8. Set **Sync start date** to the first local day you want the new mode to manage, or leave it blank to retain legacy behavior. Earlier records remain archived and earlier notes are not rewritten. Keep automatic sync off initially. Use **Sync** in the timeline header or run **Sync Google Calendar now**. Test both directions with a disposable event before enabling automatic sync.
+1. Use **Obsidian 1.11.4 or later** for Google sync and SecretStorage.
+2. Open **Connections** and choose **Sign in with Google**. Packaged builds include the Google Desktop app registration. Select your account and approve calendar access in the system browser.
+3. Choose a dedicated target calendar under Google Calendar settings. Calendar display selections are independent of the target used for schedule synchronization.
+4. Set **Sync start date** to the first local day to manage. Use **Sync** in the timeline header and check a disposable event before enabling automatic sync.
+
+### Optional custom Google app
+
+Under **Advanced Google connection**, expand **Developer options** and enable **Use your own Google app** to enter a Desktop OAuth client ID and save its client secret. Disabling the switch selects the bundled registration and retains the custom values. Selecting a different app requires signing in to that app. Saved refresh credentials and cached access tokens are checked against their client ID.
+
+Custom registrations require a Google Cloud project with Calendar API enabled. An External app in Testing issues limited-lifetime authorizations for these Calendar scopes. Publishing a personal-use app to Production removes the testing lifetime for newly issued tokens. An unverified personal app can still show Google's warning and user cap. Public distribution requires the appropriate Google verification.
+
+### Building with a Google registration
+
+Provide the Google Desktop OAuth download as the ignored file `google-oauth-client.private.json`, or set `DAY_PLANNER_GOOGLE_APP_CONFIG` to its path. Run `npm ci` and `npm run build`. The production build includes only the Desktop app's client ID and app credential. Account access and refresh tokens stay in SecretStorage. Tests use an unconfigured build and synthetic credentials.
+
+A source build without a supplied registration can use the custom-app option. Existing custom registrations are retained on upgrade. Install only the built `main.js`, `styles.css` and `manifest.json` into the plugin folder, keeping a backup first.
 
 To exclude a note, add either `sync: off` or `sync: false` to its YAML frontmatter. The note is not imported, rewritten, or used to delete its Google event; existing links remain in the sync state. Remove the property and sync again to make the note eligible. This opt-out also applies to notes on or after the start date.
 
@@ -92,3 +100,11 @@ Google references: [Desktop OAuth](https://developers.google.com/identity/protoc
 - Installed desktop acceptance verified Google consent, SecretStorage credentials, initial schedule export, Google event import, title/time edits in both directions, and Google cancellation. The expandable setup row is present in installed settings. Desktop sign-in uses a guarded CommonJS Node HTTP import because Chromium cannot resolve `import("node:http")` in Obsidian's plugin loader.
 - Live subtask acceptance verified backfilling linked events, nested lists and completion states, preservation of surrounding description text, repeated-sync stability and removal of the generated section when all children are removed.
 - Live cross-day moves, offline/restart recovery, mobile behavior and DST/travel scenarios remain unverified. Automatic sync runs only while Obsidian is open; Google apps left in Testing can require reconnection after seven days.
+
+## Bundled sign-in acceptance
+
+The packaged desktop build uses its included Google registration with the custom-app switch disabled. Installed checks verified refresh and calendar listing with both the saved client ID and separately stored client secret temporarily empty, then restored the custom values. The native settings disclosure hides custom fields by default, reveals them when enabled and retains their values when disabled.
+
+The app's publishing status was read back as In production after the approved homepage and privacy notice were configured. The user completed a new sign-in under Production. Existing Google and Todoist connections, other plugin secret keys, the calendar namespace, every existing managed event identity and daily-note bytes were verified after reload. The installed artifacts match the production build.
+
+Credential binding uses a SecretStorage ID that fits the platform limit even with a full vault namespace. Regression coverage checks that limit, client-bound token caches, cancellation of an in-flight refresh on sign-out, legacy configuration migration and the bundled/custom selection. The full source suite has 1,544 passes and the inherited inclusive-last-day ICS timeout, with nine skips and seventeen todos. Source lint, TypeScript, Svelte diagnostics, strict checks and production compilation pass. Google's unverified-app warning and user cap still apply to the personal-use registration.

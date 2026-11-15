@@ -510,12 +510,97 @@ describe("Google OAuth", () => {
       secretStorage: {
         getSecret: (key: string) => secrets.get(key) ?? null,
         setSecret: (key: string, value: string) => {
+          if (key.length > 64 || !/^[a-z0-9-]+$/.test(key))
+            throw new Error("Invalid SecretStorage ID");
           secrets.set(key, value);
         },
       },
     } as unknown as App;
-    return { secrets, auth: new GoogleCalendarAuth(app, "test-key") };
+    return { app, secrets, auth: new GoogleCalendarAuth(app, "test-key") };
   };
+  test("app binding fits SecretStorage IDs with a real vault namespace", async () => {
+    const { app, secrets } = setup();
+    const key = `day-planner-google-${"a".repeat(32)}`;
+    secrets.set(`${key}-refresh`, "refresh");
+    const auth = new GoogleCalendarAuth(app, key);
+    auth.bindLegacyClient("client");
+    vi.mocked(requestUrl).mockResolvedValue(
+      response(200, {
+        access_token: "access",
+        refresh_token: "replacement",
+        expires_in: 3600,
+      }),
+    );
+    await auth.token("client");
+    expect(secrets.get(`${key}-app-id`)).toBe("client");
+    expect([...secrets.keys()].every((id) => id.length <= 64)).toBe(true);
+    expect(auth.isConnected("client")).toBe(true);
+    expect(auth.isConnected("other-client")).toBe(false);
+  });
+  test("bundled registration refreshes without a separately saved client secret", async () => {
+    const { app, secrets } = setup();
+    secrets.set("test-key-refresh", "test-refresh-token");
+    const auth = new GoogleCalendarAuth(
+      app,
+      "test-key",
+      () => "bundled-app-config",
+    );
+    auth.bindLegacyClient("bundled-client");
+    vi.mocked(requestUrl).mockResolvedValue(
+      response(200, { access_token: "access", expires_in: 3600 }),
+    );
+    await auth.token("bundled-client");
+    const params = new URLSearchParams(
+      (vi.mocked(requestUrl).mock.calls[0]![0] as { body: string }).body,
+    );
+    expect(params.get("client_secret")).toBe("bundled-app-config");
+    expect(secrets.has("test-key-client")).toBe(false);
+    expect(auth.isConnected("bundled-client")).toBe(true);
+  });
+  test("cached tokens and legacy refresh credentials stay bound to their app", async () => {
+    const { auth, secrets } = setup();
+    secrets.set("test-key-refresh", "refresh");
+    auth.bindLegacyClient("original");
+    vi.mocked(requestUrl).mockResolvedValue(
+      response(200, { access_token: "access", expires_in: 3600 }),
+    );
+    await auth.token("original");
+    expect(auth.isConnected("other-app")).toBe(false);
+    await expect(auth.token("other-app")).rejects.toThrow(
+      "Connect Google Calendar",
+    );
+    expect(await auth.token("original")).toBe("access");
+    expect(requestUrl).toHaveBeenCalledOnce();
+  });
+  test("an in-flight refresh cannot restore credentials after sign-out", async () => {
+    const { auth, secrets } = setup();
+    secrets.set("test-key-refresh", "refresh");
+    let complete!: (result: ReturnType<typeof response>) => void;
+    const responsePending = new Promise<ReturnType<typeof response>>(
+      (resolve) => {
+        complete = resolve;
+      },
+    );
+    vi.mocked(requestUrl).mockReturnValue(
+      responsePending as ReturnType<typeof requestUrl>,
+    );
+    const pending = auth.token("client");
+    const rejected = expect(pending).rejects.toThrow("connection changed");
+    auth.disconnect();
+    complete(
+      response(200, {
+        access_token: "access",
+        refresh_token: "replacement",
+        expires_in: 3600,
+      }),
+    );
+    await rejected;
+    expect(auth.isConnected()).toBe(false);
+    await expect(auth.token("client")).rejects.toThrow(
+      "Connect Google Calendar",
+    );
+    expect(requestUrl).toHaveBeenCalledOnce();
+  });
   test.each([
     [
       {
@@ -578,7 +663,13 @@ describe("Google OAuth", () => {
     expect(secrets.get("test-key-refresh")).toBe("");
   });
   test("uses a loopback callback, random state and PKCE without a relay", async () => {
-    const { auth, secrets } = setup();
+    const { app, secrets } = setup();
+    let configuredSecret = "original-app-config";
+    const auth = new GoogleCalendarAuth(
+      app,
+      "test-key",
+      () => configuredSecret,
+    );
     vi.mocked(requestUrl).mockResolvedValue(
       response(200, {
         access_token: "test-access-token",
@@ -591,6 +682,7 @@ describe("Google OAuth", () => {
     let callback: Promise<void> | undefined;
     const open = vi.spyOn(window, "open").mockImplementation((url) => {
       authUrl = new URL(String(url));
+      configuredSecret = "changed-during-sign-in";
       callback = (async () => {
         const redirect = authUrl!.searchParams.get("redirect_uri")!;
         invalidStatus = (await fetch(`${redirect}?state=invalid&code=invalid`))
@@ -612,6 +704,9 @@ describe("Google OAuth", () => {
       expect(authUrl?.origin).toBe("https://accounts.google.com");
       expect(authUrl?.searchParams.get("code_challenge_method")).toBe("S256");
       const arg = vi.mocked(requestUrl).mock.calls[0]![0] as { body: string };
+      expect(new URLSearchParams(arg.body).get("client_secret")).toBe(
+        "original-app-config",
+      );
       const verifier = new URLSearchParams(arg.body).get("code_verifier")!;
       const digest = Buffer.from(
         await webcrypto.subtle.digest(

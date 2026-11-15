@@ -11,6 +11,7 @@ import type { DayPlannerSettings } from "../settings";
 
 import { GoogleCalendarApi } from "./api";
 import { GoogleCalendarAuth } from "./auth";
+import { bundledGoogleApp, googleClientId } from "./client";
 import {
   isOwned,
   isCanonicalOwned,
@@ -37,6 +38,7 @@ import {
 import { googleEventsToBlocks, visibleGoogleCalendars } from "./view";
 
 export interface GoogleCalendarSettings {
+  useCustomClient: boolean;
   clientId: string;
   calendarId: string;
   autoSync: boolean;
@@ -205,6 +207,10 @@ export class GoogleCalendarSync {
   private get app(): App {
     return this.plugin.app;
   }
+  private clientId() {
+    return googleClientId(this.getSettings().googleCalendar);
+  }
+
   private statePath() {
     return `${this.plugin.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`}/gcal-state.json`;
   }
@@ -225,11 +231,20 @@ export class GoogleCalendarSync {
     this.auth = new GoogleCalendarAuth(
       this.app,
       `day-planner-google-${this.state.namespace}`,
+      (clientId) =>
+        !this.getSettings().googleCalendar.useCustomClient &&
+        bundledGoogleApp?.clientId === clientId
+          ? bundledGoogleApp.clientSecret
+          : undefined,
     );
+    if (this.isConnected())
+      this.auth.bindLegacyClient(
+        this.getSettings().googleCalendar.clientId.trim(),
+      );
     if (
       this.state.pendingNoteChange ||
       this.state.pendingMove ||
-      (!this.state.identities && this.getSettings().googleCalendar.clientId)
+      (!this.state.identities && this.clientId())
     ) {
       await this.noteContext().notes.scan();
     }
@@ -401,7 +416,7 @@ export class GoogleCalendarSync {
     const config = this.getSettings().googleCalendar;
     if (
       !record &&
-      config.clientId.trim() &&
+      this.clientId() &&
       config.calendarId.trim() &&
       !this.edits?.isWriting
     ) {
@@ -536,7 +551,7 @@ export class GoogleCalendarSync {
   isConnected() {
     try {
       const auth = Reflect.get(this, "auth") as GoogleCalendarAuth | undefined;
-      return auth?.isConnected() ?? false;
+      return auth?.isConnected(this.clientId()) ?? false;
     } catch {
       return false;
     }
@@ -561,9 +576,7 @@ export class GoogleCalendarSync {
     }
     this.busy = true;
     try {
-      await this.auth.connect(
-        this.getSettings().googleCalendar.clientId.trim(),
-      );
+      await this.auth.connect(this.clientId());
       void this.refreshView();
       new Notice(
         "Google Calendar connected. Choose a target calendar and run Sync Google Calendar now.",
@@ -622,7 +635,7 @@ export class GoogleCalendarSync {
 
   async assertTaskExportAllowed() {
     const config = this.getSettings().googleCalendar;
-    if (!config.clientId.trim() || !config.calendarId.trim()) return;
+    if (!this.clientId() || !config.calendarId.trim()) return;
     await this.validateManagedCalendar(this.api());
   }
 
@@ -648,16 +661,16 @@ export class GoogleCalendarSync {
     try {
       const settings = this.getSettings();
       const config = settings.googleCalendar;
-      if (!config.calendarId.trim() || !config.clientId.trim()) {
+      if (!config.calendarId.trim() || !this.clientId()) {
         if (!automatic)
           throw new Error(
-            "Set the Google OAuth client ID and target calendar ID in Day Planner settings first.",
+            "Choose a target calendar in Day Planner settings. If this build has no bundled Google app, enable Use your own Google app.",
           );
         return;
       }
       const api = new GoogleCalendarApi(
         this.auth,
-        config.clientId.trim(),
+        this.clientId(),
         config.calendarId.trim(),
         this.state.namespace,
         () => !this.stopped,
@@ -904,7 +917,7 @@ export class GoogleCalendarSync {
   private api(calendarId = this.getSettings().googleCalendar.calendarId) {
     return new GoogleCalendarApi(
       this.auth,
-      this.getSettings().googleCalendar.clientId.trim(),
+      this.clientId(),
       calendarId.trim(),
       this.state.namespace,
       () => !this.stopped,
@@ -923,8 +936,8 @@ export class GoogleCalendarSync {
     if (
       !Platform.isDesktopApp ||
       !config.showCalendarEvents ||
-      !config.clientId ||
-      !this.auth.isConnected()
+      !this.clientId() ||
+      !this.isConnected()
     ) {
       this.store.dispatch(googleTimeBlocksUpdated([]));
       return;

@@ -1,6 +1,7 @@
 import type { HexString } from "obsidian";
 
 import { defaultDayFormat } from "./constants";
+import { bundledGoogleApp } from "./google-calendar/client";
 import {
   taskCaptureSettingsSchema,
   type TaskCaptureSettings,
@@ -111,6 +112,7 @@ export const defaultSettings: DayPlannerSettings = {
   weakTodoistSync: true,
   taskCapture: taskCaptureSettingsSchema.parse({}),
   googleCalendar: {
+    useCustomClient: false,
     clientId: "",
     calendarId: "",
     autoSync: false,
@@ -196,6 +198,13 @@ export function mergeStoredSettings(
     googleCalendar: {
       ...defaultSettings.googleCalendar,
       ...currentSettings.googleCalendar,
+      useCustomClient:
+        currentSettings.googleCalendar?.useCustomClient ??
+        Boolean(
+          currentSettings.googleCalendar?.clientId?.trim() &&
+            currentSettings.googleCalendar.clientId.trim() !==
+              bundledGoogleApp?.clientId,
+        ),
     },
   };
 }

@@ -6,6 +6,35 @@ import { isNotVoid } from "typed-assert";
 import replace from "vite-plugin-filter-replace";
 import fs from "node:fs";
 
+function bundledGoogleApp() {
+  if (process.env.VITEST) return null;
+  const path =
+    process.env.DAY_PLANNER_GOOGLE_APP_CONFIG ??
+    "google-oauth-client.private.json";
+  if (!fs.existsSync(path)) {
+    if (process.env.DAY_PLANNER_GOOGLE_APP_CONFIG)
+      throw new Error("The configured Google Desktop app file was not found.");
+    return null;
+  }
+  const data = JSON.parse(fs.readFileSync(path, "utf-8")) as {
+    installed?: { client_id?: unknown; client_secret?: unknown };
+  };
+  const client = data.installed;
+  if (
+    typeof client?.client_id !== "string" ||
+    !client.client_id.endsWith(".apps.googleusercontent.com") ||
+    typeof client.client_secret !== "string" ||
+    !client.client_secret.trim()
+  )
+    throw new Error(
+      "Google app configuration must be a Desktop OAuth download.",
+    );
+  return {
+    clientId: client.client_id.trim(),
+    clientSecret: client.client_secret.trim(),
+  };
+}
+
 function replaceReduxRandomActionSeparator() {
   return {
     name: "replace-redux-random-action-separator",
@@ -26,6 +55,7 @@ function replaceReduxRandomActionSeparator() {
 
 export default defineConfig((env) => ({
   define: {
+    registeredGoogleAppConfig: JSON.stringify(bundledGoogleApp()),
     "process.env.NODE_ENV": JSON.stringify(
       process.env.NODE_ENV || "development",
     ),

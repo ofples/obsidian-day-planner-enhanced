@@ -28,7 +28,7 @@ The integrated build is installed and connected in the working vault. Open Show 
 - New inserted children follow the destination note's indentation style. New notes use two spaces.
 - An unchecked task with `#todoist` is captured after leaving its line and a quiet editing delay. Confirmed creation replaces the capture tag with its chain link. Other labels and plain Markdown children remain editable. Re-adding `#todoist` deliberately requests a new capture. Removing the chain link detaches the existing best-effort link.
 
-Google sign-in and calendar selection remain visible in settings. Desktop OAuth setup and calendar color overrides are in collapsed sections. Advanced OAuth fields support custom clients and credential refresh.
+Google sign-in uses the bundled app registration. Calendar selection remains visible in settings. Developer options contain an optional Use your own Google app switch, which reveals custom OAuth fields. Calendar color overrides are collapsible.
 
 ## Design package
 

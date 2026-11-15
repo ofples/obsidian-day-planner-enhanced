@@ -20,6 +20,7 @@ task-cache.json
 task-state.json
 task-state-*.backup.json
 .env
+google-oauth-client.private.json
 .claude
 
 # OMC tooling state

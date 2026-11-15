@@ -37,6 +37,7 @@ import {
   createTimelineTaskSelectionTarget,
   requestTimelineTaskSelection,
 } from "./global-store/timeline-task-selection";
+import { googleClientId } from "./google-calendar/client";
 import { GoogleCalendarSync } from "./google-calendar/service";
 import {
   fromMarkdown,
@@ -1250,7 +1251,7 @@ export default class DayPlanner extends Plugin {
           await this.taskScheduler?.resume();
           await this.taskReconciler?.scan();
         }
-        if (this.getSettings().googleCalendar.clientId)
+        if (googleClientId(this.getSettings().googleCalendar))
           await this.googleCalendarSync.run();
         await this.taskReconciler?.scan();
       })()

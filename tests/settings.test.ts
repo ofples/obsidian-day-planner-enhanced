@@ -9,6 +9,20 @@ import {
 } from "../src/settings";
 
 describe("settings migration", () => {
+  test("retains legacy custom Google apps and respects an explicit built-in choice", () => {
+    const googleCalendar = { clientId: "custom.apps.googleusercontent.com" };
+    expect(
+      mergeStoredSettings({ googleCalendar }).googleCalendar.useCustomClient,
+    ).toBe(true);
+    expect(
+      mergeStoredSettings({
+        googleCalendar: { ...googleCalendar, useCustomClient: false },
+      }).googleCalendar.useCustomClient,
+    ).toBe(false);
+    expect(mergeStoredSettings(null).googleCalendar.useCustomClient).toBe(
+      false,
+    );
+  });
   test("defaults next-slot entry on and preserves an explicit disable", () => {
     expect(mergeStoredSettings(null).nextTaskSlotOnEnter).toBe(true);
     expect(
