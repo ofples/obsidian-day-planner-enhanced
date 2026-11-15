@@ -31,11 +31,28 @@ export class GoogleTokenError extends Error {
     readonly status: number,
     readonly retryAfter?: string,
     readonly quota = false,
+    detail?: string,
   ) {
     super(
-      `Google sign-in failed (${status}). Reconnect in Day Planner settings.`,
+      detail ??
+        `Google sign-in failed (${status}). Reconnect in Day Planner settings.`,
     );
   }
+}
+
+function tokenErrorDetail(body: unknown): string | undefined {
+  if (!body || typeof body !== "object" || !("error" in body)) return;
+  if (
+    body.error === "invalid_request" &&
+    "error_description" in body &&
+    typeof body.error_description === "string" &&
+    /client_secret.*missing/i.test(body.error_description)
+  )
+    return "Google OAuth client secret is missing. Restore it under Advanced Google connection in Day Planner settings, then sign in again.";
+  if (body.error === "invalid_client")
+    return "Google rejected the OAuth client details. Check the client ID and saved client secret under Advanced Google connection in Day Planner settings.";
+  if (body.error === "invalid_grant")
+    return "Google authorization expired or was revoked. Use Sign in with Google to reconnect.";
 }
 
 export async function googleTokenRequest(
@@ -48,21 +65,22 @@ export async function googleTokenRequest(
     body: new URLSearchParams(params).toString(),
     throw: false,
   });
-  if (response.status !== 200)
+  if (response.status !== 200) {
+    let body: unknown;
+    try {
+      body = response.json;
+    } catch {
+      // A proxy or network error may return a non-JSON response.
+    }
     throw new GoogleTokenError(
       response.status,
       Object.entries(response.headers).find(
         ([name]) => name.toLowerCase() === "retry-after",
       )?.[1],
-      response.status === 403 &&
-        (() => {
-          try {
-            return googleQuotaError(response.json);
-          } catch {
-            return false;
-          }
-        })(),
+      response.status === 403 && googleQuotaError(body),
+      tokenErrorDetail(body),
     );
+  }
   return response.json as Tokens;
 }
 
@@ -88,7 +106,7 @@ export class GoogleCalendarAuth {
   }
 
   setClientSecret(secret: string) {
-    this.storage().setSecret(`${this.key}-client`, secret);
+    this.storage().setSecret(`${this.key}-client`, secret.trim());
   }
 
   isConnected() {

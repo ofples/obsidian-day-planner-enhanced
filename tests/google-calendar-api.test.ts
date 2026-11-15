@@ -10,7 +10,10 @@ vi.mock("obsidian", async () => ({
 }));
 
 import { GoogleCalendarApi } from "../src/google-calendar/api";
-import { GoogleCalendarAuth } from "../src/google-calendar/auth";
+import {
+  GoogleCalendarAuth,
+  googleTokenRequest,
+} from "../src/google-calendar/auth";
 import { isTodoistCalendarExport } from "../src/google-calendar/exporter";
 import { renderSubtasks, withSubtasks } from "../src/google-calendar/subtasks";
 import type { GoogleEvent, LocalBlock } from "../src/google-calendar/types";
@@ -513,6 +516,52 @@ describe("Google OAuth", () => {
     } as unknown as App;
     return { secrets, auth: new GoogleCalendarAuth(app, "test-key") };
   };
+  test.each([
+    [
+      {
+        error: "invalid_request",
+        error_description: "client_secret is missing.",
+      },
+      "Google OAuth client secret is missing",
+    ],
+    [{ error: "invalid_client" }, "Google rejected the OAuth client details"],
+    [{ error: "invalid_grant" }, "Google authorization expired or was revoked"],
+  ])(
+    "explains a recoverable Google token failure %j",
+    async (body, message) => {
+      vi.mocked(requestUrl).mockResolvedValue(response(400, body));
+      await expect(googleTokenRequest({})).rejects.toThrow(message);
+      expect(requestUrl).toHaveBeenCalledOnce();
+    },
+  );
+  test("unrecognized provider text stays out of sign-in errors", async () => {
+    vi.mocked(requestUrl).mockResolvedValue(
+      response(400, {
+        error: "unknown",
+        error_description: "private-provider-response",
+      }),
+    );
+    await expect(googleTokenRequest({})).rejects.toThrow(
+      "Google sign-in failed (400). Reconnect in Day Planner settings.",
+    );
+  });
+  test("non-JSON errors retain the HTTP status", async () => {
+    vi.mocked(requestUrl).mockResolvedValue({
+      ...response(502),
+      get json() {
+        throw new Error("Not JSON");
+      },
+    });
+    await expect(googleTokenRequest({})).rejects.toMatchObject({ status: 502 });
+  });
+  test("sign-out retains normalized app configuration for signing in again", () => {
+    const { auth, secrets } = setup();
+    auth.setClientSecret("  test-client-secret\n");
+    secrets.set("test-key-refresh", "test-refresh-token");
+    auth.disconnect();
+    expect(secrets.get("test-key-client")).toBe("test-client-secret");
+    expect(secrets.get("test-key-refresh")).toBe("");
+  });
   test("refreshes coalesce and tokens stay in SecretStorage", async () => {
     const { auth, secrets } = setup();
     secrets.set("test-key-refresh", "test-refresh-token");
