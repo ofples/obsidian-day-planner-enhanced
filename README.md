@@ -1,27 +1,25 @@
 # Day Planner Enhanced
 
-This development fork adds **Google Calendar two-way sync for daily-note time blocks**. See [setup, behavior and verification status](GOOGLE-CALENDAR.md). The sync is optional and automatic synchronization is off by default. Upstream project: [jagaldol/obsidian-day-planner-enhanced](https://github.com/jagaldol/obsidian-day-planner-enhanced).
+This fork adds Google Calendar two-way sync, a Tasks pane for Todoist and note tasks, tagged frames, schedule locks and PNG/PDF sharing. The 0.9.0 preview includes the Google Desktop app configuration. Sign in through Connections and choose the calendars to display and synchronize.
+
+[Download this fork](https://github.com/ofples/obsidian-day-planner-enhanced/releases) · [Google Calendar setup](GOOGLE-CALENDAR.md) · [Tasks guide](docs/task-pane/README.md) · [Privacy notice](PRIVACY.md)
 
 ### Share a schedule
 
-Open the timeline's **More options** menu (or the pane menu in a regular tab) and choose **Export schedule as PNG…**. Preview the selected day, choose whether to include subtasks, then click **Save PNG**. The image is saved in the vault's `Schedule Exports` folder and opened in a tab. Existing exports are kept with numbered filenames.
+Choose **Export schedule…** from the planner menu. Select PNG or PDF, a timeline or compact overview, and whether to include subtasks, all-day events and other calendars. PNG images are saved in the vault's `Schedule Exports` folder. Desktop PDF export opens a save dialog.
 
-The export uses a light background, date heading, time ranges and cards that expand to fit their text. It includes the selected day's displayed local and internet-calendar entries; nested items appear once, with checkbox state and indentation. Hidden task statuses remain hidden. Markdown links use their display labels, and tracking comments/block IDs are excluded. It does not fetch or embed attachment images. Very large schedules report an image-size limit instead of silently clipping content.
-
-Short timeline blocks automatically show subtasks inline when the nested list would be clipped, with the full list available on hover. Roomier blocks retain their nested lists. Checkbox source lines and note content are unchanged.
-
-Sharing changes were checked with component/unit tests and a headless Chromium harness, including a real 2160 × 2164 PNG, inline checkbox clicks, font changes and returning to the stacked layout. Installed Obsidian and mobile acceptance remain pending.
+Subtasks appear as a nested list inside their parent block. A subtask-count button opens the complete nested editor when space is limited.
 
 **Readable nested schedules for Obsidian.**
 
 Day Planner Enhanced is an [Obsidian](https://obsidian.md/) community plugin for people who plan in nested Markdown lists. Child items stay readable inside their parent block instead of appearing again as separate Timeline or All Day entries.
 
 [![Obsidian community plugin](https://img.shields.io/badge/Obsidian-Community%20plugin-7c3aed?logo=obsidian&logoColor=white)](https://obsidian.md/plugins?id=day-planner-enhanced)
-[![Latest release](https://img.shields.io/github/v/release/jagaldol/obsidian-day-planner-enhanced)](https://github.com/jagaldol/obsidian-day-planner-enhanced/releases/latest)
+[![Latest release](https://img.shields.io/github/v/release/ofples/obsidian-day-planner-enhanced?include_prereleases)](https://github.com/ofples/obsidian-day-planner-enhanced/releases)
 [![GitHub stars](https://img.shields.io/github/stars/jagaldol/obsidian-day-planner-enhanced?style=flat)](https://github.com/jagaldol/obsidian-day-planner-enhanced)
 [![License: MIT](https://img.shields.io/github/license/jagaldol/obsidian-day-planner-enhanced)](./LICENSE)
 
-[Install from Obsidian](https://obsidian.md/plugins?id=day-planner-enhanced) · [Latest release](https://github.com/jagaldol/obsidian-day-planner-enhanced/releases/latest) · [Changelog](./CHANGELOG.md) · [Report an issue](https://github.com/jagaldol/obsidian-day-planner-enhanced/issues)
+[Install this fork](https://github.com/ofples/obsidian-day-planner-enhanced/releases) · [Latest release](https://github.com/ofples/obsidian-day-planner-enhanced/releases) · [Changelog](./CHANGELOG.md) · [Report an issue](https://github.com/ofples/obsidian-day-planner-enhanced/issues)
 
 <img src="./assets/social-preview.png" alt="Day Planner Enhanced with readable nested schedules in a narrow Obsidian timeline sidebar" width="100%">
 
@@ -105,43 +103,19 @@ Plans that cross midnight stay anchored to the day where they start while still 
 
 ## Installation
 
-Day Planner Enhanced is listed in Obsidian's community plugin directory. [Open its official plugin page](https://obsidian.md/plugins?id=day-planner-enhanced), or install it from Obsidian's built-in community plugin browser.
+Download the preview from [this fork's releases](https://github.com/ofples/obsidian-day-planner-enhanced/releases). Core planning supports Obsidian 1.11.0 or later. Google and Todoist sign-in require desktop Obsidian 1.11.4 or later.
 
-Day Planner Enhanced requires Obsidian 1.11.0 or newer.
+1. Download `day-planner-enhanced-0.9.0.zip` from the release.
+2. Extract the included `day-planner-enhanced` folder into `<vault>/.obsidian/plugins/`.
+3. Restart Obsidian and enable **Day Planner Enhanced** under **Settings → Community plugins**.
+4. Enable Obsidian's **Daily notes** core plugin, or configure Periodic Notes, then open **Show Timeline** or **Show tasks** from the command palette.
+5. Open **Connections** to sign in to Google or Todoist. Choose a dedicated target calendar before enabling schedule sync.
 
-Before installing, disable the original Day Planner plugin if it is already enabled in the same vault. This fork has its own plugin identity, but it still shares some Day Planner concepts, commands, and view behavior from the upstream codebase.
+When replacing an existing installation, keep a backup of its plugin folder and replace only `main.js`, `styles.css` and `manifest.json`. The ZIP contains those three files. Account settings and plugin data remain in their existing files.
 
-### Install from Obsidian
+Google can show an unverified-app notice for this personal preview. Custom Google projects are available through **Developer options → Use your own Google app**. Ordinary sign-in uses the packaged registration.
 
-This is the recommended way to install and update the plugin.
-
-1. Open **Settings → Community plugins** in Obsidian.
-2. Select **Browse**.
-3. Search for `Day Planner Enhanced`.
-4. Install and enable the plugin.
-
-### Manual installation fallback
-
-1. Open the [latest release](https://github.com/jagaldol/obsidian-day-planner-enhanced/releases/latest).
-2. Download these release assets:
-   - `main.js`
-   - `manifest.json`
-   - `styles.css`
-3. Create the plugin folder in your vault:
-
-   ```text
-   <vault>/.obsidian/plugins/day-planner-enhanced/
-   ```
-
-4. Put `main.js`, `manifest.json`, and `styles.css` directly inside that folder.
-5. Restart or reload Obsidian.
-6. Enable `Day Planner Enhanced` in Obsidian's community plugin settings.
-
-### Updating
-
-- If you installed from Obsidian's community plugin browser, update through Obsidian's community plugin settings.
-- If you installed manually, download the latest release assets and replace the existing files in the plugin folder.
-- Restart or reload Obsidian after replacing plugin files.
+The three standard plugin files are also attached individually for manual installation and plugin managers. Updates for this fork are published on its release page. The [upstream Enhanced project](https://github.com/jagaldol/obsidian-day-planner-enhanced) maintains its community-plugin listing.
 
 ## How to use
 

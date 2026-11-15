@@ -4,6 +4,19 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.9.0
+
+### Preview release
+
+- Added Google Calendar two-way schedule sync with bundled desktop sign-in, configurable calendar display, private tag metadata and conflict review.
+- Added the Tasks pane with Todoist and note sources, task buckets, completion controls and best-effort Markdown task links.
+- Added task descriptions, frame labels, lock controls, subtask drops, swap previews and occupied-time insertion.
+- Added one-to-seven-day planner views and next-slot insertion when pressing Enter on a timed Markdown task.
+- Added PNG and desktop PDF exports with timeline and compact overview layouts and visibility options.
+- Unified inserted indentation with the destination note and streamlined connection settings.
+
+Desktop Obsidian 1.11.4 or later is required for account sign-in. Google can show an unverified-app notice for the personal-use registration. The full source suite has 1,544 passing tests and one inherited inclusive-last-day ICS timeout. Experimental Todoist ownership sync is available behind its setting. This preview uses best-effort task links by default.
+
 ## 0.8.0
 
 ### ✨ New features

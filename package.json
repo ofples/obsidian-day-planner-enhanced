@@ -1,6 +1,6 @@
 {
   "name": "obsidian-day-planner-enhanced",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "A day planner with an enhanced timeline UI and readable nested schedules. Based on Day Planner 0.35.1.",
   "main": "main.js",
   "scripts": {
@@ -20,12 +20,12 @@
   "author": "jagaldol",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jagaldol/obsidian-day-planner-enhanced.git"
+    "url": "https://github.com/ofples/obsidian-day-planner-enhanced.git"
   },
   "bugs": {
-    "url": "https://github.com/jagaldol/obsidian-day-planner-enhanced/issues"
+    "url": "https://github.com/ofples/obsidian-day-planner-enhanced/issues"
   },
-  "homepage": "https://github.com/jagaldol/obsidian-day-planner-enhanced",
+  "homepage": "https://github.com/ofples/obsidian-day-planner-enhanced",
   "license": "MIT",
   "devDependencies": {
     "@commitlint/cli": "^21.2.3",
