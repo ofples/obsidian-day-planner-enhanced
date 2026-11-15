@@ -174,3 +174,78 @@ describe("task snapshot lifecycle", () => {
     expect(h.read).toHaveBeenCalledTimes(calls);
   });
 });
+
+test("capture obtains write access independently of link sync", async () => {
+  let disk: string | null = null,
+    registry: string | null = null,
+    secret: string | null = null;
+  const storage = {
+    read: async () => disk,
+    write: async (value: string) => {
+      disk = value;
+    },
+    readState: async () => registry,
+    writeState: async (value: string) => {
+      registry = value;
+    },
+    getSecret: () => secret,
+    setSecret: (_key: string, value: string) => {
+      secret = value;
+    },
+  };
+  const task = {
+    id: "created",
+    title: "Task",
+    description: "",
+    projectId: "p",
+    parentId: null,
+    labels: [],
+    priority: 1,
+    completed: false,
+    order: 0,
+    due: null,
+  };
+  const auth = vi.fn(async (_write: boolean) => "token");
+  const provider = {
+    read: async () => snapshot,
+    apply: async () => ({ taskId: "created" }),
+    get: async () => task,
+  };
+  const service = new TaskService(
+    storage,
+    () => provider,
+    () => false,
+    auth,
+    undefined,
+    undefined,
+    () => false,
+    () => true,
+  );
+  await service.initialize();
+  await service.signIn();
+  expect(auth).toHaveBeenCalledWith(true);
+  const operation = {
+    id: crypto.randomUUID(),
+    tempId: crypto.randomUUID(),
+    provider: "todoist",
+    accountId: "one",
+    mutation: {
+      kind: "create" as const,
+      task: {
+        title: "Task",
+        description: "",
+        projectId: "p",
+        parentId: null,
+        labels: [],
+        priority: 1,
+        due: null,
+      },
+    },
+    base: null,
+    status: "pending" as const,
+    createdAt: new Date().toISOString(),
+    attempts: 0,
+  };
+  expect(await service.createWeak(operation)).toEqual(task);
+  service.stop();
+});

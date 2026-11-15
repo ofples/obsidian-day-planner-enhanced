@@ -350,7 +350,9 @@ async function harness() {
   let service = new TaskService(storage, provider, () => linkedSync);
   await service.initialize();
   await service.connect("token");
+  const warn = vi.fn();
   const host = {
+    warn,
     read: async (path: string) => texts.get(path) ?? null,
     flush: async () => {},
     settings: () => taskCaptureSettingsSchema.parse({}),
@@ -412,6 +414,7 @@ async function harness() {
       return calendarState;
     },
     texts,
+    warn,
     file,
     events,
     tasks,
@@ -2389,6 +2392,24 @@ describe("linked task scheduling", () => {
       after.indexOf("- [ ] Work"),
     );
     expect(after).toContain("- [ ] Child");
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
+    h.service.stop();
+  });
+
+  test("frames allow the drop with a warning when labels differ", async () => {
+    const h = await harness();
+    h.setLinkedSync(false);
+    const path = "Daily/2026-11-12.md";
+    h.file(path);
+    h.texts.set(path, "# Day planner\n- 09:00 - 09:30 Admin #frame #karma\n");
+    await h.scheduler.nestFromPane(root.id, {
+      path,
+      line: 1,
+      text: "09:00 - 09:30 Admin #frame #karma",
+    });
+    expect(h.texts.get(path)).toContain("Work");
+    expect(h.warn).toHaveBeenCalledWith(expect.stringContaining("#karma"));
     expect(h.apply).not.toHaveBeenCalled();
     h.scheduler.stop();
     h.service.stop();

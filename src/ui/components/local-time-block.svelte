@@ -2,8 +2,10 @@
   /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
   import { Lock } from "lucide-svelte";
   import type { Snippet } from "svelte";
+  import { get } from "svelte/store";
 
   import { getObsidianContext } from "../../context/obsidian-context";
+  import { frameState } from "../../tasks/frame";
   import type { LocalTimeBlock } from "../../time-block-types";
   import { containsLockedTask, isLocked } from "../../util/task-lock";
   import { hoverPreview } from "../actions/hover-preview";
@@ -33,6 +35,7 @@
     onpointerup?: (event: PointerEvent) => void;
   } = $props();
   const context = getObsidianContext();
+  const frame = $derived(frameState(timeBlock));
   const locked = $derived(
     timeBlock.source !== "frontmatterLog" && isLocked(timeBlock),
   );
@@ -53,6 +56,8 @@
     const start = (event: DragEvent) => {
       if (
         !current ||
+        (context.editContext?.editOperation &&
+          get(context.editContext.editOperation)) ||
         !context.noteTaskDrag ||
         (current.source !== "dailyNoteDate" &&
           current.source !== "tasksPluginProp") ||
@@ -94,8 +99,12 @@
     ? "color-mix(in srgb, var(--color-accent) 8%, var(--background-primary))"
     : ""}
   --time-block-box-shadow={isActive ? "none" : ""}
-  --time-block-outline-color={isActive ? "var(--color-accent)" : ""}
-  --time-block-outline-width={isActive ? "2px" : ""}
+  --time-block-outline-color={isActive
+    ? "var(--color-accent)"
+    : frame.warning
+      ? "var(--color-orange)"
+      : ""}
+  --time-block-outline-width={isActive ? "2px" : frame.warning ? "1px" : ""}
   --time-block-strip-color={isActive ? "var(--color-accent)" : ""}
   --time-block-z-index={isActive ? "2" : ""}
   {allDayColor}
@@ -105,6 +114,16 @@
   {timeBlock}
   use={[...use, hoverPreview(timeBlock), [noteDrag, timeBlock]]}
 >
+  {#if frame.warning}
+    <span
+      class="frame-status"
+      class:empty-frame={frame.empty}
+      aria-label={frame.warning}
+      role="status"
+      title={frame.warning}
+      >{frame.empty ? "Needs tasks" : "Label mismatch"}</span
+    >
+  {/if}
   {#if locked}
     <span
       class="task-lock-badge"
@@ -123,6 +142,28 @@
 <!-- eslint-enable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Re-enable scorecard compatibility suppressions after this file. -->
 
 <style>
+  .frame-status {
+    pointer-events: none;
+
+    position: absolute;
+    z-index: 3;
+    right: 4px;
+    bottom: 3px;
+
+    padding: 0 4px;
+
+    font-size: 10px;
+    color: var(--color-orange);
+
+    background: var(--background-primary);
+    border-radius: 3px;
+  }
+
+  .empty-frame {
+    padding: 1px 5px;
+    border: 1px solid color-mix(in srgb, var(--color-orange) 55%, transparent);
+  }
+
   .task-lock-badge {
     pointer-events: none;
 

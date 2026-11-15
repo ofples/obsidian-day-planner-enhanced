@@ -1,4 +1,4 @@
-import { MarkdownView, type Plugin } from "obsidian";
+import { MarkdownView, Notice, type Plugin } from "obsidian";
 import { get, type Writable } from "svelte/store";
 
 import type { GoogleCalendarSync } from "../google-calendar/service";
@@ -29,6 +29,9 @@ export function createTaskScheduler(
       }
     },
     settings: () => get(settings).taskCapture,
+    warn: (message) => {
+      new Notice(message);
+    },
     linkedSync: () => get(settings).experimentalTodoistSync === true,
     readImports: async () => {
       const path = `${plugin.manifest.dir}/task-imports.json`;

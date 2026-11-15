@@ -100,6 +100,7 @@ export interface DayPlannerSettings {
   taskStatusOnCreation: string;
   eventFormatOnCreation: (typeof eventFormats)[number];
   sortTasksInPlanAfterEdit: boolean;
+  nextTaskSlotOnEnter: boolean;
   firstDayOfWeek: (typeof firstDaysOfWeek)[number];
   multiDayRange: "full-week" | "work-week" | "3-days";
   timelineColumns: TimelineColumns;
@@ -159,6 +160,7 @@ export const defaultSettings: DayPlannerSettings = {
   taskStatusOnCreation: " ",
   eventFormatOnCreation: "task",
   sortTasksInPlanAfterEdit: false,
+  nextTaskSlotOnEnter: true,
   firstDayOfWeek: "monday",
   multiDayRange: "3-days",
   enableTimeTracker: true,

@@ -78,6 +78,7 @@
     settingsStore,
     editContext: {
       confirmEdit,
+      cancelEdit,
       handlers: { handleContainerMouseDown },
       getDisplayedTimeBlocksForTimeline,
       editOperation,
@@ -484,6 +485,15 @@
   });
 </script>
 
+<svelte:window
+  onkeydown={(event) => {
+    if (event.key === "Escape" && get(editOperation)) {
+      event.preventDefault();
+      cancelEdit();
+    }
+  }}
+/>
+
 <div class={["timeline", isInSidebar && "is-in-sidebar"]}>
   {#if $isToday(day)}
     <Needle {autoScrollBlocked} showMarker={showNeedleMarker} />
@@ -516,6 +526,18 @@
         use:timelineGestures
         use:updateDragPointerOnAutoScroll
       >
+        <div
+          class="timeline-create-lane"
+          class:inactive={Boolean($draggedTask || $editOperation)}
+          aria-label="Add task at this time"
+          onpointerdown={(event) => {
+            if (event.button !== 0 || isTouchEvent(event)) return;
+            event.stopPropagation();
+            handleContainerPointerDown(event);
+          }}
+          role="presentation"
+          title="Add task at this time"
+        ></div>
         {#if taskDropPreview}<div
             style:top="{(getMinutesSinceMidnight(taskDropPreview.start) -
               $settingsStore.startHour * 60) *
@@ -620,6 +642,20 @@
 <!-- eslint-enable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Re-enable scorecard compatibility suppressions after this file. -->
 
 <style>
+  .timeline-create-lane {
+    cursor: crosshair;
+
+    position: absolute;
+    z-index: 30;
+    inset: 0 auto 0 0;
+
+    width: 12px;
+  }
+
+  .timeline-create-lane.inactive {
+    pointer-events: none;
+  }
+
   .task-subtask-drop-target {
     cursor: copy;
 

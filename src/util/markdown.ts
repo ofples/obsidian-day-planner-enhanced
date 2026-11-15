@@ -10,7 +10,88 @@ import {
 import type { DayPlannerSettings } from "../settings";
 import type { ListItemTokens } from "../time-block-types";
 
-const baseIndentation = "\t";
+export const defaultIndentation = "  ";
+
+/** Infer a nesting step from existing list lines; never rewrite the note itself. */
+export function detectIndentation(text: string): string {
+  const stack: string[] = [];
+  const masked = text
+    .replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "")
+    .replace(/%%[\s\S]*?(?:%%|$)|<!--[\s\S]*?(?:-->|$)/g, (value) =>
+      value.replace(/[^\r\n]/g, " "),
+    );
+  let fence: { character: string; length: number } | undefined;
+  for (const line of masked.split(/\r?\n/)) {
+    const marker = line.match(/^[ \t]*(`{3,}|~{3,})/);
+    if (marker) {
+      const run = marker[1]!;
+      if (!fence) fence = { character: run[0]!, length: run.length };
+      else if (
+        run[0] === fence.character &&
+        run.length >= fence.length &&
+        line.slice(marker[0].length).trim() === ""
+      )
+        fence = undefined;
+      continue;
+    }
+    if (fence) continue;
+    const match = line.match(/^([ \t]*)(?:[-*+]|\d+[.)])[ \t]+/);
+    if (!match) continue;
+    const current = match[1]!;
+    while (stack.length && !current.startsWith(stack[stack.length - 1]!))
+      stack.pop();
+    if (stack.length && current.length > stack[stack.length - 1]!.length) {
+      const step = current.slice(stack[stack.length - 1]!.length);
+      if (/^(?: +|\t+)$/.test(step)) return step;
+    }
+    if (!stack.length || stack[stack.length - 1] !== current)
+      stack.push(current);
+  }
+  return defaultIndentation;
+}
+
+/** Translate whole indentation levels, leaving any partial continuation untouched. */
+export function translateIndentation(
+  indent: string,
+  source: string,
+  target: string,
+) {
+  if (!source || source === target) return indent;
+  let result = "";
+  let remaining = indent;
+  while (remaining.startsWith(source)) {
+    result += target;
+    remaining = remaining.slice(source.length);
+  }
+  return result + remaining;
+}
+
+/** Compare nested list text independent of its existing indentation convention. */
+export function normalizeListIndentation(text: string) {
+  const source = detectIndentation(text);
+  let fence: { character: string; length: number } | undefined;
+  return text
+    .split(/\r?\n/)
+    .map((line) => {
+      const marker = line.match(/^[ \t]*(`{3,}|~{3,})/);
+      if (fence && !marker) return line;
+      if (marker) {
+        const run = marker[1]!;
+        if (!fence) fence = { character: run[0]!, length: run.length };
+        else if (
+          run[0] === fence.character &&
+          run.length >= fence.length &&
+          line.slice(marker[0].length).trim() === ""
+        )
+          fence = undefined;
+        else return line;
+      }
+      return line.replace(/^[ \t]+/, (indentation) =>
+        translateIndentation(indentation, source, defaultIndentation),
+      );
+    })
+    .join("\n");
+}
 
 export function toggleCheckbox(line: string) {
   if (line.includes("[ ]")) {
@@ -74,7 +155,7 @@ export function removeListTokens(text: string) {
 
 // todo: account for user settings
 export function createIndentation(level: number) {
-  return baseIndentation.repeat(level);
+  return defaultIndentation.repeat(level);
 }
 
 export function checkbox(status: string) {

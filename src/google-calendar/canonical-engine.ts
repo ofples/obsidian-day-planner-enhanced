@@ -1,3 +1,5 @@
+import { normalizeListIndentation } from "../util/markdown";
+
 import {
   exportId,
   importUid,
@@ -32,6 +34,8 @@ function value(snapshot: CalendarSnapshot, field: Field) {
   if (field === "time")
     return [Date.parse(snapshot.start), Date.parse(snapshot.end)];
   if (field === "tags") return snapshot.tags ?? [];
+  if (field === "subtasks")
+    return normalizeListIndentation(snapshot.subtasks ?? "");
   if (field === "colorId") return snapshot.colorId ?? null;
   return snapshot[field] ?? "";
 }

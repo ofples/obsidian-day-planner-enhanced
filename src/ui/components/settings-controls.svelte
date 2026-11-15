@@ -135,6 +135,19 @@
         ),
       );
 
+    new SettingGroup(el).setHeading("Editing").addSetting((setting) =>
+      setting
+        .setName("Next time slot on Enter")
+        .setDesc(
+          "Selects the next time range for quick acceptance or deletion.",
+        )
+        .addToggle((toggle) =>
+          toggle.setValue($settings.nextTaskSlotOnEnter).onChange((value) => {
+            $settings = { ...$settings, nextTaskSlotOnEnter: value };
+          }),
+        ),
+    );
+
     new SettingGroup(el)
       .setHeading("Timeline")
       .addSetting((setting) =>

@@ -28,6 +28,7 @@ import {
   getTextFromUser,
 } from "./create-update-handler";
 import { createDumpMetadataCommand } from "./dump-metadata";
+import { registerNextTaskSlot } from "./feature/next-task-slot";
 import { VaultIndexAdapter } from "./feature/vault-index-adapter";
 import { currentTime } from "./global-store/current-time";
 import { settingsSignal, settingsStore } from "./global-store/settings";
@@ -107,6 +108,7 @@ import {
 import { createTaskScheduler } from "./tasks/schedule-obsidian";
 import { taskOccurrenceKey } from "./tasks/schedule-types";
 import type { TaskService } from "./tasks/service";
+import { createWeakTaskCapture } from "./tasks/weak-capture-obsidian";
 import { createWeakTaskSync } from "./tasks/weak-sync-obsidian";
 import { createGetTasksApi } from "./tasks-plugin";
 import type { EditableTimeBlock, RemoteTimeBlock } from "./time-block-types";
@@ -156,6 +158,7 @@ export default class DayPlanner extends Plugin {
   googleCalendarSync!: GoogleCalendarSync;
   taskService!: TaskService;
   taskCapture!: TaskCapture;
+  private weakTaskCapture?: ReturnType<typeof createWeakTaskCapture>;
   taskScheduler?: TaskScheduler;
   taskReconciler?: TaskReconciler;
   taskDeleter?: TaskDeletionController;
@@ -300,10 +303,12 @@ export default class DayPlanner extends Plugin {
     });
 
     this.initSettingsStore({ initialSettings, dispatch });
+    registerNextTaskSlot(this, () => this.getSettings());
     this.taskService = createTaskService(
       this,
       () => this.getSettings().experimentalTodoistSync === true,
       () => this.getSettings().weakTodoistSync !== false,
+      () => this.getSettings().taskCapture.enabled,
     );
     let tasksReady = false;
     try {
@@ -342,6 +347,13 @@ export default class DayPlanner extends Plugin {
         this.settingsStore,
         this.transactionWriter,
       );
+      this.weakTaskCapture = createWeakTaskCapture(
+        this,
+        this.taskService,
+        store,
+        this.settingsStore,
+        this.transactionWriter,
+      );
       registerTaskCalendarDisplay(
         this,
         this.taskService,
@@ -367,7 +379,10 @@ export default class DayPlanner extends Plugin {
       this.addCommand({
         id: "capture-todoist-tasks",
         name: "Capture tagged Todoist tasks",
-        callback: () => this.taskCapture.scan(),
+        callback: () =>
+          this.getSettings().experimentalTodoistSync
+            ? this.taskCapture.scan()
+            : this.weakTaskCapture?.scan(true),
       });
       this.registerEvent(
         this.app.workspace.on("editor-menu", (menu, editor, view) => {
@@ -1229,6 +1244,8 @@ export default class DayPlanner extends Plugin {
           if (this.getSettings().experimentalTodoistSync)
             await this.taskCapture.scan();
           await this.taskService.refresh(true);
+          if (!this.getSettings().experimentalTodoistSync)
+            await this.weakTaskCapture?.scan(true);
           await this.taskDeleter?.resume();
           await this.taskScheduler?.resume();
           await this.taskReconciler?.scan();
@@ -1355,6 +1372,31 @@ export default class DayPlanner extends Plugin {
       editLine,
       deleteTimeBlock,
       workspaceFacade: this.workspaceFacade,
+      showPlannerDays: async (count, day, origin) => {
+        if (!Number.isInteger(count) || count < 1 || count > 7) return;
+        let target: WorkspaceLeaf | undefined;
+        this.app.workspace.iterateAllLeaves((leaf) => {
+          if (leaf.view.containerEl.contains(origin)) target = leaf;
+        });
+        if (!target) return;
+        const previousScroll =
+          target.view.containerEl.querySelector<HTMLElement>(
+            ".planner-timeline-scroller, .planner-multi-day-scroller",
+          )?.scrollTop;
+        await target.setViewState({
+          type: count === 1 ? viewTypeTimeline : viewTypeMultiDay,
+          active: true,
+          state: {
+            day: day.format("YYYY-MM-DD"),
+            ...(count > 1 ? { days: count } : {}),
+          },
+        });
+        const scroller = target.view.containerEl.querySelector<HTMLElement>(
+          ".planner-timeline-scroller, .planner-multi-day-scroller",
+        );
+        if (scroller && previousScroll !== undefined)
+          scroller.scrollTop = previousScroll;
+      },
       initWeeklyView: this.initWeeklyLeaf,
       renderMarkdown: createRenderMarkdown(this.app),
       toggleCheckboxInFile: this.vaultFacade.toggleCheckboxInFile,

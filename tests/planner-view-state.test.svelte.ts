@@ -141,6 +141,24 @@ async function close(view: MultiDayViewType | TimelineViewType) {
 }
 
 describe("planner view date state", () => {
+  test("restores a per-pane day count while retaining the selected date", async () => {
+    const h = setup();
+    const view = h.multi();
+    await view.setState({ day: "2026-07-15", days: 2 }, result);
+    await view.onOpen();
+    flushSync();
+    expect(range(view).current.map((day) => day.format("YYYY-MM-DD"))).toEqual([
+      "2026-07-15",
+      "2026-07-16",
+    ]);
+    expect(view.getState()).toEqual({ day: "2026-07-15", days: 2 });
+    await close(view);
+    await view.onOpen();
+    flushSync();
+    expect(range(view).current).toHaveLength(2);
+    await close(view);
+  });
+
   test.each(["multi", "timeline"] as const)(
     "%s restores state before and after opening, tracks navigation, and cleans up",
     async (kind) => {
@@ -261,4 +279,3 @@ describe("planner view date state", () => {
     expect(getSavedViewDay({ day: "2023-02-29" })).toBeUndefined();
   });
 });
-

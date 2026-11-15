@@ -30,6 +30,7 @@
     GripHorizontal,
     TableColumnsSplit,
   } from "../lucide";
+  import PlannerDayCount from "../planner-day-count.svelte";
   import Ruler from "../ruler.svelte";
   import Scroller from "../scroller.svelte";
   import Timeline from "../timeline.svelte";
@@ -225,6 +226,7 @@
     </Scroller>
 
     <div class="controls-sidebar">
+      <PlannerDayCount />
       <ControlButton label="Settings" onclick={openTimelineSettingsModal}>
         <Settings />
       </ControlButton>
@@ -249,11 +251,17 @@
       <ControlButton
         label="Show current period"
         onclick={() => {
+          const today = window.moment().startOf("day");
+          const preset = r.createRange(
+            $settingsStore.multiDayRange,
+            $settingsStore.firstDayOfWeek,
+            today,
+          );
           dateRange.set(
-            r.createRange(
-              $settingsStore.multiDayRange,
-              $settingsStore.firstDayOfWeek,
-            ),
+            preset.length === dateRange.current.length &&
+              preset[0]!.isoWeekday() === dateRange.first.isoWeekday()
+              ? preset
+              : r.getUpcomingDays(today, dateRange.current.length),
           );
         }}
       >
@@ -264,7 +272,9 @@
         label="Show next period"
         onclick={() => {
           dateRange.update(
-            $settingsStore.multiDayRange === "work-week"
+            $settingsStore.multiDayRange === "work-week" &&
+              dateRange.current.length === 5 &&
+              dateRange.first.isoWeekday() === 1
               ? () => getNextWorkWeek(dateRange.first)
               : getNextAdjacentRange,
           );
@@ -277,7 +287,9 @@
         label="Show previous period"
         onclick={() => {
           dateRange.update(
-            $settingsStore.multiDayRange === "work-week"
+            $settingsStore.multiDayRange === "work-week" &&
+              dateRange.current.length === 5 &&
+              dateRange.first.isoWeekday() === 1
               ? () => getPreviousWorkWeek(dateRange.first)
               : getPreviousAdjacentRange,
           );

@@ -339,6 +339,17 @@ body:has(.modal.day-planner-nested-items-modal) .popover.hover-popover {
     height: auto;
     border: 1px solid var(--background-modifier-border);
     border-radius: 8px;
+
+    &[hidden] {
+      display: none;
+    }
+  }
+
+  iframe.planner-export-preview {
+    width: 703px;
+    max-width: none;
+    height: 70vh;
+    background: #fff;
   }
 
   .planner-export-buttons {

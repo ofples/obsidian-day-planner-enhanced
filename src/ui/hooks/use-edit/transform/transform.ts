@@ -58,6 +58,55 @@ export function transform(
   pointerDateTime: PointerDateTime,
 ) {
   if (isLocked(operation.timeBlock)) return baseline;
+  if (operation.mode === EditMode.SWAP) {
+    const source = baseline.find(
+      (block) => block.id === operation.timeBlock.id,
+    );
+    if (
+      !source ||
+      containsLockedTask(source) ||
+      source.isAllDayEvent ||
+      pointerDateTime.type !== "dateTime" ||
+      (source.source !== "dailyNoteDate" && source.source !== "tasksPluginProp")
+    )
+      return baseline;
+    const time = pointerDateTime.dateTime.valueOf();
+    if (
+      time >= source.startTime.valueOf() &&
+      time < t.getEndTime(source).valueOf()
+    )
+      return baseline;
+    const candidates = baseline.filter(
+      (block) =>
+        block.id !== source.id &&
+        !block.isAllDayEvent &&
+        (block.source === "dailyNoteDate" ||
+          block.source === "tasksPluginProp") &&
+        time >= block.startTime.valueOf() &&
+        time < t.getEndTime(block).valueOf(),
+    );
+    if (candidates.length !== 1) return baseline;
+    const target = candidates[0]!;
+    if (
+      containsLockedTask(target) ||
+      (target.source !== "dailyNoteDate" && target.source !== "tasksPluginProp")
+    )
+      return baseline;
+    if (
+      source.path === target.path &&
+      source.position.start.offset < target.position.end.offset &&
+      target.position.start.offset < source.position.end.offset
+    )
+      return baseline;
+    if (source.startTime.isSame(target.startTime)) return baseline;
+    return baseline.map((block) =>
+      block.id === source.id
+        ? { ...block, startTime: target.startTime.clone() }
+        : block.id === target.id
+          ? { ...block, startTime: source.startTime.clone() }
+          : block,
+    );
+  }
   const result = baseline.slice();
 
   const isInBaseline = baseline.find(

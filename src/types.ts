@@ -71,6 +71,11 @@ export type PointerDateTime = {
 export type Signal<T> = { current: T };
 
 export interface ObsidianContext {
+  showPlannerDays?: (
+    count: number,
+    day: Moment,
+    origin: HTMLElement,
+  ) => Promise<void>;
   noteTaskDrag?: NoteTaskDrag;
   toggleTaskLock?: (block: EditableTimeBlock) => Promise<void>;
   googleSyncing?: Readable<boolean>;

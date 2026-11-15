@@ -14,7 +14,7 @@ import {
 import type { Moment } from "../../../util/obsidian-moment";
 import { getEndMinutes } from "../../../util/time-block-utils";
 
-import type { EditOperation } from "./types";
+import { EditMode, type EditOperation } from "./types";
 
 export function getDragStartState(
   timeBlock: WithDuration<EditableTimeBlock>,
@@ -66,6 +66,12 @@ export function getDragPointerDateTime(props: {
 }) {
   const { clientY, day, operation, settings, timelineOffsetY } = props;
 
+  if (operation.mode === EditMode.SWAP) {
+    return minutesToMomentOfDay(
+      offsetYToMinutes(timelineOffsetY, settings.zoomLevel, settings.startHour),
+      day,
+    );
+  }
   if (isRelativeDragOperation(operation)) {
     const {
       dragOriginClientY,

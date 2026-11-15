@@ -36,6 +36,7 @@ export function createEditHandlers({
   pointerDateTime,
 }: UseEditHandlersProps) {
   function handleContainerMouseDown() {
+    if (get(editOperation)) return;
     const pointerDay = get(pointerDateTime).dateTime;
 
     // todo: move out this check
@@ -64,7 +65,7 @@ export function createEditHandlers({
     dragOriginClientY?: number,
     dragOriginMinutes?: number,
   ) {
-    if (isLocked(timeBlock)) return;
+    if (isLocked(timeBlock) || get(editOperation)) return;
     const pointerDay = get(pointerDateTime).dateTime;
 
     isNotVoid(pointerDay, "Day cannot be undefined on edit");
@@ -113,7 +114,7 @@ export function createEditHandlers({
   function handleUnscheduledTimeBlockGripMouseDown(
     timeBlock: EditableTimeBlock,
   ) {
-    if (containsLockedTask(timeBlock)) return;
+    if (containsLockedTask(timeBlock) || get(editOperation)) return;
     if (timeBlock.source === "unwritten") {
       throw new Error(
         "Invariant violation: an unwritten time block cannot be unscheduled",

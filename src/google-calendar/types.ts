@@ -1,4 +1,5 @@
 import { stripTaskLink, taskLinkUrl } from "../tasks/weak-links";
+import { normalizeListIndentation } from "../util/markdown";
 
 import {
   readPlainCalendarDescription,
@@ -159,7 +160,8 @@ export function sameCanonicalSnapshot(
     sameSnapshot(a, b) &&
     JSON.stringify(a.tags ?? []) === JSON.stringify(b.tags ?? []) &&
     (a.colorId ?? null) === (b.colorId ?? null) &&
-    (a.subtasks ?? "") === (b.subtasks ?? "") &&
+    normalizeListIndentation(a.subtasks ?? "") ===
+      normalizeListIndentation(b.subtasks ?? "") &&
     (a.description ?? "") === (b.description ?? "") &&
     (a.taskUrl ?? null) === (b.taskUrl ?? null)
   );

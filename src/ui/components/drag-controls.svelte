@@ -4,7 +4,9 @@
     ArrowDownToLine,
     GripVertical,
     Copy,
+    ArrowLeftRight,
   } from "lucide-svelte";
+  import { get } from "svelte/store";
 
   import { getObsidianContext } from "../../context/obsidian-context";
   import type { EditableTimeBlock, WithDuration } from "../../time-block-types";
@@ -25,6 +27,7 @@
   const {
     pointerDateTime,
     editContext: {
+      editOperation,
       handlers: { handleGripMouseDown },
     },
   } = getObsidianContext();
@@ -34,7 +37,7 @@
     dragTask: WithDuration<EditableTimeBlock>,
     mode: EditMode,
   ) {
-    if (dragStarted) {
+    if (dragStarted || get(editOperation)) {
       return;
     }
 
@@ -64,6 +67,10 @@
   function handleCopy(event: MouseEvent | TouchEvent) {
     handleCopyStart(event);
   }
+
+  function endDrag() {
+    dragStarted = false;
+  }
 </script>
 
 <ExpandingControls {isActive} {setIsActive}>
@@ -75,6 +82,7 @@
         createGestures({
           onpanstart: (event) => handleMoveStart(event, EditMode.DRAG),
           onpanmove: (event) => handleMove(event, EditMode.DRAG),
+          onpanend: endDrag,
         }),
       ]}
     >
@@ -82,6 +90,21 @@
     </BlockControlButton>
   {/snippet}
   {#snippet expanded()}
+    {#if !timeBlock.isAllDayEvent}
+      <BlockControlButton
+        cursor="grab"
+        label="Swap blocks"
+        use={[
+          createGestures({
+            onpanstart: (event) => handleMoveStart(event, EditMode.SWAP),
+            onpanmove: (event) => handleMove(event, EditMode.SWAP),
+            onpanend: endDrag,
+          }),
+        ]}
+      >
+        <ArrowLeftRight class="svg-icon" />
+      </BlockControlButton>
+    {/if}
     <BlockControlButton
       cursor="grab"
       label="Copy block"
@@ -89,6 +112,7 @@
         createGestures({
           onpanstart: handleCopyStart,
           onpanmove: handleCopy,
+          onpanend: endDrag,
         }),
       ]}
     >
@@ -105,6 +129,7 @@
               handleMoveStart(event, EditMode.DRAG_AND_SHIFT_OTHERS),
             onpanmove: (event) =>
               handleMove(event, EditMode.DRAG_AND_SHIFT_OTHERS),
+            onpanend: endDrag,
           }),
         ]}
       >
@@ -119,6 +144,7 @@
               handleMoveStart(event, EditMode.DRAG_AND_SHRINK_OTHERS),
             onpanmove: (event) =>
               handleMove(event, EditMode.DRAG_AND_SHRINK_OTHERS),
+            onpanend: endDrag,
           }),
         ]}
       >

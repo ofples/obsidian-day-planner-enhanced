@@ -82,6 +82,7 @@ export class TaskScheduler {
       readImports?(): Promise<string | null>;
       writeImports?(value: string): Promise<void>;
       reveal?(source: TaskSource): Promise<void>;
+      warn?(message: string): void;
     },
   ) {
     this.drag = new TaskDrag(service);

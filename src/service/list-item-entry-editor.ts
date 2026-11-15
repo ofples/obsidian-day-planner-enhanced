@@ -7,6 +7,7 @@ import { isNotVoid } from "typed-assert";
 
 import {
   createMarkdownListTokens,
+  detectIndentation,
   getIndentationForListParagraph,
 } from "../util/markdown";
 import { createLineToChildrenLookup } from "../util/metadata";
@@ -80,8 +81,6 @@ function replaceListItemText(line: string, text: string) {
 
   return prefix + text;
 }
-
-const nestedListItemIndentationStep = "    ";
 
 function getFirstLineAndRest(text: string) {
   const [firstLine = "", ...rest] = text.split("\n");
@@ -182,12 +181,21 @@ export class ListItemEntryEditor {
             }
 
             const parentIndentation = getLineIndentation(parentLine);
-            const childIndentation =
-              parentIndentation + nestedListItemIndentationStep;
+            const existingIndentation = existingChildren[0]
+              ? getLineIndentation(
+                  lines[existingChildren[0].position.start.line] ?? "",
+                )
+              : "";
+            const indentationStep =
+              existingIndentation.startsWith(parentIndentation) &&
+              existingIndentation.length > parentIndentation.length
+                ? existingIndentation.slice(parentIndentation.length)
+                : detectIndentation(contents);
+            const childIndentation = parentIndentation + indentationStep;
             const replacementLines = serializeNestedListItems(
               children,
               childIndentation,
-              nestedListItemIndentationStep,
+              indentationStep,
             );
 
             if (existingChildren.length === 0) {

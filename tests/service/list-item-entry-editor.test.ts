@@ -35,7 +35,7 @@ function createListItem({
   };
 }
 
-test("rewrites nested item indentation to four spaces per level", async () => {
+test("preserves existing two-space nested item indentation", async () => {
   const path = "test.md";
   const file = createInMemoryFile({
     path,
@@ -80,9 +80,9 @@ test("rewrites nested item indentation to four spaces per level", async () => {
     [
       "# Heading",
       "- Parent",
-      "    - Existing child",
-      "        - Existing grandchild",
-      "    - New sibling",
+      "  - Existing child",
+      "    - Existing grandchild",
+      "  - New sibling",
       "- After",
     ].join("\n"),
   );

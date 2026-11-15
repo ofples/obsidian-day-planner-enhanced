@@ -11,6 +11,56 @@ function deferred() {
 }
 
 describe("native note transaction visibility", () => {
+  test("restores successful file writes if another file fails", async () => {
+    const texts = new Map([
+      ["a", "first"],
+      ["b", "second"],
+    ]);
+    const settled = vi.fn();
+    const writer = new TransactionWriter(
+      {
+        editFile: async (path, update) => {
+          if (path === "b") throw new Error("blocked");
+          texts.set(path, update(texts.get(path)!));
+        },
+      },
+      settled,
+    );
+    await expect(
+      writer.writeTransaction([
+        { path: "a", updateFn: () => "changed" },
+        { path: "b", updateFn: () => "changed" },
+      ]),
+    ).rejects.toThrow("blocked");
+    expect(texts.get("a")).toBe("first");
+    expect(settled).toHaveBeenCalledOnce();
+    await expect(writer.undo()).rejects.toThrow("No updates");
+  });
+  test("never overwrites a concurrent edit during compensation", async () => {
+    const texts = new Map([
+      ["a", "first"],
+      ["b", "second"],
+    ]);
+    let calls = 0;
+    const writer = new TransactionWriter({
+      editFile: async (path, update) => {
+        if (path === "b") {
+          texts.set("a", "user edit");
+          throw new Error("blocked");
+        }
+        calls++;
+        texts.set(path, update(texts.get(path)!));
+      },
+    });
+    await expect(
+      writer.writeTransaction([
+        { path: "a", updateFn: () => "changed" },
+        { path: "b", updateFn: () => "changed" },
+      ]),
+    ).rejects.toThrow("could not be fully restored");
+    expect(texts.get("a")).toBe("user edit");
+    expect(calls).toBe(2);
+  });
   test("the edit and undo fence covers every file and resumes once all settle", async () => {
     const release = deferred();
     const texts = new Map([

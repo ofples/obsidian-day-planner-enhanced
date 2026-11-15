@@ -8,6 +8,7 @@ export function useCursor(editOperation: Readable<EditOperation | undefined>) {
     if (
       $editOperation?.mode === EditMode.CREATE ||
       $editOperation?.mode === EditMode.DRAG ||
+      $editOperation?.mode === EditMode.SWAP ||
       $editOperation?.mode === EditMode.DRAG_AND_SHIFT_OTHERS
     ) {
       return {

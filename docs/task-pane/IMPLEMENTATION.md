@@ -540,3 +540,21 @@ Installed-app acceptance exercised two provider-task drops while calendar sync w
 ## Vertical subtask lists
 
 Subtasks render as vertical lists at every block height and width. The full-list button is available on daily-note and Tasks-plugin blocks with visible children, including when the block clips its list. Its position and reserved header space keep it accessible in short blocks. The inline-child layout, narrow-width hiding rules and resize-based mode switching are removed. Checkbox source-line mapping and task descriptions use the existing rendering path.
+
+## Scheduling, capture and export refinements
+
+The installed update adds source-editor next-slot Enter with a selectable time range, per-pane one-to-seven-day controls, empty and mismatched frame status, a dedicated swap grip, and an occupied-time creation lane. New list content uses destination indentation, with a two-space fallback for new notes. The native HTML drag path is suppressed while an active timeline edit owns the gesture.
+
+Tagged capture now creates through the default best-effort path and replaces the capture marker with the returned Todoist chain link. A small persisted command outbox covers interrupted delivery, bounded attempts and delayed source replacement. It retires after indexing observes the linked result. Capture permission is independent of the linked-title and checkbox setting. One eligible existing authored tag was captured during installation. Historical notes before the configured cutoff stayed byte-identical.
+
+The export menu now provides PNG and desktop PDF, timeline and three-column overview layouts, independent filters for subtasks, all-day entries and calendar overlays, and parent narrative descriptions. Valid stored RGB, HSL and hexadecimal colors normalize to safe export colors. Advanced Google client controls and calendar color mappings are collapsed in settings, with primary connection controls visible.
+
+The final full source run has 1,531 passes, the inherited inclusive-last-day ICS failure, nine skips and seventeen todos. Formatting, ESLint, stylelint, TypeScript, zero-warning Svelte diagnostics and the independent strict scorecard pass. Production compilation and installed artifact hash verification pass. The baseline hotfix checkout remains clean.
+
+Installed editor acceptance used trusted Chromium key input. Enter retained the parent subtree and selected the next time range, Right Arrow accepted it and Backspace removed it. The installed planner retained its date and leaf when switching one to three days and back. Empty, matching and mismatched frames displayed the expected status. The real export modal switched both formats and overview previews.
+
+Isolated trusted Chromium pointer delivery verified two cancelled swap previews, unchanged note bytes before commit, a successful released swap with both subtrees retained, and an occupied-time creation preview cancelled without a write. Physical OS-pointer input was not repeated. The real Electron PDF pipeline produced all 24 fixture tasks over two A4 pages and destroyed its temporary window. The destination dialog was injected for this acceptance, leaving native save-dialog interaction unverified. Refreshed PNGs and both PDF pages were visually inspected.
+
+One disposable tagged task was created in Todoist, linked in Markdown exactly once, and checked after repeated capture and refresh. Its capture tag was consumed, description and plain children remained, and its delivery receipt retired. The fixture task, notes and temporary views were removed. Both account connections, the Google namespace, every pre-existing managed event ID and all other loaded plugins survived the plugin-only install. Automatic sync remains enabled and the capture outbox is empty.
+
+Cross-file swaps compensate recoverable write failures while protecting concurrent edits. A process crash during a multi-file write remains outside this transaction writer's rollback guarantee.

@@ -22,6 +22,30 @@ const settings = {
 const resizeSettings = { ...settings, zoomLevel: 1 };
 
 describe("drag pointer time", () => {
+  test("swap selects the absolute hovered time even when the grip began elsewhere", () => {
+    const operation = {
+      dragOriginClientY: 120,
+      dragOriginMinutes: 600,
+      mode: EditMode.SWAP,
+      timeBlock: { ...baseTimeBlock, startTime: moment("2023-01-01 10:00") },
+    };
+    const value = getDragPointerDateTime({
+      clientY: 150,
+      day: moment("2023-01-02"),
+      operation,
+      settings,
+      timelineOffsetY: 840,
+    });
+    expect(value.isSame(moment("2023-01-02 13:00"))).toBe(true);
+    const nearEnd = getDragPointerDateTime({
+      clientY: 150,
+      day: moment("2023-01-02"),
+      operation,
+      settings,
+      timelineOffsetY: 718,
+    });
+    expect(nearEnd.isSame(moment("2023-01-02 11:59"))).toBe(true);
+  });
   test("starts all-day drags without a relative timeline origin", () => {
     const timeBlock = {
       ...baseTimeBlock,

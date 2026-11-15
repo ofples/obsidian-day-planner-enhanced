@@ -91,6 +91,7 @@ export class TaskService {
     private readonly commitAuthentication?: (token: string) => () => void,
     private readonly discardAuthentication?: (token: string) => void,
     private readonly weakWritesEnabled: () => boolean = () => false,
+    private readonly captureWritesEnabled: () => boolean = weakWritesEnabled,
   ) {}
 
   async getWeak(id: string): Promise<ProviderTask | null> {
@@ -98,6 +99,44 @@ export class TaskService {
     const token = this.storage.getSecret(this.secretKey());
     if (this.closed || !token) return null;
     return this.provider(token).get?.(id) ?? null;
+  }
+
+  /** Execute an already-durable create command without enabling legacy ownership. */
+  createWeak(command: TaskOperation): Promise<ProviderTask> {
+    const result = this.weakTail.then(async () => {
+      await this.pending;
+      const snapshot = this.cache.snapshot;
+      const token = this.storage.getSecret(this.secretKey());
+      if (
+        this.closed ||
+        !this.captureWritesEnabled() ||
+        !this.canWrite ||
+        !token ||
+        !snapshot ||
+        snapshot.provider !== command.provider ||
+        snapshot.account.id !== command.accountId ||
+        command.mutation.kind !== "create"
+      )
+        throw new TaskReadError(
+          "Connect the original Todoist account before capturing this task.",
+        );
+      const generation = this.generation;
+      const provider = this.provider(token);
+      if (!provider.apply || !provider.get)
+        throw new TaskReadError("Reconnect Todoist to create tasks.");
+      const { taskId } = await provider.apply(command);
+      if (!this.isCurrent(generation))
+        throw new TaskReadError("The Todoist connection changed.");
+      const task = await provider.get(taskId);
+      if (!task || !this.isCurrent(generation))
+        throw new TaskReadError("Todoist has not confirmed this task yet.");
+      return task;
+    });
+    this.weakTail = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
   }
 
   completeWeak(task: ProviderTask) {
@@ -270,7 +309,9 @@ export class TaskService {
     if (!this.authenticate)
       throw new Error("Browser sign-in is unavailable on this device.");
     const token = await this.authenticate(
-      this.writesEnabled() || this.weakWritesEnabled(),
+      this.writesEnabled() ||
+        this.weakWritesEnabled() ||
+        this.captureWritesEnabled(),
     );
     try {
       await this.connect(token, replaceAccount, this.commitAuthentication);

@@ -269,3 +269,17 @@ Day and multi-day views store a validated local YYYY-MM-DD day in each workspace
 
 
 Historical source-copy expansion must scope descendant identities to their saved occurrence. Path/offset overlap across different occurrences supplies no ownership evidence. Active registry links take precedence over retained historical entries sharing the same source UID. Copy review, confirmation and capture must preserve unrelated occurrence records through restart.
+
+## Scheduling and export refinement
+
+Next-slot insertion is a source-editor keyboard adapter backed by a pure Markdown transform. It validates task context through the parsed list item and inserts after the entire subtree. It preserves list markers, indentation and line endings. Shift/modifier Enter, IME composition, multiple selections, code, comments, properties and the day boundary retain native handling. This path edits Markdown through the normal editor API and uses normal sync debouncing.
+
+Day-count changes use the current workspace leaf and selected date. Multi-day state persists an optional validated count from one to seven. Shortcuts are scoped to that planner pane, exclude editable controls and pause during active edits. Existing range presets continue to define initial views.
+
+Frames are ordinary tagged Markdown. Constraint checks ignore control tags and compare all remaining labels case-insensitively. Empty and mismatched frames receive lightweight visual status. Successful subtask insertion emits one warning on mismatch. Mismatches retain the user's inserted data.
+
+Swapping is a pure edit preview mode using the absolute hovered interval. It preserves durations, subtrees and IDs. Locked or ambiguous targets are excluded. Commit uses the existing transaction writer. Cross-file failures trigger compensation only while bytes still equal this transaction's result, preserving concurrent edits. A process crash during a cross-file write is outside the writer's rollback guarantee.
+
+Weak capture uses the existing routing and provider boundary. A small durable transport outbox persists command UUID and temporary ID before creation. Successful provider readback precedes the Markdown link edit. Exact unique source text must still match before replacement. Receipts survive lost responses and retire after reindex confirms the old capture source is gone. Automatic sends allow three attempts with increasing cooldown and honor server retry deadlines. Manual Sync may start another bounded attempt allowance with the same command identity. This outbox stores delivery state. Markdown URLs remain the task identity.
+
+Export entry generation separates narrative descriptions from child checklist rows and strips link markup. PNG uses canvas wrapping and an optional three-column layout. PDF uses escaped self-contained print HTML with a restrictive content security policy and a temporary hidden sandboxed Electron window. A4 output paginates without truncating the collection. The print window is destroyed on success and failure. PDF is desktop-only. Export filters apply to the selected day.

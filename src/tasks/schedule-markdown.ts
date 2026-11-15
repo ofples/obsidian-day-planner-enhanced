@@ -6,6 +6,7 @@ import { toMarkdown } from "../mdast/mdast";
 import { fromMarkdown } from "../mdast/mdast";
 import { getTimeRangeMatch } from "../parser/parser";
 import type { DayPlannerSettings } from "../settings";
+import { detectIndentation, translateIndentation } from "../util/markdown";
 import { exportPlainText } from "../util/schedule-export";
 
 import {
@@ -134,14 +135,24 @@ export function indentTaskSubtree(
   sourceIndent: string,
   destinationIndent: string,
   newline: string,
+  destinationStep?: string,
 ) {
+  const sourceStep = detectIndentation(raw);
   return raw
     .split(/\r?\n/)
     .map(
       (line, index) =>
         destinationIndent +
         (index > 0 && line.startsWith(sourceIndent)
-          ? line.slice(sourceIndent.length)
+          ? line
+              .slice(sourceIndent.length)
+              .replace(/^[ \t]+/, (indent) =>
+                translateIndentation(
+                  indent,
+                  sourceStep,
+                  destinationStep ?? sourceStep,
+                ),
+              )
           : line),
     )
     .join(newline);
@@ -248,9 +259,16 @@ export function newTaskMarkdown(
     "#todoist",
     ...(projectTag ? [`#${projectTag}`] : []),
     ...labels,
+    ...task.labels
+      .filter(
+        (label) =>
+          !Object.values(account.labelMappings).includes(label) &&
+          /^[\p{L}\p{M}\p{N}_/-]+$/u.test(label),
+      )
+      .map((label) => `#${label}`),
   ];
   return [
-    `- [ ] ${taskInlineMarkdown(task.title)} ${tags.join(" ")}`,
+    `- [ ] ${taskInlineMarkdown(task.title)} ${[...new Set(tags)].join(" ")}`,
     ...children.map(
       (child) =>
         `${"  ".repeat(child.depth)}- [ ] ${taskInlineMarkdown(child.task.title)}`,

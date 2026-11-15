@@ -71,7 +71,7 @@ export function addTimelineViewMenuItems(
   menu.addItem((item) =>
     item
       .setSection("action")
-      .setTitle("Export schedule as PNG…")
+      .setTitle("Export schedule…")
       .setIcon("image-down")
       .onClick(() => {
         const day = getSelectedDay();

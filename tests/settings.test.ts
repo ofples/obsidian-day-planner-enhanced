@@ -9,6 +9,13 @@ import {
 } from "../src/settings";
 
 describe("settings migration", () => {
+  test("defaults next-slot entry on and preserves an explicit disable", () => {
+    expect(mergeStoredSettings(null).nextTaskSlotOnEnter).toBe(true);
+    expect(
+      mergeStoredSettings({ nextTaskSlotOnEnter: false }).nextTaskSlotOnEnter,
+    ).toBe(false);
+  });
+
   test("defaults calendar cutover to legacy mode and preserves an explicit start date", () => {
     expect(defaultSettings.googleCalendar.syncStartDate).toBe("");
     expect(mergeStoredSettings(null).googleCalendar.syncStartDate).toBe("");

@@ -62,7 +62,7 @@ export function addGoogleCalendarSetupDetails(container: HTMLElement) {
   );
   addStep(
     "Create a Desktop app client.",
-    "Under Clients, create an OAuth client with application type Desktop app. Copy its client ID and client secret into the fields below, then click Save secret. A Web application client or an API key will not work here. Keep the secret private.",
+    "Under Clients, create an OAuth client with application type Desktop app. Open Advanced Google connection below, enter its client ID and secret, and click Save secret. A Web application client or an API key will not work. Keep the secret private.",
     {
       label: "Open OAuth clients",
       url: "https://console.cloud.google.com/auth/clients",
@@ -78,7 +78,7 @@ export function addGoogleCalendarSetupDetails(container: HTMLElement) {
   );
   addStep(
     "Connect and test.",
-    "Click Sign in with Google below or in Accounts, choose your Google account in the browser and approve calendar access. Then click Sync. Test one disposable block in each direction before enabling automatic sync. Keep automatic sync enabled on only one desktop at a time.",
+    "Click Sign in with Google below or open Connections, choose your Google account in the browser and approve calendar access. Then click Sync. Test one disposable block in each direction before enabling automatic sync. Keep automatic sync enabled on only one desktop at a time.",
   );
   details.appendChild(steps);
   const note = document.createElement("p");
@@ -123,27 +123,40 @@ export function googleCalendarSettingDefinitions(
         searchable: true,
         render: (setting) => addGoogleCalendarSetupDetails(setting.descEl),
       },
-      text(
-        "Google OAuth client ID",
-        "clientId",
-        "Create a Desktop app OAuth client with the Calendar API enabled.",
-      ),
       {
-        name: "Google OAuth client secret",
-        desc: "From the Desktop OAuth credentials. Stored in Obsidian SecretStorage; leave blank to keep the saved value.",
+        name: "Advanced Google connection",
+        desc: "Configure the Desktop OAuth client used to sign in and refresh access.",
         render: (setting) => {
+          const details = setting.descEl.ownerDocument.createElement("details");
+          const summary = details.ownerDocument.createElement("summary");
+          summary.textContent = "OAuth client settings";
+          details.appendChild(summary);
+          setting.descEl.appendChild(details);
+          new Setting(details)
+            .setName("Google OAuth client ID")
+            .setDesc("Use a Desktop app client with the Calendar API enabled.")
+            .addText((control) =>
+              control
+                .setValue(getSettings().googleCalendar.clientId)
+                .onChange((value) => update({ clientId: value.trim() })),
+            );
           let secret = "";
-          setting.addText((control) => {
-            control.inputEl.type = "password";
-            control.onChange((value) => {
-              secret = value;
-            });
-          });
-          setting.addButton((button) =>
-            button.setButtonText("Save secret").onClick(() => {
-              service().setClientSecret(secret);
-            }),
-          );
+          new Setting(details)
+            .setName("Google OAuth client secret")
+            .setDesc(
+              "Stored in Obsidian SecretStorage. Leave blank to keep the saved secret.",
+            )
+            .addText((control) => {
+              control.inputEl.type = "password";
+              control.onChange((value) => {
+                secret = value;
+              });
+            })
+            .addButton((button) =>
+              button
+                .setButtonText("Save secret")
+                .onClick(() => service().setClientSecret(secret)),
+            );
         },
       },
       text(
@@ -231,40 +244,48 @@ export function googleCalendarSettingDefinitions(
           );
         },
       },
-      ...getSettings().colorOverrides.map(
-        (override): SettingDefinitionRender => ({
-          name: `Google color for ${override.text || "empty text rule"}`,
-          desc: `Planner color ${override.color}. The first matching planner color rule wins.`,
-          render: (setting) => {
-            setting.addDropdown((control) =>
+      {
+        name: "Google event colors",
+        desc: "Choose how planner colors map to new Google events.",
+        render: (setting) => {
+          const details = setting.descEl.ownerDocument.createElement("details");
+          const summary = details.ownerDocument.createElement("summary");
+          summary.textContent = "Color mappings";
+          details.appendChild(summary);
+          setting.descEl.appendChild(details);
+          for (const override of getSettings().colorOverrides)
+            new Setting(details)
+              .setName(override.text || "Empty text rule")
+              .setDesc(
+                `Planner color ${override.color}. First matching rule wins.`,
+              )
+              .addDropdown((control) =>
+                control
+                  .addOptions(eventColorOptions)
+                  .setValue(
+                    getSettings().googleCalendar.colorMappings[override.text] ??
+                      "",
+                  )
+                  .onChange((value) =>
+                    update({
+                      colorMappings: {
+                        ...getSettings().googleCalendar.colorMappings,
+                        [override.text]: value,
+                      },
+                    }),
+                  ),
+              );
+          new Setting(details)
+            .setName("Other schedule blocks")
+            .setDesc(
+              "Sets the initial Google color; later Google color changes are preserved.",
+            )
+            .addDropdown((control) =>
               control
                 .addOptions(eventColorOptions)
-                .setValue(
-                  getSettings().googleCalendar.colorMappings[override.text] ??
-                    "",
-                )
-                .onChange((value) =>
-                  update({
-                    colorMappings: {
-                      ...getSettings().googleCalendar.colorMappings,
-                      [override.text]: value,
-                    },
-                  }),
-                ),
+                .setValue(getSettings().googleCalendar.fallbackColorId)
+                .onChange((fallbackColorId) => update({ fallbackColorId })),
             );
-          },
-        }),
-      ),
-      {
-        name: "Google color for other schedule blocks",
-        desc: "Automatic match uses the planner's time-of-day gradient. In Google-canonical mode this selects the initial color for new events; later Google color changes are preserved.",
-        render: (setting) => {
-          setting.addDropdown((control) =>
-            control
-              .addOptions(eventColorOptions)
-              .setValue(getSettings().googleCalendar.fallbackColorId)
-              .onChange((fallbackColorId) => update({ fallbackColorId })),
-          );
         },
       },
       {

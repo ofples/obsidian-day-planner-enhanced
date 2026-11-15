@@ -12,6 +12,7 @@ test("local block shows a noninteractive badge only while locked", async () => {
   const target = document.createElement("div");
   document.body.append(target);
   const toggleTaskLock = vi.fn(async () => {});
+  const editOperation = writable<unknown>(undefined);
   const noteTaskDrag = { start: vi.fn(), cancel: vi.fn() };
   const context = new Map<string, unknown>([
     [
@@ -28,6 +29,7 @@ test("local block shows a noninteractive badge only while locked", async () => {
         showPreview: vi.fn(),
         isModPressed: writable(false),
         toggleTaskLock,
+        editContext: { editOperation },
         noteTaskDrag,
       },
     ],
@@ -48,6 +50,13 @@ test("local block shows a noninteractive badge only while locked", async () => {
   );
   draggable.dispatchEvent(new Event("dragend", { bubbles: true }));
   expect(noteTaskDrag.cancel).toHaveBeenCalledOnce();
+  editOperation.set({ mode: "DRAG" });
+  const competing = new Event("dragstart", { bubbles: true, cancelable: true });
+  Object.defineProperty(competing, "dataTransfer", { value: transfer });
+  draggable.dispatchEvent(competing);
+  expect(competing.defaultPrevented).toBe(true);
+  expect(noteTaskDrag.start).toHaveBeenCalledOnce();
+  editOperation.set(undefined);
   props.timeBlock = { ...props.timeBlock, text: "Work #locked" };
   flushSync();
   expect(

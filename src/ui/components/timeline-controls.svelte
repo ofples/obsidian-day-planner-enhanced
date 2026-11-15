@@ -13,6 +13,7 @@
   import ControlButton from "./control-button.svelte";
   import DayOfWeekPicker from "./day-of-week-picker.svelte";
   import { ChevronLeft, ChevronRight } from "./lucide";
+  import PlannerDayCount from "./planner-day-count.svelte";
 
   const {
     exportSchedule,
@@ -96,7 +97,10 @@
 
     {#if $isInSidebar}
       <div class="period">{selectedDay.format("MMM YYYY")}</div>
-      <div class="buttons-right">
+    {/if}
+    <div class="buttons-right">
+      <PlannerDayCount />
+      {#if $isInSidebar}
         <button
           class="clickable-icon sync-button"
           aria-busy={$googleSyncing}
@@ -111,8 +115,8 @@
         <ControlButton label="More options" onclick={handleMenuClick}>
           <EllipsisVertical class="svg-icon" />
         </ControlButton>
-      </div>
-    {/if}
+      {/if}
+    </div>
   </div>
 
   <DayOfWeekPicker onDayClick={handleDayClick} {selectedDay} {week} />

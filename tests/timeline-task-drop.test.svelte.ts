@@ -79,6 +79,8 @@ function render(
     cancel = vi.fn(),
     nest = vi.fn(async () => {}),
     toggleTaskLock = vi.fn(async () => {}),
+    handleContainerMouseDown = vi.fn(),
+    cancelEdit = vi.fn(),
     accept = vi.fn(() => ({ task, id: nonce }));
   let current: ProviderTask | null = active ? task : null;
   const dragged = writable(active ? task : null);
@@ -101,12 +103,16 @@ function render(
             settingsSignal: { current: settings },
             editContext: {
               confirmEdit: vi.fn(),
-              handlers: { handleContainerMouseDown: vi.fn() },
+              handlers: { handleContainerMouseDown },
+              cancelEdit,
               getDisplayedTimeBlocksForTimeline: () =>
                 writable({ withTime: blocks }),
               editOperation: writable(null),
             },
-            pointerDateTime: writable(null),
+            pointerDateTime: writable({
+              type: "dateTime",
+              dateTime: window.moment("2030-01-15"),
+            }),
             useSelector: createUseSelector(makeStore({})),
             taskScheduler: {
               drag: {
@@ -150,6 +156,8 @@ function render(
     nest,
     cancel,
     toggleTaskLock,
+    handleContainerMouseDown,
+    cancelEdit,
     accept,
     nonce,
     event,
@@ -163,6 +171,16 @@ function render(
 }
 
 describe("timeline task drops", () => {
+  test("the time lane can create alongside an occupied block", () => {
+    vi.stubGlobal("PointerEvent", MouseEvent);
+    const h = render(false, [parent]);
+    const lane = h.target.querySelector<HTMLElement>(".timeline-create-lane")!;
+    lane.dispatchEvent(
+      new MouseEvent("pointerdown", { bubbles: true, button: 0, clientY: 480 }),
+    );
+    expect(h.handleContainerMouseDown).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
   test("selected local block exposes its keyboard lock control in the toolbar", async () => {
     const h = render(false, [parent]);
     expect(h.target.querySelector('button[aria-label="Lock task"]')).toBeNull();

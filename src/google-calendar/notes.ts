@@ -422,16 +422,17 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       throw new Error(
         "This note or date is outside Google Calendar sync scope.",
       );
+    const target = await this.daily.createDailyNoteIfNeeded(
+      window.moment(snapshot.start).startOf("day"),
+    );
+    const before = await this.app.vault.read(target);
     const raw = renderBlock(
       uid,
       snapshot,
       this.settings,
       templateRaw ?? previous?.raw,
+      before,
     );
-    const target = await this.daily.createDailyNoteIfNeeded(
-      window.moment(snapshot.start).startOf("day"),
-    );
-    const before = await this.app.vault.read(target);
     if (
       !this.localWrites &&
       (!this.noteDateInScope(target) || !isCalendarNoteEnabled(before))

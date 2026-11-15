@@ -33,6 +33,7 @@ export const timestampFormatDescription =
 
 export class DayPlannerSettingsTab extends PluginSettingTab {
   private warningComponent?: Component;
+  private colorOverridesExpanded = false;
 
   constructor(
     private readonly plugin: DayPlanner,
@@ -45,17 +46,12 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
     const settings = this.plugin.getSettings();
     const definitions: SettingDefinitionItem[] = [
       {
-        name: "Accounts",
-        desc: "Sign in to Google Calendar and Todoist.",
+        name: "Connections",
+        desc: "Manage Google Calendar and Todoist sign-in.",
         render: (setting) => {
           setting.addButton((button) =>
             button
-              .setButtonText("Sign in with Google")
-              .onClick(() => this.plugin.openConnections()),
-          );
-          setting.addButton((button) =>
-            button
-              .setButtonText("Sign in with Todoist")
+              .setButtonText("Manage connections")
               .onClick(() => this.plugin.openConnections()),
           );
         },
@@ -88,8 +84,8 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
         },
       },
       {
-        name: "Restart Obsidian after changing settings",
-        desc: "Any change to the settings requires a restart of Obsidian.",
+        name: "Applying settings",
+        desc: "Most changes apply immediately. Individual settings indicate when a restart is needed.",
         searchable: false,
       },
       {
@@ -108,6 +104,11 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
             name: "Center the pointer in the timeline view",
             desc: "Continuously scroll the pointer to the center of the view",
             control: { type: "toggle", key: "centerNeedle" },
+          },
+          {
+            name: "Next time slot on Enter",
+            desc: "Adds a sibling task with its next time range selected. Backspace clears it and Right Arrow accepts it.",
+            control: { type: "toggle", key: "nextTaskSlotOnEnter" },
           },
           {
             name: "Sort tasks in planner chronologically after edits",
@@ -728,6 +729,19 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
 
     containerEl.empty();
 
+    new SettingGroup(containerEl)
+      .setHeading("Connections")
+      .addSetting((setting) =>
+        setting
+          .setName("Google Calendar and Todoist")
+          .setDesc("Sign in, sign out or switch accounts.")
+          .addButton((button) =>
+            button
+              .setButtonText("Manage connections")
+              .onClick(() => this.plugin.openConnections()),
+          ),
+      );
+
     const calendarDefinition = this.googleCalendarDefinition();
     if (calendarDefinition.type === "group") {
       const group = new SettingGroup(containerEl).setHeading(
@@ -746,7 +760,8 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
     this.warningComponent = mount(Callout, {
       props: {
         type: "warning",
-        title: "Any change to the settings requires a restart of Obsidian!",
+        title:
+          "Most changes apply immediately; some require reopening or restarting Obsidian.",
         className: "planner-settings-warning",
       },
       target: containerEl,
@@ -787,6 +802,17 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
                 this.updateSettings({ centerNeedle: value });
               });
           }),
+      )
+      .addSetting((setting) =>
+        setting
+          .setName("Next time slot on Enter")
+          .addToggle((toggle) =>
+            toggle
+              .setValue(this.plugin.getSettings().nextTaskSlotOnEnter)
+              .onChange((value) =>
+                this.updateSettings({ nextTaskSlotOnEnter: value }),
+              ),
+          ),
       )
       .addSetting((setting) =>
         setting
@@ -1391,7 +1417,13 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
           ),
       );
 
-    const colorBlockingGroup = new SettingGroup(containerEl)
+    const colorDetails = containerEl.createEl("details");
+    colorDetails.open = this.colorOverridesExpanded;
+    colorDetails.addEventListener("toggle", () => {
+      this.colorOverridesExpanded = colorDetails.open;
+    });
+    colorDetails.createEl("summary", { text: "Color overrides" });
+    const colorBlockingGroup = new SettingGroup(colorDetails)
       .setHeading("Color overrides")
       .addExtraButton((button) =>
         button

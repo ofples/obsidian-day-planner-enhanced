@@ -8,6 +8,7 @@ export function createTaskService(
   plugin: Plugin,
   writesEnabled: () => boolean = () => true,
   weakWritesEnabled: () => boolean = () => false,
+  captureWritesEnabled: () => boolean = weakWritesEnabled,
 ) {
   let active = true;
   plugin.register(() => {
@@ -75,6 +76,7 @@ export function createTaskService(
     (token) => auth().commit(token),
     (token) => auth().discard(token),
     weakWritesEnabled,
+    captureWritesEnabled,
   );
   return service;
 }

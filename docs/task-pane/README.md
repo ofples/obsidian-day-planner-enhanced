@@ -1,6 +1,6 @@
 # Tasks in Day Planner
 
-The Tasks pane brings Todoist and note tasks into daily-note schedules and the existing Google Calendar bridge. Todoist imports become ordinary Markdown by default. Two-way Todoist sync is an experimental opt-in. Private import receipts retain task provenance, and the provider boundary supports adding other services later.
+The Tasks pane brings Todoist and note tasks into daily-note schedules and the existing Google Calendar bridge. Todoist imports become ordinary Markdown with a best-effort task link. Linked names and checkboxes can synchronize. The stronger ownership and recovery workflow is an experimental opt-in. Private import receipts retain task provenance, and the provider boundary supports adding other services later.
 
 ## Morning planning
 
@@ -15,7 +15,20 @@ Direct local task placement also works in notes marked `sync: off`. Automatic Go
 
 The production baseline started at `82ae46ff` on `feat/google-calendar-sync` and includes the installed rename/deletion hotfixes through `87de378b`. Feature development runs on `feat/task-pane-todoist`, which includes those hotfixes. The baseline checkout remains available for hotfixes.
 
-The integrated build `58ee62e3` is installed and connected in the working vault. Open Show tasks from the command palette or use the Tasks ribbon button. Current verification and external limits are recorded in ACCEPTANCE.md.
+The integrated build is installed and connected in the working vault. Open Show tasks from the command palette or use the Tasks ribbon button. Current verification and external limits are recorded in ACCEPTANCE.md.
+
+## Faster scheduling and export
+
+- Press Enter on the first line of a timed Markdown task to insert a sibling after its complete subtree. The next slot starts at the current end and lasts the configured default duration. Its time range is selected with the following space. Backspace removes it and Right Arrow accepts it. Disable this under Editing if desired.
+- Choose 1–7 days in the planner toolbar. With the planner focused, D shows one day, W shows seven, and 1–7 select that many days. Each pane retains its selected day count.
+- Add `#frame` to a timed parent to highlight it until it has child tasks. Additional labels such as `#karma` are checked on added children. A mismatch gives a warning and retains the inserted task. Multiple frame labels must all match.
+- Select a block and use Swap blocks in its edit toolbar. Hover another editable block to preview exchanging start times while retaining each duration and subtree. Release commits the change. Escape cancels the preview.
+- Use the narrow creation strip at the left edge of the timeline to add a task alongside an occupied interval.
+- The planner menu provides Export schedule. Choose PNG or PDF, Timeline or Compact overview, and whether to include subtasks, all-day events and other calendars. The overview uses three chronological columns. Parent description text remains visible when subtasks are hidden. PDF export uses the desktop save dialog.
+- New inserted children follow the destination note's indentation style. New notes use two spaces.
+- An unchecked task with `#todoist` is captured after leaving its line and a quiet editing delay. Confirmed creation replaces the capture tag with its chain link. Other labels and plain Markdown children remain editable. Re-adding `#todoist` deliberately requests a new capture. Removing the chain link detaches the existing best-effort link.
+
+Google sign-in and calendar selection remain visible in settings. Desktop OAuth setup and calendar color overrides are in collapsed sections. Advanced OAuth fields support custom clients and credential refresh.
 
 ## Design package
 
@@ -30,7 +43,9 @@ The mockups describe the intended product. Implementation progress and verificat
 
 ## Development build usage
 
-Open Tasks from the ribbon or the Show tasks command. Connect Todoist using its API token. The token is saved through Obsidian SecretStorage. Task creation, editing, completion and reopening use the pane's custom controls. The latest Morgen-inspired design is implemented with scoped HTML, CSS and JavaScript through Svelte. Details adapt to narrow and wide panes, forms open inline and pending changes share a compact disclosure.
+Open Tasks from the ribbon or the Show tasks command. Use Sign in with Todoist in Connections. Credentials are saved through Obsidian SecretStorage. Task creation, editing, completion and reopening use the pane's custom controls. The latest Morgen-inspired design is implemented with scoped HTML, CSS and JavaScript through Svelte. Details adapt to narrow and wide panes, forms open inline and pending changes share a compact disclosure.
+
+The following ownership, unlink-review and recovery controls apply to experimental mode.
 
 Open Capture and routing to choose capture folders, the default project, project tags and label tags. Initial project tags come from unique single-tag project names, and the Inbox is the initial default. Settings are account-specific. Add `#todoist` to an unchecked Markdown task and leave its line to capture it. For example, `- [ ] Buy rice #todoist #karma` routes to the project mapped to `#karma`. A task with tags mapping to several projects waits for Choose project. The editor context menu also provides Todoist routing for a specific task. Remote IDs remain in plugin state.
 

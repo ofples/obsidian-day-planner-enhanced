@@ -10,6 +10,7 @@ import {
   taskLinkIdentity,
   taskLinkUrl,
 } from "../tasks/weak-links";
+import { detectIndentation, translateIndentation } from "../util/markdown";
 
 import {
   normalizeTitle,
@@ -71,6 +72,17 @@ function readLocalDescription(raw: string) {
         start: node.position?.start.line ?? 0,
         end: node.position?.end.line ?? 0,
       }));
+    const descriptionIndent =
+      lines
+        .slice(1)
+        .find(
+          (line, index) =>
+            line.trim() &&
+            !lists.some(
+              (range) => index + 2 >= range.start && index + 2 <= range.end,
+            ),
+        )
+        ?.match(/^[ \t]*/)?.[0] ?? "";
     return lines
       .slice(1)
       .filter(
@@ -79,7 +91,11 @@ function readLocalDescription(raw: string) {
             (range) => index + 2 >= range.start && index + 2 <= range.end,
           ),
       )
-      .map((line) => line.replace(/^ {1,2}/, ""))
+      .map((line) => {
+        return descriptionIndent && line.startsWith(descriptionIndent)
+          ? line.slice(descriptionIndent.length)
+          : line.replace(/^ {1,2}/, "");
+      })
       .join("\n")
       .trim();
   }
@@ -228,7 +244,11 @@ export function renderBlock(
   snapshot: CalendarSnapshot,
   settings: DayPlannerSettings,
   previous?: string,
+  destinationText = "",
 ) {
+  const indentation = detectIndentation(
+    `${previous ?? ""}\n${destinationText}`,
+  );
   const newline = previous?.includes("\r\n") ? "\r\n" : "\n";
   const lines = previous?.split(/\r?\n/) ?? [];
   const first = lines[0] ?? "- [ ] ";
@@ -305,10 +325,22 @@ export function renderBlock(
     `${prefix}${range} ${title}${link ? ` ${link}` : ""}${comments ? ` ${comments}` : ""}${blockId}`,
     ...remaining,
     ...(snapshot.description
-      ? [...snapshot.description.split(/\r?\n/).map((line) => `  ${line}`)]
+      ? [
+          ...snapshot.description
+            .split(/\r?\n/)
+            .map((line) => `${indentation}${line}`),
+        ]
       : []),
     ...(snapshot.subtasks
-      ? snapshot.subtasks.split(/\r?\n/).map((line) => `  ${line}`)
+      ? snapshot.subtasks.split(/\r?\n/).map((line) => {
+          const sourceStep = detectIndentation(snapshot.subtasks!);
+          return (
+            indentation +
+            line.replace(/^[ \t]+/, (spaces) =>
+              translateIndentation(spaces, sourceStep, indentation),
+            )
+          );
+        })
       : []),
   ].join(newline);
 }

@@ -201,20 +201,53 @@ export class TransactionWriter {
 
   writeTransaction = async (transaction: Transaction) => {
     const previousState: Record<string, string> = {};
+    const appliedState: Record<string, string> = {};
 
     const edits = transaction.map(
       ({ path, updateFn }) =>
         () =>
           this.vaultFacade.editFile(path, (contents) => {
             previousState[path] = contents;
-
-            return updateFn(contents);
+            const updated = updateFn(contents);
+            appliedState[path] = updated;
+            return updated;
           }),
     );
-
-    this.history.push(previousState);
-
-    return this.writeAll(edits);
+    return this.writeAll([
+      async () => {
+        const results = await Promise.allSettled(edits.map((edit) => edit()));
+        const failed = results.find((result) => result.status === "rejected");
+        if (!failed) {
+          this.history.push(previousState);
+          return;
+        }
+        const error = failed.reason;
+        const rollback = Object.entries(appliedState).map(
+          ([path, after]) =>
+            () =>
+              this.vaultFacade.editFile(path, (current) => {
+                if (current === previousState[path]) return current;
+                if (current !== after)
+                  throw new Error(
+                    `The note changed after a failed edit: ${path}. Review it before retrying.`,
+                  );
+                return previousState[path]!;
+              }),
+        );
+        const restored = await Promise.allSettled(
+          rollback.map((edit) => edit()),
+        );
+        const rollbackFailure = restored.find(
+          (result) => result.status === "rejected",
+        );
+        if (rollbackFailure)
+          throw new AggregateError(
+            [error, rollbackFailure.reason],
+            "An edit failed and could not be fully restored. Review the affected notes.",
+          );
+        throw error;
+      },
+    ]);
   };
 
   undo = async () => {

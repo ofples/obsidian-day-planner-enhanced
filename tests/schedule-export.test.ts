@@ -8,7 +8,10 @@ import type { TimelineTimeBlock } from "../src/time-block-types";
 import { addTimelineViewMenuItems } from "../src/ui/timeline-view-menu";
 import {
   createScheduleExportEntries,
+  drawScheduleOverview,
   exportPlainText,
+  filterScheduleExportBlocks,
+  schedulePrintHtml,
   wrapExportText,
 } from "../src/util/schedule-export";
 
@@ -33,6 +36,130 @@ const child = (
 });
 
 describe("shareable schedule", () => {
+  test("exports parent narrative without subtasks and removes the Todoist link", () => {
+    const blocks = [
+      {
+        ...baseTimeBlock,
+        text: "09:00 - 10:00 Planning [🔗](https://app.todoist.com/app/task/abc)\nBring the folder\n- [ ] Child task",
+        children: [child("child", "Child task")],
+      },
+    ];
+    const [entry] = createScheduleExportEntries(blocks, defaultSettings, false);
+    expect(entry?.title).toBe("Planning");
+    expect(entry?.description).toEqual(["Bring the folder"]);
+    expect(entry?.lines).toEqual([]);
+    const pdf = schedulePrintHtml(window.moment("2026-11-11"), [entry!], false);
+    expect(pdf).toContain("Bring the folder");
+    expect(pdf).not.toContain("Child task");
+    expect(pdf).not.toContain("todoist.com");
+  });
+
+  test("normalizes RGB and HSL colors safely for PDF cards", () => {
+    const entries = [
+      "rgb(255, 0, 0)",
+      "hsl(120, 100%, 50%)",
+      "red; background:url(https://example.com)",
+    ].map((color) => ({
+      time: "09:00",
+      title: "Task",
+      color,
+      completed: false,
+      checkbox: false,
+      lines: [],
+    }));
+    const html = schedulePrintHtml(window.moment("2026-11-11"), entries, true);
+    expect(html).toContain("border-color:#ff0000");
+    expect(html).toContain("border-color:#00ff00");
+    expect(html).not.toContain("example.com");
+  });
+  test("filters all-day and external events while keeping Todoist previews", () => {
+    const remote = {
+      id: "remote",
+      source: "ical",
+      summary: "Remote",
+      rsvpStatus: "ACCEPTED",
+      calendar: { name: "Calendar", url: "", color: "#123456" },
+      startTime: window.moment(),
+    } as TimelineTimeBlock;
+    const task = {
+      ...remote,
+      id: "task",
+      taskSource: { provider: "todoist", accountId: "a", taskId: "t" },
+    } as TimelineTimeBlock;
+    const allDay = { ...baseTimeBlock, id: "all", isAllDayEvent: true };
+    expect(
+      filterScheduleExportBlocks([baseTimeBlock, remote, task, allDay], {
+        allDay: false,
+        otherCalendars: false,
+      }).map((block) => block.id),
+    ).toEqual([baseTimeBlock.id, "task"]);
+  });
+
+  test("PDF HTML preserves all text safely and has paginated compact cards", () => {
+    const html = schedulePrintHtml(
+      window.moment("2026-11-11"),
+      [
+        {
+          time: "09:00",
+          title: "<script>unsafe</script>",
+          color: "#ff0000",
+          checkbox: false,
+          completed: false,
+          lines: [
+            { text: "Child & more", depth: 1, checkbox: true, completed: true },
+          ],
+        },
+      ],
+      true,
+    );
+    expect(html).not.toContain("<script>unsafe</script>");
+    expect(html).toContain("&lt;script&gt;unsafe&lt;/script&gt;");
+    expect(html).toContain("Child &amp; more");
+    expect(html).toContain("column-count:3");
+    expect(html).toContain("break-inside:avoid");
+    expect(html).toContain("default-src 'none'");
+  });
+  test("overview draws every task and subtask without truncating text", () => {
+    const written: string[] = [];
+    const context = {
+      font: "",
+      fillStyle: "",
+      textBaseline: "",
+      scale: vi.fn(),
+      fillRect: vi.fn(),
+      beginPath: vi.fn(),
+      roundRect: vi.fn(),
+      fill: vi.fn(),
+      measureText: (text: string) => ({ width: text.length * 10 }),
+      fillText: (text: string) => written.push(text),
+    };
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: () => context,
+    } as unknown as HTMLCanvasElement;
+    const entries = Array.from({ length: 9 }, (_, index) => ({
+      time: `0${index}:00`,
+      title: `Entry ${index}`,
+      color: "#33aa88",
+      checkbox: true,
+      completed: false,
+      lines: [
+        { text: `Child ${index}`, depth: 0, checkbox: true, completed: false },
+      ],
+    }));
+    const size = drawScheduleOverview(
+      canvas,
+      window.moment("2026-11-11"),
+      entries,
+    );
+    for (let index = 0; index < 9; index++) {
+      expect(written).toContain(`Entry ${index}`);
+      expect(written).toContain(`Child ${index}`);
+    }
+    expect(size.width).toBeGreaterThan(0);
+    expect(size.height).toBeGreaterThan(0);
+  });
   test("exports every subtask once, preserves nesting/times, and does not mutate source data", () => {
     const blocks = [
       {
@@ -166,10 +293,10 @@ describe("shareable schedule", () => {
       settingsStore: writable(defaultSettings),
     });
     selected = window.moment("2026-11-12");
-    callbacks.get("Export schedule as PNG…")?.();
+    callbacks.get("Export schedule…")?.();
     expect(exportSchedule).toHaveBeenCalledWith(selected);
     selected = undefined as never;
-    callbacks.get("Export schedule as PNG…")?.();
+    callbacks.get("Export schedule…")?.();
     expect(exportSchedule).toHaveBeenCalledTimes(1);
   });
 });

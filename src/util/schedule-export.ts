@@ -1,9 +1,11 @@
+import chroma from "chroma-js";
 import type { Nodes } from "mdast";
 
 import { fromMarkdown } from "../mdast/mdast";
 import { restoreWikilinks } from "../mdast/wikilink";
 import type { ListItemEntryWithChildren } from "../redux/index/index-slice";
 import type { DayPlannerSettings } from "../settings";
+import { stripTaskLink } from "../tasks/weak-links";
 import { isRemote, type TimelineTimeBlock } from "../time-block-types";
 
 import type { Moment } from "./obsidian-moment";
@@ -23,7 +25,57 @@ export interface ScheduleExportEntry {
   completed: boolean;
   checkbox: boolean;
   color: string;
+  description?: string[];
   lines: ScheduleExportLine[];
+}
+
+export function filterScheduleExportBlocks(
+  blocks: TimelineTimeBlock[],
+  options: { allDay: boolean; otherCalendars: boolean },
+) {
+  return blocks.filter(
+    (block) =>
+      (options.allDay || !block.isAllDayEvent) &&
+      (options.otherCalendars || !isRemote(block) || Boolean(block.taskSource)),
+  );
+}
+
+function escapeHtml(value: string) {
+  return value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        character
+      ]!,
+  );
+}
+
+function exportColor(value: string) {
+  return chroma.valid(value) ? chroma(value).hex() : "#318779";
+}
+
+/** Self-contained print document: no external resources or executable scripts. */
+export function schedulePrintHtml(
+  day: Moment,
+  entries: ScheduleExportEntry[],
+  overview: boolean,
+) {
+  const cards = entries
+    .map((entry) => {
+      const color = exportColor(entry.color);
+      const description = (entry.description ?? [])
+        .map((line) => `<div class="description">${escapeHtml(line)}</div>`)
+        .join("");
+      const children = entry.lines
+        .map(
+          (line) =>
+            `<div class="child" style="margin-left:${Math.min(line.depth, 8) * 12}px">${line.checkbox ? (line.completed ? "☑ " : "☐ ") : "• "}${escapeHtml(line.text)}</div>`,
+        )
+        .join("");
+      return `<article style="border-color:${color}"><div class="time">${escapeHtml(entry.time)}</div><div class="title">${entry.checkbox ? (entry.completed ? "☑ " : "☐ ") : ""}${escapeHtml(entry.title)}</div>${description}${children}</article>`;
+    })
+    .join("");
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>@page{size:A4;margin:12mm}body{font:14px system-ui,sans-serif;color:#203a35;margin:0}h1{font-size:25px;margin:0 0 4px}.date{color:#60736e;margin:0 0 20px}.cards{${overview ? "column-count:3;column-gap:12px" : ""}}article{break-inside:avoid;page-break-inside:avoid;border-left:4px solid;padding:9px 10px;margin:0 0 10px;background:#f3f7f5;overflow-wrap:anywhere}.time{font-size:11px;color:#60736e}.title{font-weight:600;margin:3px 0}.child{font-size:12px;line-height:1.4;margin-top:3px}</style></head><body><h1>${escapeHtml(day.format("dddd"))}</h1><p class="date">${escapeHtml(day.format("D MMMM YYYY"))}</p><div class="cards">${cards || "No scheduled entries for this day."}</div></body></html>`;
 }
 
 function nodeText(node: Nodes): string {
@@ -36,7 +88,11 @@ function nodeText(node: Nodes): string {
 }
 
 export function exportPlainText(markdown: string) {
-  const source = markdown.replace(/\s\^[\w-]+\s*$/u, "");
+  const source = markdown
+    .replace(/\s\^[\w-]+\s*$/u, "")
+    .split(/\r?\n/)
+    .map(stripTaskLink)
+    .join("\n");
   return restoreWikilinks(nodeText(fromMarkdown(source)))
     .replace(
       /!?\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g,
@@ -71,9 +127,20 @@ export function createScheduleExportEntries(
         lines: [],
       };
     }
-    const { listItem } = toRenderableMarkdown(block, {
+    const { listItem, paragraphs } = toRenderableMarkdown(block, {
       hideTasksMetadata: settings.hideTasksMetadata,
     });
+    const description = fromMarkdown(paragraphs)
+      .children.filter((node) => node.type !== "list")
+      .map((node) =>
+        exportPlainText(
+          paragraphs.slice(
+            node.position?.start.offset,
+            node.position?.end.offset,
+          ),
+        ),
+      )
+      .filter(Boolean);
     const lines: ScheduleExportLine[] = [];
     function addChildren(
       children: ListItemEntryWithChildren[] = [],
@@ -103,6 +170,7 @@ export function createScheduleExportEntries(
       completed: isCompleted(block.task ?? block.status),
       checkbox: block.task !== undefined,
       color: override?.color ?? "#318779",
+      description,
       lines,
     };
   });
@@ -155,6 +223,137 @@ interface DrawnRow {
   checkbox: boolean;
   completed: boolean;
   title: boolean;
+  narrative?: boolean;
+}
+
+/** A compact, three-column day view with each subtree kept within its card. */
+export function drawScheduleOverview(
+  canvas: HTMLCanvasElement,
+  day: Moment,
+  entries: ScheduleExportEntry[],
+) {
+  const context = canvas.getContext("2d");
+  if (!context)
+    throw new Error("This device could not create an image canvas.");
+  const width = 1500,
+    columnWidth = 462,
+    gap = 18,
+    font = '"Segoe UI", "Noto Sans", system-ui, sans-serif';
+  context.font = `400 19px ${font}`;
+  const plans = entries.map((entry) => {
+    const rows = [
+      {
+        text: entry.title,
+        depth: 0,
+        checkbox: entry.checkbox,
+        completed: entry.completed,
+        narrative: false,
+      },
+      ...(entry.description ?? []).map((text) => ({
+        text,
+        depth: 0,
+        checkbox: false,
+        completed: false,
+        narrative: true,
+      })),
+      ...entry.lines.map((line) => ({
+        ...line,
+        depth: line.depth + 1,
+        narrative: false,
+      })),
+    ];
+    const wrapped = rows.map((row) => ({
+      ...row,
+      lines: wrapExportText(
+        row.text,
+        Math.max(170, columnWidth - 52 - Math.min(row.depth, 7) * 16),
+        (text) => context.measureText(text).width,
+      ),
+    }));
+    return {
+      entry,
+      rows: wrapped,
+      height:
+        54 + wrapped.reduce((sum, row) => sum + row.lines.length * 25 + 5, 0),
+    };
+  });
+  const total = plans.reduce((sum, plan) => sum + plan.height + gap, 0);
+  const target = Math.max(1, Math.ceil(total / 3));
+  const columns: (typeof plans)[] = [[], [], []];
+  let column = 0,
+    used = 0;
+  for (const plan of plans) {
+    if (column < 2 && used && used + plan.height > target) {
+      column++;
+      used = 0;
+    }
+    columns[column]!.push(plan);
+    used += plan.height + gap;
+  }
+  const height =
+    190 +
+    Math.max(
+      100,
+      ...columns.map((items) =>
+        items.reduce((sum, item) => sum + item.height + gap, 0),
+      ),
+    ) +
+    40;
+  if (height > 16000)
+    throw new Error(
+      "This overview is too long for one PNG. Export as PDF or omit subtasks.",
+    );
+  const scale = Math.min(
+    2,
+    16000 / height,
+    Math.sqrt(32_000_000 / (width * height)),
+  );
+  canvas.width = Math.floor(width * scale);
+  canvas.height = Math.floor(height * scale);
+  context.scale(scale, scale);
+  context.textBaseline = "top";
+  context.fillStyle = "#f4f6f4";
+  context.fillRect(0, 0, width, height);
+  context.fillStyle = "#203a35";
+  context.font = `600 36px ${font}`;
+  context.fillText(day.format("dddd"), 48, 42);
+  context.fillStyle = "#60736e";
+  context.font = `400 22px ${font}`;
+  context.fillText(day.format("D MMMM YYYY"), 48, 92);
+  columns.forEach((items, index) => {
+    const x = 48 + index * (columnWidth + gap);
+    let y = 150;
+    for (const plan of items) {
+      context.fillStyle = "#fff";
+      context.beginPath();
+      context.roundRect(x, y, columnWidth, plan.height, 10);
+      context.fill();
+      context.fillStyle = exportColor(plan.entry.color);
+      context.fillRect(x, y + 12, 4, plan.height - 24);
+      context.fillStyle = "#60736e";
+      context.font = `600 16px ${font}`;
+      context.fillText(plan.entry.time, x + 20, y + 14);
+      let rowY = y + 42;
+      for (const row of plan.rows) {
+        context.font = `${row.depth || row.narrative ? "400" : "600"} 19px ${font}`;
+        context.fillStyle = row.completed ? "#8b9993" : "#203a35";
+        const rowX = x + 20 + Math.min(row.depth, 7) * 16;
+        if (row.checkbox)
+          context.fillText(row.completed ? "☑" : "☐", rowX, rowY);
+        for (const line of row.lines) {
+          context.fillText(line, rowX + (row.checkbox ? 24 : 0), rowY);
+          rowY += 25;
+        }
+        rowY += 5;
+      }
+      y += plan.height + gap;
+    }
+  });
+  if (!entries.length) {
+    context.fillStyle = "#60736e";
+    context.fillText("No scheduled entries for this day.", 48, 150);
+  }
+  return { width: canvas.width, height: canvas.height };
 }
 
 /** Draw a standalone, light-background sharing layout, independent of viewport/zoom. */
@@ -185,6 +384,19 @@ export function drawSchedulePng(
       (text) => context.measureText(text).width,
     );
     context.font = `400 23px ${font}`;
+    for (const text of entry.description ?? [])
+      rows.push({
+        depth: 0,
+        checkbox: false,
+        completed: false,
+        title: false,
+        narrative: true,
+        text: wrapExportText(
+          text,
+          670,
+          (value) => context.measureText(value).width,
+        ),
+      });
     for (const child of entry.lines) {
       const depth = Math.min(child.depth + 1, 8);
       rows.push({
@@ -247,10 +459,7 @@ export function drawSchedulePng(
     context.beginPath();
     context.roundRect(42, y, width - 84, cardHeight, 15);
     context.fill();
-    context.fillStyle =
-      /^#(?:[\da-f]{3}|[\da-f]{4}|[\da-f]{6}|[\da-f]{8})$/i.test(entry.color)
-        ? entry.color
-        : "#318779";
+    context.fillStyle = exportColor(entry.color);
     context.fillRect(42, y + 18, 4, cardHeight - 36);
     context.fillStyle = "#60736e";
     context.font = `600 20px ${font}`;
@@ -284,7 +493,7 @@ export function drawSchedulePng(
           context.lineTo(x - 14, rowY + 9);
           context.stroke();
         }
-      } else if (!row.title) {
+      } else if (!row.title && !row.narrative) {
         context.beginPath();
         context.arc(x - 18, rowY + 13, 2.5, 0, Math.PI * 2);
         context.fill();

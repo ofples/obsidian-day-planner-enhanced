@@ -5,6 +5,7 @@ import type {
 
 export enum EditMode {
   DRAG = "DRAG",
+  SWAP = "SWAP",
   DRAG_AND_SHIFT_OTHERS = "DRAG_AND_SHIFT_OTHERS",
   DRAG_AND_SHRINK_OTHERS = "DRAG_AND_SHRINK_OTHERS",
   RESIZE = "RESIZE",

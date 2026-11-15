@@ -24,6 +24,7 @@ export default class MultiDayView extends ItemView {
   private multiDayComponent?: Record<string, unknown>;
   private dateRange?: DateRange;
   private savedDay?: Moment;
+  private savedDayCount?: number;
   private stopTrackingRange?: () => void;
 
   constructor(
@@ -56,18 +57,35 @@ export default class MultiDayView extends ItemView {
       day: (this.dateRange?.current[0] ?? this.savedDay)?.format(
         defaultDayFormat,
       ),
+      ...(this.savedDayCount === undefined
+        ? {}
+        : { days: this.dateRange?.current.length ?? this.savedDayCount }),
     };
   }
 
   async setState(state: unknown, result: ViewStateResult) {
     const day = getSavedViewDay(state);
+    const previousCount = this.savedDayCount;
+    if (
+      state &&
+      typeof state === "object" &&
+      "days" in state &&
+      Number.isInteger(state.days) &&
+      Number(state.days) >= 1 &&
+      Number(state.days) <= 7
+    )
+      this.savedDayCount = Number(state.days);
     if (day) {
       this.savedDay = day;
       const settings = get(this.settingsStore);
       this.dateRange?.set(
-        r.createRange(settings.multiDayRange, settings.firstDayOfWeek, day),
+        this.savedDayCount
+          ? r.getUpcomingDays(day, this.savedDayCount)
+          : r.createRange(settings.multiDayRange, settings.firstDayOfWeek, day),
       );
     }
+    if (this.dateRange && previousCount !== this.savedDayCount)
+      this.app.workspace.requestSaveLayout();
     await super.setState(state, result);
   }
 
@@ -78,11 +96,16 @@ export default class MultiDayView extends ItemView {
 
     const currentSettings = get(this.settingsStore);
 
-    const range = r.createRange(
-      currentSettings.multiDayRange,
-      currentSettings.firstDayOfWeek,
-      this.savedDay,
-    );
+    const range = this.savedDayCount
+      ? r.getUpcomingDays(
+          this.savedDay?.clone() ?? window.moment().startOf("day"),
+          this.savedDayCount,
+        )
+      : r.createRange(
+          currentSettings.multiDayRange,
+          currentSettings.firstDayOfWeek,
+          this.savedDay,
+        );
 
     const dateRange = this.dateRanges.trackRange(range);
 
@@ -114,6 +137,7 @@ export default class MultiDayView extends ItemView {
           next.multiDayRange !== previousMultiDayRange ||
           next.firstDayOfWeek !== previousFirstDayOfWeek
         ) {
+          this.savedDayCount = undefined;
           previousMultiDayRange = next.multiDayRange;
           previousFirstDayOfWeek = next.firstDayOfWeek;
 

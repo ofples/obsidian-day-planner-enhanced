@@ -5,7 +5,7 @@ import { vibrationDurationMillis } from "../../../constants";
 import type { EditableTimeBlock } from "../../../time-block-types";
 import type { OnUpdateFn } from "../../../types";
 
-import type { EditOperation } from "./types";
+import { EditMode, type EditOperation } from "./types";
 
 interface UseEditActionsProps {
   baselineTimeBlocks: Writable<EditableTimeBlock[]>;
@@ -39,17 +39,27 @@ export function useEditActions({
     const oldBase = get(baselineTimeBlocks);
     const currentTimeBlocks = get(timeBlocksWithPendingUpdate);
 
+    if (
+      currentOperation.mode === EditMode.SWAP &&
+      currentTimeBlocks === oldBase
+    ) {
+      editOperation.set(undefined);
+      return;
+    }
+
     baselineTimeBlocks.set(currentTimeBlocks);
     editOperation.set(undefined);
 
-    const succeeded = await onUpdate(
-      oldBase,
-      currentTimeBlocks,
-      currentOperation.mode,
-    );
-
-    if (!succeeded) {
+    try {
+      const succeeded = await onUpdate(
+        oldBase,
+        currentTimeBlocks,
+        currentOperation.mode,
+      );
+      if (!succeeded) baselineTimeBlocks.set(oldBase);
+    } catch (error) {
       baselineTimeBlocks.set(oldBase);
+      throw error;
     }
   }
 

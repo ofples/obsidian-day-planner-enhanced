@@ -65,3 +65,13 @@ As a planner, I can choose which copied or ambiguously moved block keeps a task 
 ## US-13 Switch accounts and manage connections
 
 As a planner, I can disconnect and reconnect the same account while retaining its cache and links. Connecting another account presents its identity before switching and keeps the accounts' registries separate. A project with the same name in two accounts never shares links. A future provider appears through the same source selector and declares supported editing capabilities.
+
+## Scheduling refinements
+
+As a planner, I can press Enter on a timed task to accept or clear a preselected next slot, while retaining all children under their original parent.
+
+As a planner, I can choose a one-to-seven-day view, mark an empty labeled frame for filling, preview exchanging two blocks, and add another task at an occupied time.
+
+As a Markdown author, I can opt a task into Todoist with a tag and receive its chain link once creation is confirmed, including after an interrupted response.
+
+As someone sharing a schedule, I can export a readable timeline or multi-column overview to PNG or PDF, with independent controls for calendar overlays, all-day events and subtasks.

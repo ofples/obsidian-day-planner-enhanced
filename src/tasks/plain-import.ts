@@ -4,10 +4,12 @@ import { z } from "zod";
 import type { GoogleCalendarSync } from "../google-calendar/service";
 import { getTimeRangeMatch } from "../parser/parser";
 import { locateSource } from "../service/source-identity";
+import { detectIndentation } from "../util/markdown";
 import { hasTaskLock } from "../util/task-lock";
 
 import { parseCaptureCandidates } from "./capture-parser";
 import { rebaseDropOffset } from "./editor-drop";
+import { frameDropWarning } from "./frame";
 import {
   indentTaskSubtree,
   scheduleNoteTitle,
@@ -71,6 +73,7 @@ export class PlainTaskImporter {
       flush(paths: string[]): Promise<void>;
       readImports?(): Promise<string | null>;
       writeImports?(value: string): Promise<void>;
+      warn?(message: string): void;
     },
   ) {}
 
@@ -448,20 +451,19 @@ export class PlainTaskImporter {
               `$1${target.timePrefix} `,
             );
           const newline = before.includes("\r\n") ? "\r\n" : "\n";
+          const step = detectIndentation(`${parent?.raw ?? ""}\n${before}`);
           const indent = parent
             ? before.slice(
                 before.lastIndexOf("\n", parent.from - 1) + 1,
                 parent.from,
-              ) +
-              parent.raw
-                .match(/^(?:[-*+]|\d+[.)])[ \t]+/)![0]
-                .replace(/[^\t]/g, " ")
+              ) + step
             : "";
           const content = indentTaskSubtree(
             lines.join(newline),
             sourceIndent,
             indent,
             newline,
+            step,
           );
           const prefix = offset && after[offset - 1] !== "\n" ? newline : "";
           const suffix = /^\r?\n/.test(after.slice(offset)) ? "" : newline;
@@ -480,6 +482,8 @@ export class PlainTaskImporter {
           };
           await prepare?.({ edits, source });
           await notes.applyEdits(edits);
+          const warning = parent && frameDropWarning(parent.raw, raw);
+          if (warning) this.host.warn?.(warning);
           return source;
         },
         () =>
