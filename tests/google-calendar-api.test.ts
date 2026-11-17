@@ -16,7 +16,11 @@ import {
 } from "../src/google-calendar/auth";
 import { isTodoistCalendarExport } from "../src/google-calendar/exporter";
 import { renderSubtasks, withSubtasks } from "../src/google-calendar/subtasks";
-import type { GoogleEvent, LocalBlock } from "../src/google-calendar/types";
+import {
+  canonicalSnapshotOf,
+  type GoogleEvent,
+  type LocalBlock,
+} from "../src/google-calendar/types";
 import { defaultSettings } from "../src/settings";
 
 const snapshot = {
@@ -45,6 +49,91 @@ beforeEach(() => {
 });
 
 describe("Google REST transport", () => {
+  test.each(["Karma", ""])(
+    "single-child frame %s round trips, accepts Google renames and reverts after more children",
+    async (frameName) => {
+      const api = new GoogleCalendarApi(
+        { token: async () => "credential" } as unknown as GoogleCalendarAuth,
+        "client",
+        "calendar",
+        "namespace",
+        () => true,
+        true,
+      );
+      let stored = { ...event };
+      vi.mocked(requestUrl).mockImplementation((arg) => {
+        const body = JSON.parse((arg as { body: string }).body);
+        stored = { ...stored, ...body, etag: '"updated"' };
+        const value = response(200, stored);
+        return Object.assign(Promise.resolve(value), {
+          json: Promise.resolve(value.json),
+          text: Promise.resolve(value.text),
+          arrayBuffer: Promise.resolve(value.arrayBuffer),
+        });
+      });
+      const frame = {
+        ...snapshot,
+        title: frameName,
+        tags: ["frame", "karma"],
+        subtasks: "- [ ] Mop the floor #karma",
+        description: "",
+      };
+      const created = await api.create("frame-event", "frame-uid", frame);
+      expect(created.summary).toBe("Mop the floor");
+      expect(created.extendedProperties?.private).toMatchObject({
+        dayPlannerFrameTitle: frameName,
+        dayPlannerFrameDisplayTitle: "Mop the floor",
+      });
+      expect(canonicalSnapshotOf(created)).toMatchObject(frame);
+      await api.update(created, canonicalSnapshotOf(created)!);
+      expect(requestUrl).toHaveBeenCalledOnce();
+      stored = { ...stored, summary: "Buy supplies" };
+      const renamed = canonicalSnapshotOf(stored)!;
+      expect(renamed.title).toBe(frameName);
+      expect(renamed.subtasks).toBe("- [ ] Buy supplies #karma");
+      const updated = await api.update(stored, renamed);
+      expect(updated.description).toBe("⬜ Buy supplies #karma");
+      expect(
+        updated.extendedProperties?.private?.["dayPlannerFrameDisplayTitle"],
+      ).toBe("Buy supplies");
+      expect(canonicalSnapshotOf(updated)).toMatchObject({
+        title: frameName,
+        subtasks: "- [ ] Buy supplies #karma",
+      });
+      await api.update(updated, canonicalSnapshotOf(updated)!);
+      expect(requestUrl).toHaveBeenCalledTimes(2);
+      stored = {
+        ...stored,
+        description: stored.description + "\n⬜ Second task",
+      };
+      const two = canonicalSnapshotOf(stored)!;
+      expect(two.title).toBe(frameName);
+      const restored = await api.update(stored, two);
+      expect(restored.summary).toBe(frameName);
+      expect(
+        restored.extendedProperties?.private?.["dayPlannerFrameTitle"],
+      ).toBe("");
+    },
+  );
+
+  test("removing all Google frame children retains the frame's own title", async () => {
+    const value = {
+      ...event,
+      summary: "Mop",
+      description: "",
+      extendedProperties: {
+        private: {
+          dayPlannerTags: '["frame"]',
+          dayPlannerFrameTitle: "Karma",
+          dayPlannerFrameDisplayTitle: "Mop",
+        },
+      },
+    };
+    expect(canonicalSnapshotOf(value)).toMatchObject({
+      title: "Karma",
+      subtasks: "",
+    });
+  });
   test("explicit overwrite replaces managed fields despite malformed metadata and retains the ETag", async () => {
     const api = new GoogleCalendarApi(
       { token: async () => "credential" } as unknown as GoogleCalendarAuth,

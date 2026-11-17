@@ -4,6 +4,13 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.9.4
+
+- Single-child frames display the child's name in the planner, Google Calendar and schedule exports. Empty frames and frames with several direct children display their container name.
+- Added dotted frame outlines and hid the frame control tag in the timeline.
+- PNG, PDF and compact overview exports hide frame/lock control tags and render category tags as wrapped pills.
+- Google frame metadata records the container title, with Google title edits applied to its sole child.
+
 ## 0.9.3
 
 - Prevented repeated Todoist self-links when importing a task, pulling a rename or rendering a Google Calendar update.

@@ -192,7 +192,8 @@
 
     box-sizing: border-box;
 
-    border: var(--time-block-outline-width, 0) solid
+    border: var(--time-block-outline-width, 0)
+      var(--time-block-outline-style, solid)
       var(--time-block-outline-color, transparent);
   }
 

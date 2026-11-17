@@ -5,10 +5,13 @@ import { fromMarkdown } from "../mdast/mdast";
 import { restoreWikilinks } from "../mdast/wikilink";
 import type { ListItemEntryWithChildren } from "../redux/index/index-slice";
 import type { DayPlannerSettings } from "../settings";
+import { parseCaptureCandidates } from "../tasks/capture-parser";
+import { frameHeading, singleFrameChild } from "../tasks/frame";
 import { stripTaskLink } from "../tasks/weak-links";
 import { isRemote, type TimelineTimeBlock } from "../time-block-types";
 
 import type { Moment } from "./obsidian-moment";
+import { withoutDisplayedControlTags } from "./task-lock";
 import { filterVisibleTaskChildren } from "./task-status";
 import { isCompleted, toRenderableMarkdown } from "./time-block-utils";
 
@@ -17,11 +20,13 @@ export interface ScheduleExportLine {
   depth: number;
   completed: boolean;
   checkbox: boolean;
+  tags?: string[];
 }
 
 export interface ScheduleExportEntry {
   time: string;
   title: string;
+  tags?: string[];
   completed: boolean;
   checkbox: boolean;
   color: string;
@@ -54,6 +59,46 @@ function exportColor(value: string) {
   return chroma.valid(value) ? chroma(value).hex() : "#318779";
 }
 
+export function taggedExportText(markdown: string, knownTags?: string[]) {
+  if (knownTags)
+    return {
+      text: markdown,
+      tags: knownTags.filter((tag) => !/^#?(frame|locked)$/i.test(tag)),
+    };
+  const tags: string[] = [];
+  const text = markdown
+    .split(/\r?\n/)
+    .map((line) => {
+      const prefix = "- [ ] ";
+      const candidate = parseCaptureCandidates("", prefix + line)[0];
+      let cleaned = line;
+      for (const tag of candidate?.tags ?? [])
+        if (!["frame", "locked"].includes(tag.name.toLowerCase()))
+          tags.push(`#${tag.name}`);
+      for (const tag of (candidate?.tags ?? []).toReversed()) {
+        cleaned =
+          cleaned.slice(0, tag.from - prefix.length) +
+          cleaned.slice(tag.to - prefix.length);
+      }
+      return cleaned;
+    })
+    .join("\n");
+  return {
+    text: text.replace(/[ \t]{2,}/g, " ").trim(),
+    tags: [...new Set(tags)],
+  };
+}
+
+function taggedExportHtml(text: string, tags?: string[]) {
+  const value = taggedExportText(text, tags);
+  const pills = value.tags
+    .map((tag) => `<span class="tag-pill">${escapeHtml(tag)}</span>`)
+    .join("");
+  return (
+    escapeHtml(value.text) + (pills ? `<span class="tags">${pills}</span>` : "")
+  );
+}
+
 /** Self-contained print document: no external resources or executable scripts. */
 export function schedulePrintHtml(
   day: Moment,
@@ -64,18 +109,20 @@ export function schedulePrintHtml(
     .map((entry) => {
       const color = exportColor(entry.color);
       const description = (entry.description ?? [])
-        .map((line) => `<div class="description">${escapeHtml(line)}</div>`)
+        .map(
+          (line) => `<div class="description">${taggedExportHtml(line)}</div>`,
+        )
         .join("");
       const children = entry.lines
         .map(
           (line) =>
-            `<div class="child" style="margin-left:${Math.min(line.depth, 8) * 12}px">${line.checkbox ? (line.completed ? "☑ " : "☐ ") : "• "}${escapeHtml(line.text)}</div>`,
+            `<div class="child" style="margin-left:${Math.min(line.depth, 8) * 12}px">${line.checkbox ? (line.completed ? "☑ " : "☐ ") : "• "}${taggedExportHtml(line.text, line.tags)}</div>`,
         )
         .join("");
-      return `<article style="border-color:${color}"><div class="time">${escapeHtml(entry.time)}</div><div class="title">${entry.checkbox ? (entry.completed ? "☑ " : "☐ ") : ""}${escapeHtml(entry.title)}</div>${description}${children}</article>`;
+      return `<article style="border-color:${color}"><div class="time">${escapeHtml(entry.time)}</div><div class="title">${entry.checkbox ? (entry.completed ? "☑ " : "☐ ") : ""}${taggedExportHtml(entry.title, entry.tags)}</div>${description}${children}</article>`;
     })
     .join("");
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>@page{size:A4;margin:12mm}body{font:14px system-ui,sans-serif;color:#203a35;margin:0}h1{font-size:25px;margin:0 0 4px}.date{color:#60736e;margin:0 0 20px}.cards{${overview ? "column-count:3;column-gap:12px" : ""}}article{break-inside:avoid;page-break-inside:avoid;border-left:4px solid;padding:9px 10px;margin:0 0 10px;background:#f3f7f5;overflow-wrap:anywhere}.time{font-size:11px;color:#60736e}.title{font-weight:600;margin:3px 0}.child{font-size:12px;line-height:1.4;margin-top:3px}</style></head><body><h1>${escapeHtml(day.format("dddd"))}</h1><p class="date">${escapeHtml(day.format("D MMMM YYYY"))}</p><div class="cards">${cards || "No scheduled entries for this day."}</div></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>@page{size:A4;margin:12mm}body{font:14px system-ui,sans-serif;color:#203a35;margin:0}h1{font-size:25px;margin:0 0 4px}.date{color:#60736e;margin:0 0 20px}.cards{${overview ? "column-count:3;column-gap:12px" : ""}}article{break-inside:avoid;page-break-inside:avoid;border-left:4px solid;padding:9px 10px;margin:0 0 10px;background:#f3f7f5;overflow-wrap:anywhere}.time{font-size:11px;color:#60736e}.title{font-weight:600;margin:3px 0}.child{font-size:12px;line-height:1.4;margin-top:3px}.tags{display:inline-flex;flex-wrap:wrap;gap:4px;margin:4px 0 0 6px;max-width:100%;vertical-align:middle}.tag-pill{display:inline-block;padding:2px 7px;background:#e1eee8;color:#365c50;border:1px solid #ccdfd6;border-radius:999px;font:500 11px system-ui;overflow-wrap:anywhere}</style></head><body><h1>${escapeHtml(day.format("dddd"))}</h1><p class="date">${escapeHtml(day.format("D MMMM YYYY"))}</p><div class="cards">${cards || "No scheduled entries for this day."}</div></body></html>`;
 }
 
 function nodeText(node: Nodes): string {
@@ -120,23 +167,41 @@ export function createScheduleExportEntries(
     if (isRemote(block)) {
       return {
         time,
-        title: exportPlainText(block.summary),
+        title: exportPlainText(taggedExportText(block.summary).text),
+        tags: taggedExportText(block.summary).tags,
         completed: block.rsvpStatus === "DECLINED",
         checkbox: false,
         color: block.calendar.color,
         lines: [],
       };
     }
-    const { listItem, paragraphs } = toRenderableMarkdown(block, {
+    const visibleChildren = filterVisibleTaskChildren(
+      block.children,
+      settings.hiddenTaskStatuses,
+    );
+    const promoted =
+      block.children?.length === 1
+        ? singleFrameChild({ ...block, children: visibleChildren })
+        : undefined;
+    const displayed = {
+      ...block,
+      text: promoted
+        ? frameHeading({ ...block, children: [promoted] })
+        : block.text,
+      children: promoted ? promoted.children : visibleChildren,
+    };
+    const { listItem, paragraphs } = toRenderableMarkdown(displayed, {
       hideTasksMetadata: settings.hideTasksMetadata,
     });
     const description = fromMarkdown(paragraphs)
       .children.filter((node) => node.type !== "list")
       .map((node) =>
         exportPlainText(
-          paragraphs.slice(
-            node.position?.start.offset,
-            node.position?.end.offset,
+          withoutDisplayedControlTags(
+            paragraphs.slice(
+              node.position?.start.offset,
+              node.position?.end.offset,
+            ),
           ),
         ),
       )
@@ -148,8 +213,10 @@ export function createScheduleExportEntries(
     ) {
       for (const child of children) {
         // The original child text preserves its own time range, unlike a parent title.
+        const tagged = taggedExportText(child.text.split("\n")[0] ?? "");
         lines.push({
-          text: exportPlainText(child.text.split("\n")[0] ?? ""),
+          text: exportPlainText(tagged.text),
+          tags: tagged.tags,
           depth,
           completed: isCompleted(child.task),
           checkbox: child.task !== undefined,
@@ -157,16 +224,14 @@ export function createScheduleExportEntries(
         addChildren(child.children, depth + 1);
       }
     }
-    if (includeSubtasks)
-      addChildren(
-        filterVisibleTaskChildren(block.children, settings.hiddenTaskStatuses),
-      );
+    if (includeSubtasks) addChildren(displayed.children);
     const override = settings.colorOverrides.find((entry) =>
       block.text.includes(entry.text),
     );
     return {
       time,
-      title: exportPlainText(listItem),
+      title: exportPlainText(taggedExportText(listItem).text),
+      tags: taggedExportText(listItem).tags,
       completed: isCompleted(block.task ?? block.status),
       checkbox: block.task !== undefined,
       color: override?.color ?? "#318779",
@@ -224,6 +289,97 @@ interface DrawnRow {
   completed: boolean;
   title: boolean;
   narrative?: boolean;
+  tagLayout?: ExportTagLayout;
+}
+
+interface ExportTagLayout {
+  height: number;
+  pills: Array<{
+    lines: string[];
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>;
+}
+
+function exportTextLayout(
+  context: CanvasRenderingContext2D,
+  text: string,
+  tags: string[] | undefined,
+  width: number,
+  tagSize: number,
+  font: string,
+) {
+  const value = taggedExportText(text, tags);
+  const lines = wrapExportText(
+    value.text,
+    width,
+    (text) => context.measureText(text).width,
+  );
+  const bodyFont = context.font;
+  context.font = `500 ${tagSize}px ${font}`;
+  const pills: ExportTagLayout["pills"] = [];
+  let x = 0,
+    y = 0,
+    rowHeight = 0;
+  for (const tag of value.tags) {
+    const wrapped = wrapExportText(
+      tag,
+      width - 18,
+      (text) => context.measureText(text).width,
+    );
+    const pillWidth = Math.min(
+      width,
+      Math.max(...wrapped.map((line) => context.measureText(line).width)) + 18,
+    );
+    const height = wrapped.length * (tagSize + 4) + 8;
+    if (x && x + pillWidth > width) {
+      x = 0;
+      y += rowHeight + 5;
+      rowHeight = 0;
+    }
+    pills.push({ lines: wrapped, x, y, width: pillWidth, height });
+    x += pillWidth + 6;
+    rowHeight = Math.max(rowHeight, height);
+  }
+  context.font = bodyFont;
+  return {
+    lines,
+    tagLayout: { pills, height: pills.length ? y + rowHeight : 0 },
+  };
+}
+
+function drawExportTags(
+  context: CanvasRenderingContext2D,
+  layout: ExportTagLayout | undefined,
+  x: number,
+  y: number,
+  color: string,
+  size: number,
+  font: string,
+) {
+  context.font = `500 ${size}px ${font}`;
+  for (const pill of layout?.pills ?? []) {
+    context.fillStyle = chroma(exportColor(color)).alpha(0.12).css();
+    context.beginPath();
+    context.roundRect(
+      x + pill.x,
+      y + pill.y,
+      pill.width,
+      pill.height,
+      Math.min(12, pill.height / 2),
+    );
+    context.fill();
+    context.fillStyle = chroma(exportColor(color)).darken(1).hex();
+    pill.lines.forEach((line, index) =>
+      context.fillText(
+        line,
+        x + pill.x + 9,
+        y + pill.y + 4 + index * (size + 4),
+      ),
+    );
+  }
 }
 
 /** A compact, three-column day view with each subtree kept within its card. */
@@ -244,6 +400,7 @@ export function drawScheduleOverview(
     const rows = [
       {
         text: entry.title,
+        tags: entry.tags,
         depth: 0,
         checkbox: entry.checkbox,
         completed: entry.completed,
@@ -262,19 +419,33 @@ export function drawScheduleOverview(
         narrative: false,
       })),
     ];
-    const wrapped = rows.map((row) => ({
-      ...row,
-      lines: wrapExportText(
-        row.text,
-        Math.max(170, columnWidth - 52 - Math.min(row.depth, 7) * 16),
-        (text) => context.measureText(text).width,
-      ),
-    }));
+    const wrapped = rows.map((row) => {
+      context.font = `${row.depth || row.narrative ? "400" : "600"} 19px ${font}`;
+      return {
+        ...row,
+        ...exportTextLayout(
+          context,
+          row.text,
+          "tags" in row ? row.tags : undefined,
+          Math.max(170, columnWidth - 52 - Math.min(row.depth, 7) * 16),
+          14,
+          font,
+        ),
+      };
+    });
     return {
       entry,
       rows: wrapped,
       height:
-        54 + wrapped.reduce((sum, row) => sum + row.lines.length * 25 + 5, 0),
+        54 +
+        wrapped.reduce(
+          (sum, row) =>
+            sum +
+            row.lines.length * 25 +
+            5 +
+            (row.tagLayout.height ? row.tagLayout.height + 6 : 0),
+          0,
+        ),
     };
   });
   const total = plans.reduce((sum, plan) => sum + plan.height + gap, 0);
@@ -344,6 +515,18 @@ export function drawScheduleOverview(
           context.fillText(line, rowX + (row.checkbox ? 24 : 0), rowY);
           rowY += 25;
         }
+        if (row.tagLayout.height) {
+          drawExportTags(
+            context,
+            row.tagLayout,
+            rowX + (row.checkbox ? 24 : 0),
+            rowY + 3,
+            plan.entry.color,
+            14,
+            font,
+          );
+          rowY += row.tagLayout.height + 6;
+        }
         rowY += 5;
       }
       y += plan.height + gap;
@@ -378,36 +561,45 @@ export function drawSchedulePng(
       },
     ];
     context.font = `600 29px ${font}`;
-    rows[0]!.text = wrapExportText(
+    const titleLayout = exportTextLayout(
+      context,
       entry.title,
+      entry.tags,
       670,
-      (text) => context.measureText(text).width,
+      18,
+      font,
     );
+    rows[0]!.text = titleLayout.lines;
+    rows[0]!.tagLayout = titleLayout.tagLayout;
     context.font = `400 23px ${font}`;
-    for (const text of entry.description ?? [])
+    for (const text of entry.description ?? []) {
+      const layout = exportTextLayout(context, text, undefined, 670, 18, font);
       rows.push({
         depth: 0,
         checkbox: false,
         completed: false,
         title: false,
         narrative: true,
-        text: wrapExportText(
-          text,
-          670,
-          (value) => context.measureText(value).width,
-        ),
+        text: layout.lines,
+        tagLayout: layout.tagLayout,
       });
+    }
     for (const child of entry.lines) {
       const depth = Math.min(child.depth + 1, 8);
+      const layout = exportTextLayout(
+        context,
+        child.text,
+        child.tags,
+        Math.max(240, 670 - depth * 24),
+        18,
+        font,
+      );
       rows.push({
         ...child,
         depth,
         title: false,
-        text: wrapExportText(
-          child.text,
-          Math.max(240, 670 - depth * 24),
-          (text) => context.measureText(text).width,
-        ),
+        text: layout.lines,
+        tagLayout: layout.tagLayout,
       });
     }
     return {
@@ -420,6 +612,7 @@ export function drawSchedulePng(
             (sum, row) =>
               sum +
               row.text.length * (row.title ? 39 : 33) +
+              (row.tagLayout?.height ? row.tagLayout.height + 8 : 0) +
               (row.title ? 0 : 10),
             0,
           ),
@@ -501,6 +694,18 @@ export function drawSchedulePng(
       for (const text of row.text) {
         context.fillText(text, x, rowY);
         rowY += row.title ? 39 : 33;
+      }
+      if (row.tagLayout?.height) {
+        drawExportTags(
+          context,
+          row.tagLayout,
+          x,
+          rowY + 2,
+          entry.color,
+          18,
+          font,
+        );
+        rowY += row.tagLayout.height + 8;
       }
       if (!row.title) rowY += 10;
     }

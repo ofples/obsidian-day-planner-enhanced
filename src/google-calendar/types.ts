@@ -1,3 +1,4 @@
+import { calendarFrameChild, renameCalendarFrameChild } from "../tasks/frame";
 import { stripTaskLink, taskLinkUrl } from "../tasks/weak-links";
 import { normalizeListIndentation } from "../util/markdown";
 
@@ -243,12 +244,24 @@ export function canonicalSnapshotOf(
         );
     }
   }
+  let title = stripTaskLink(snapshot.title);
+  let subtasks = fields?.subtasks ?? plain.subtasks;
+  const frameTitle =
+    event.extendedProperties?.private?.["dayPlannerFrameTitle"];
+  const displayedTitle =
+    event.extendedProperties?.private?.["dayPlannerFrameDisplayTitle"];
+  if (frameTitle !== undefined && displayedTitle) {
+    if (calendarFrameChild({ tags, subtasks }) && title !== displayedTitle) {
+      subtasks = renameCalendarFrameChild({ tags, subtasks }, title);
+      title = normalizeTitle(frameTitle);
+    } else if (title === displayedTitle) title = normalizeTitle(frameTitle);
+  }
   return {
     ...snapshot,
-    title: stripTaskLink(snapshot.title),
+    title,
     tags,
     colorId: event.colorId ?? null,
-    subtasks: fields?.subtasks ?? plain.subtasks,
+    subtasks,
     description: plain.description,
     taskUrl: plain.taskUrl ?? taskLinkUrl(event.summary ?? "") ?? null,
   };

@@ -103,8 +103,11 @@
     ? "var(--color-accent)"
     : frame.warning
       ? "var(--color-orange)"
-      : ""}
-  --time-block-outline-width={isActive ? "2px" : frame.warning ? "1px" : ""}
+      : frame.frame
+        ? "var(--text-faint)"
+        : ""}
+  --time-block-outline-style={frame.frame && !isActive ? "dotted" : "solid"}
+  --time-block-outline-width={isActive ? "2px" : frame.frame ? "1px" : ""}
   --time-block-strip-color={isActive ? "var(--color-accent)" : ""}
   --time-block-z-index={isActive ? "2" : ""}
   {allDayColor}

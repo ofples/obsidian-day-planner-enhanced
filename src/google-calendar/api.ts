@@ -9,6 +9,7 @@ import {
   RequestTransientError,
 } from "../service/request-gate";
 import type { DayPlannerSettings } from "../settings";
+import { calendarFrameChild } from "../tasks/frame";
 import { stripTaskLink, taskLinkUrl } from "../tasks/weak-links";
 
 import {
@@ -361,7 +362,9 @@ export class GoogleCalendarApi implements CalendarApi {
 
   private body(snapshot: CalendarSnapshot) {
     return {
-      summary: stripTaskLink(snapshot.title),
+      summary: stripTaskLink(
+        calendarFrameChild(snapshot)?.title ?? snapshot.title,
+      ),
       start: { dateTime: snapshot.start },
       end: { dateTime: snapshot.end },
       ...(this.colorForSnapshot
@@ -380,6 +383,26 @@ export class GoogleCalendarApi implements CalendarApi {
         "Day Planner tags exceed the Google Calendar metadata limit.",
       );
     return encoded;
+  }
+
+  private frameProperties(
+    snapshot: CalendarSnapshot,
+    event?: GoogleEvent,
+  ): Record<string, string> {
+    const child = calendarFrameChild(snapshot);
+    const metadata: Record<string, string> = child
+      ? {
+          dayPlannerFrameTitle: snapshot.title,
+          dayPlannerFrameDisplayTitle: child.title,
+        }
+      : event?.extendedProperties?.private?.["dayPlannerFrameDisplayTitle"]
+        ? { dayPlannerFrameTitle: "", dayPlannerFrameDisplayTitle: "" }
+        : {};
+    if (
+      Object.values(metadata).some((value) => Array.from(value).length > 1024)
+    )
+      throw new Error("The frame title exceeds Google's metadata size limit.");
+    return metadata;
   }
 
   async create(
@@ -409,6 +432,7 @@ export class GoogleCalendarApi implements CalendarApi {
               dayPlannerBlock: uid,
               dayPlannerSchemaVersion: "4",
               dayPlannerTags: tags,
+              ...this.frameProperties(snapshot),
             },
           },
         });
@@ -468,6 +492,7 @@ export class GoogleCalendarApi implements CalendarApi {
               ...event.extendedProperties?.private,
               dayPlannerTags: this.structuredTags(snapshot),
               dayPlannerSchemaVersion: "4",
+              ...this.frameProperties(snapshot, event),
             },
           },
         },
@@ -480,8 +505,11 @@ export class GoogleCalendarApi implements CalendarApi {
           "Google event cannot be represented as a timed planner block.",
         );
       const body: Record<string, unknown> = {};
-      if (snapshot.title !== current.title || taskLinkUrl(event.summary ?? ""))
-        body.summary = stripTaskLink(snapshot.title);
+      const summary = stripTaskLink(
+        calendarFrameChild(snapshot)?.title ?? snapshot.title,
+      );
+      if (summary !== (event.summary ?? "") || taskLinkUrl(event.summary ?? ""))
+        body.summary = summary;
       if (Date.parse(snapshot.start) !== Date.parse(current.start))
         body.start = { dateTime: snapshot.start };
       if (Date.parse(snapshot.end) !== Date.parse(current.end))
@@ -506,19 +534,26 @@ export class GoogleCalendarApi implements CalendarApi {
         description !== current.description ||
         taskUrl !== current.taskUrl ||
         Boolean(taskUrl && !(event.description ?? "").includes(taskUrl)) ||
+        (Boolean(calendarFrameChild(snapshot)) &&
+          desiredDescription !== (event.description ?? "")) ||
         (event.description ?? "").includes(structuredStart)
       )
         body.description = desiredDescription;
       const encoded = this.structuredTags({ ...snapshot, tags });
+      const frameProperties = this.frameProperties(snapshot, event);
       if (
         event.extendedProperties?.private?.["dayPlannerTags"] !== encoded ||
-        event.extendedProperties.private["dayPlannerSchemaVersion"] !== "4"
+        event.extendedProperties.private["dayPlannerSchemaVersion"] !== "4" ||
+        Object.entries(frameProperties).some(
+          ([key, value]) => event.extendedProperties?.private?.[key] !== value,
+        )
       )
         body.extendedProperties = {
           private: {
             ...event.extendedProperties?.private,
             dayPlannerTags: encoded,
             dayPlannerSchemaVersion: "4",
+            ...frameProperties,
           },
         };
       if (!Object.keys(body).length) return event;

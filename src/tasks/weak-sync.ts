@@ -40,6 +40,8 @@ function protectedSpans(
   if (time) spans.push([time.startIndex, time.endIndex]);
   for (const tag of candidate.tags)
     spans.push([tag.from - candidate.from, tag.to - candidate.from]);
+  for (const match of line.matchAll(/<!--.*?-->|\s+\^[\w-]+\s*$/g))
+    spans.push([match.index, match.index + match[0].length]);
   for (const match of line.matchAll(/\[[^\]]*\]\([^\n)]*\)/g)) {
     if (taskLinkIdentity(match[0]))
       spans.push([match.index, match.index + match[0].length]);
@@ -58,7 +60,7 @@ function titleOf(candidate: CaptureCandidate, line: string) {
     new Set(candidate.tags.map((tag) => tag.name)),
   );
 }
-function replaceTitle(
+export function replaceTaskTitle(
   candidate: CaptureCandidate,
   line: string,
   title: string,
@@ -223,7 +225,7 @@ export class WeakTaskSync {
             continue;
           let afterLine = line;
           if (pullTitle) {
-            afterLine = replaceTitle(candidate, line, providerTitle);
+            afterLine = replaceTaskTitle(candidate, line, providerTitle);
           }
           if (pullCompletion)
             afterLine = afterLine.replace(

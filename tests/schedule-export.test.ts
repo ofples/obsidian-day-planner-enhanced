@@ -9,6 +9,7 @@ import { addTimelineViewMenuItems } from "../src/ui/timeline-view-menu";
 import {
   createScheduleExportEntries,
   drawScheduleOverview,
+  drawSchedulePng,
   exportPlainText,
   filterScheduleExportBlocks,
   schedulePrintHtml,
@@ -36,6 +37,84 @@ const child = (
 });
 
 describe("shareable schedule", () => {
+  test.each([drawSchedulePng, drawScheduleOverview])(
+    "PNG layouts draw wrapped tag pills and hide control labels",
+    (draw) => {
+      const written: string[] = [];
+      const rectangles: number[][] = [];
+      const context = {
+        font: "",
+        fillStyle: "",
+        textBaseline: "",
+        strokeStyle: "",
+        lineWidth: 1,
+        scale: vi.fn(),
+        fillRect: vi.fn(),
+        beginPath: vi.fn(),
+        fill: vi.fn(),
+        stroke: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        arc: vi.fn(),
+        roundRect: (...values: number[]) => rectangles.push(values),
+        measureText: (text: string) => ({ width: text.length * 10 }),
+        fillText: (text: string) => written.push(text),
+      };
+      const canvas = {
+        getContext: () => context,
+        width: 0,
+        height: 0,
+      } as unknown as HTMLCanvasElement;
+      const long = "#" + "a".repeat(300);
+      draw(canvas, window.moment("2026-11-17"), [
+        {
+          time: "09:00",
+          title: `Task #karma #frame #locked ${long}`,
+          description: ["Details #frame #project"],
+          color: "#318779",
+          checkbox: true,
+          completed: false,
+          lines: [
+            {
+              text: "Child #work #locked",
+              depth: 0,
+              completed: false,
+              checkbox: true,
+            },
+          ],
+        },
+      ]);
+      expect(written).toContain("#karma");
+      expect(written).toContain("#work");
+      expect(written).toContain("#project");
+      expect(written.join("")).toContain(long);
+      expect(written.join(" ")).not.toMatch(/#(?:locked|frame)\b/);
+      expect(rectangles.some((rect) => rect[2]! < 700 && rect[3]! > 50)).toBe(
+        true,
+      );
+    },
+  );
+  test("frame and lock tags are hidden and ordinary tags become pills in both text and child rows", () => {
+    const blocks = [
+      {
+        ...baseTimeBlock,
+        text: "Karma #frame #locked #karma",
+        children: [child("only", "Mop the floor #karma #locked")],
+      },
+    ];
+    const [entry] = createScheduleExportEntries(blocks, defaultSettings);
+    expect(entry?.title).toBe("Mop the floor");
+    expect(entry?.tags).toEqual(["#karma"]);
+    expect(entry?.lines).toEqual([]);
+    const html = schedulePrintHtml(
+      window.moment("2026-11-17"),
+      [entry!],
+      false,
+    );
+    expect(html).toContain('<span class="tag-pill">#karma</span>');
+    expect(html).not.toContain("#frame");
+    expect(html).not.toContain("#locked");
+  });
   test("exports parent narrative without subtasks and removes the Todoist link", () => {
     const blocks = [
       {
@@ -178,7 +257,8 @@ describe("shareable schedule", () => {
     ];
     const before = JSON.stringify(blocks);
     const [entry] = createScheduleExportEntries(blocks, defaultSettings);
-    expect(entry?.title).toBe("Admin #work");
+    expect(entry?.title).toBe("Admin");
+    expect(entry?.tags).toEqual(["#work"]);
     expect(entry?.time).toBe("09:15 – 09:30");
     expect(
       entry?.lines.map((line) => [line.text, line.depth, line.completed]),

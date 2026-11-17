@@ -3,6 +3,7 @@
   import type { Snippet } from "svelte";
 
   import { getObsidianContext } from "../../context/obsidian-context";
+  import { frameHeading, singleFrameChild } from "../../tasks/frame";
   import {
     isListItemSourced,
     type LocalTimeBlock,
@@ -10,7 +11,7 @@
   import { createRenderMarkdownAttachment } from "../../util/dom";
   import { getMinutesSinceMidnight } from "../../util/moment";
   import { filterVisibleTaskChildren } from "../../util/task-status";
-  import { withoutDisplayedLockTags } from "../../util/task-lock";
+  import { withoutDisplayedControlTags } from "../../util/task-lock";
   import {
     createTimestampParts,
     isCompleted,
@@ -58,24 +59,36 @@
           $settingsStore.hiddenTaskStatuses,
         ),
   );
+  const promotedChild = $derived(
+    timeBlock.children?.length === 1
+      ? singleFrameChild({ ...timeBlock, children: visibleChildren })
+      : undefined,
+  );
   const {
     listItem: rawListItem,
     nestedListItems: rawNestedListItems,
-    paragraphs,
+    paragraphs: rawParagraphs,
   } = $derived(
     toRenderableMarkdown(
-      { ...timeBlock, children: visibleChildren },
+      {
+        ...timeBlock,
+        text: promotedChild
+          ? frameHeading({ ...timeBlock, children: [promotedChild] })
+          : timeBlock.text,
+        children: promotedChild ? promotedChild.children : visibleChildren,
+      },
       {
         hideTasksMetadata: $settingsStore.hideTasksMetadata,
         showEmbedsInTaskBlocks: $settingsStore.showEmbedsInTaskBlocks,
       },
     ),
   );
-  const listItem = $derived(withoutDisplayedLockTags(rawListItem));
+  const listItem = $derived(withoutDisplayedControlTags(rawListItem));
+  const paragraphs = $derived(withoutDisplayedControlTags(rawParagraphs));
   const nestedListItems = $derived(
     rawNestedListItems === undefined
       ? undefined
-      : withoutDisplayedLockTags(rawNestedListItems),
+      : withoutDisplayedControlTags(rawNestedListItems),
   );
   const sourcePath = $derived(
     timeBlock.source === "unwritten" ? "/" : timeBlock.path,
@@ -165,7 +178,7 @@
   // Derived through a string key so the array is only rebuilt when the lines
   // themselves change; an equal key leaves the previous array in place.
   const nestedListItemLinesKey = $derived(
-    nestedItems
+    (promotedChild ? flatten(promotedChild.children) : nestedItems)
       .filter((nestedItem) => nestedItem.task !== undefined)
       .map((nestedItem) => nestedItem.position.start.line)
       .join(","),
@@ -260,7 +273,7 @@
         ]}
         title={nestedItems
           .map((item) =>
-            withoutDisplayedLockTags(item.text.replace(/<!--.*?-->/g, "")),
+            withoutDisplayedControlTags(item.text.replace(/<!--.*?-->/g, "")),
           )
           .join("\n")}
         {@attach createRenderMarkdownAttachment({
@@ -271,24 +284,24 @@
           onCheckboxLineClick,
         })}
       ></div>
-      {#if canRevealSubtasks}
-        <button
-          class="subtask-count"
-          type="button"
-          aria-label={`View all ${nestedItemCount} subtasks`}
-          title={`View all ${nestedItemCount} subtasks`}
-          onpointerdown={(event) => event.stopPropagation()}
-          onpointerup={(event) => event.stopPropagation()}
-          onclick={(event) => {
-            event.stopPropagation();
-            if (
-              timeBlock.source === "dailyNoteDate" ||
-              timeBlock.source === "tasksPluginProp"
-            )
-              openNestedItemsEditModal?.(timeBlock);
-          }}><ListTree size={12} aria-hidden="true" />{nestedItemCount}</button
-        >
-      {/if}
+    {/if}
+    {#if canRevealSubtasks}
+      <button
+        class="subtask-count"
+        type="button"
+        aria-label={`View all ${nestedItemCount} subtasks`}
+        title={`View all ${nestedItemCount} subtasks`}
+        onpointerdown={(event) => event.stopPropagation()}
+        onpointerup={(event) => event.stopPropagation()}
+        onclick={(event) => {
+          event.stopPropagation();
+          if (
+            timeBlock.source === "dailyNoteDate" ||
+            timeBlock.source === "tasksPluginProp"
+          )
+            openNestedItemsEditModal?.(timeBlock);
+        }}><ListTree size={12} aria-hidden="true" />{nestedItemCount}</button
+      >
     {/if}
   {/snippet}
 </TimeBlockContentLayout>

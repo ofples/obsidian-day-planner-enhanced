@@ -1,15 +1,15 @@
 import { parseCaptureCandidates } from "../tasks/capture-parser";
 
-/** Hide only actual #locked tags from rendered text; source Markdown stays intact. */
-export function withoutDisplayedLockTags(text: string): string {
+/** Hide actual #frame and #locked tags from rendered text; source Markdown stays intact. */
+export function withoutDisplayedControlTags(text: string): string {
   return text
     .split("\n")
     .map((line) => {
-      if (!/#locked/i.test(line)) return line;
+      if (!/#(?:locked|frame)\b/i.test(line)) return line;
       const prefix = "- [ ] ";
       const tags =
-        parseCaptureCandidates("", prefix + line)[0]?.tags.filter(
-          (tag) => tag.name.toLowerCase() === "locked",
+        parseCaptureCandidates("", prefix + line)[0]?.tags.filter((tag) =>
+          ["locked", "frame"].includes(tag.name.toLowerCase()),
         ) ?? [];
       let result = line;
       for (const tag of tags.toReversed()) {

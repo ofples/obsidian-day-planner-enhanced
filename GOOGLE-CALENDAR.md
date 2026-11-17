@@ -57,6 +57,8 @@ With note import enabled, each recurring Google event occurrence in the import w
 
 ## Behavior
 
+A `#frame` with exactly one direct child uses the child's name as its Google title. Private event metadata records the frame's container name and displayed child name. Editing that Google title renames the child. Empty frames and frames with multiple direct children use their container name. The complete child list remains in the event description.
+
 ```markdown
 # Day planner
 
