@@ -1,6 +1,7 @@
 {
   "extends": "@tsconfig/svelte/tsconfig.json",
   "compilerOptions": {
+    "noEmit": true,
     "importsNotUsedAsValues": "remove",
     "baseUrl": ".",
     "inlineSources": true,

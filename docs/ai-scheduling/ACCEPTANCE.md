@@ -25,4 +25,10 @@ Record source checks, installed UI, agent integration and live provider readback
 
 ## Current status
 
-Planning and generated design boards are available. Feature source implementation and acceptance are pending.
+The plan, six generated mockup boards, refined technical specification and implementation goal are committed. The goal is active on the separate AI branch.
+
+The initial source checkpoint has sixteen passing focused tests across the pure scheduling core, context construction and CLI helper. These cover proposal shape, selected batch composition, frame additions, stable cross-day moves, source freshness, locks, overlap, partial-approval rebasing and local-tool dispatch. The context snapshot excludes unrelated document paragraphs from its assistant-facing output and retains useful cached task metadata.
+
+The full source suite has 1,615 passes, nine skips, seventeen todos and the inherited inclusive-last-day ICS timeout. Formatting, source lint, TypeScript, Svelte diagnostics, strict lint and production compilation pass. The new checkout's text fixtures were normalized to their repository LF content so saved metadata offsets match. That normalization has no committed content diff.
+
+The self-contained skill and CLI helper are ready for integration. Its installed-baseline check returns the expected missing-facade error because the AI build has yet to be integrated and installed. Persistent draft lifecycle, host adapter, review UI, timeline overlays, Apply/Undo and successful installed assistant/provider acceptance remain pending. The source checkpoint is foundation evidence.

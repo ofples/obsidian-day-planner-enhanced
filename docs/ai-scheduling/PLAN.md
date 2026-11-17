@@ -50,3 +50,4 @@ Review the plan once for workflow and once against the source implementation. Co
 - Baseline checkpoint and separate feature worktree are ready.
 - Two independent reviews completed workflow and source checks. The technical contract includes their batch composition, reference resolution and guarded-Undo corrections.
 - User stories and the six-board mockup set are complete. The technical contract follows the reviewed screens, with generated layout/time artifacts called out for correction.
+- The implementation goal is active. Work has started on the pure snapshot/validation/batch-edit core and a self-contained local assistant skill. Host persistence, UI integration and installed acceptance follow in sequence.

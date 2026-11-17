@@ -34,6 +34,8 @@ The snapshot contains a generated context ID, timestamp, timezone, range, prefer
 
 Use opaque context-local references for blocks, frames and tasks. The model returns these references. Source validation compares captured raw content and document fingerprints. Persist references only with their proposal. Google/Todoist credentials and unrelated notes are excluded.
 
+Keep full document snapshots inside the plugin's private state. The public assistant context contains task subtrees, descriptions, scheduling fields and reference IDs, while omitting unrelated document paragraphs. Include existing provider priority, due date, estimated duration and project metadata when available. The current task serializer's descendant IDs let batch validation detect overlapping parent/child selections without new ownership records.
+
 Context collection performs no scheduling or provider writes and starts no provider refresh loop. Use the current cached calendar commitments and disclose their freshness. The selected displayed calendars define the commitments visible to this local planner. Live provider conflict checks continue through the established synchronization code.
 
 Timed displayed events reserve their interval. All-day entries provide context and remain informational in this preview. Include that distinction in the assistant context. Refreshing context reuses the current Todoist cache, whose timestamp remains visible. Use the normal provider refresh to learn about new remote changes.
@@ -111,6 +113,8 @@ Expose a versioned public aiPlanner facade on the installed plugin.
 - getStatus() returns current draft, issues and last-batch status.
 
 Agent-facing operations prepare and inspect. Approval and Undo are UI actions. Use a reusable skill with a small CLI helper to invoke the facade through Obsidian CLI. Pass JSON through a temporary file or encoded argument using a shell-free process call. Detect Error output as a failure even if the CLI exits successfully.
+
+Package the helper inside the skill folder so the installed skill is self-contained. The local CLI route requires Obsidian's supported installer and enabled CLI. Setup instructions should link to the official installation guide. [Obsidian CLI](https://obsidian.md/help/cli)
 
 Copilot's installed agent-based interface can use the skill through its existing local agent. Document the actual tested setup. Older Obsidian versions or assistants without local execution use context copy and JSON import. A standalone MCP wrapper can call the same facade later without adding a second planner or credential flow.
 
