@@ -5,7 +5,6 @@ import {
   type SettingDefinitionItem,
   SettingGroup,
 } from "obsidian";
-import { type Component, mount, unmount } from "svelte";
 import type { Writable } from "svelte/store";
 import { isNotVoid, isOneOf } from "typed-assert";
 
@@ -26,13 +25,11 @@ import {
   timelineZoomLevelMin,
   timelineZoomLevelStep,
 } from "../settings";
-import Callout from "../ui/components/callout.svelte";
 
 export const timestampFormatDescription =
   "Use HH:mm for 24-hour timestamps; ':' and '.' are accepted separators. Separator-free timestamps require an end time unless a single timestamp immediately follows leading tags. Restart Obsidian after changing this setting to reindex existing tasks. Current sample: ";
 
 export class DayPlannerSettingsTab extends PluginSettingTab {
-  private warningComponent?: Component;
   private colorOverridesExpanded = false;
 
   constructor(
@@ -56,7 +53,7 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
           );
         },
       },
-      this.googleCalendarDefinition(),
+      ...this.googleCalendarDefinition(),
       {
         name: "Experimental two-way Todoist sync",
         desc: "Link note edits and completion back to Todoist. Sign in again after enabling. Otherwise tasks are imported as ordinary Markdown.",
@@ -82,11 +79,6 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
               .onClick(() => this.plugin.openTaskCaptureSettings()),
           );
         },
-      },
-      {
-        name: "Applying settings",
-        desc: "Most changes apply immediately. Individual settings indicate when a restart is needed.",
-        searchable: false,
       },
       {
         type: "group",
@@ -736,11 +728,7 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
   }
 
   private renderSettings(): void {
-    const { containerEl, warningComponent } = this;
-
-    if (warningComponent) {
-      unmount(warningComponent);
-    }
+    const { containerEl } = this;
 
     containerEl.empty();
 
@@ -757,30 +745,20 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
           ),
       );
 
-    const calendarDefinition = this.googleCalendarDefinition();
-    if (calendarDefinition.type === "group") {
-      const group = new SettingGroup(containerEl).setHeading(
-        "Google Calendar two-way sync",
-      );
-      for (const item of calendarDefinition.items ?? []) {
+    const renderGroup = (
+      definition: import("obsidian").SettingDefinitionGroup,
+    ) => {
+      const group = new SettingGroup(containerEl);
+      if (definition.heading) group.setHeading(definition.heading);
+      for (const item of definition.items ?? []) {
         group.addSetting((setting) => {
           setting.setName(item.name);
           if (typeof item.desc === "string") setting.setDesc(item.desc);
           if ("render" in item) item.render?.(setting, group);
         });
       }
-    }
-
-    // @ts-expect-error
-    this.warningComponent = mount(Callout, {
-      props: {
-        type: "warning",
-        title:
-          "Most changes apply immediately; some require reopening or restarting Obsidian.",
-        className: "planner-settings-warning",
-      },
-      target: containerEl,
-    });
+    };
+    for (const group of this.googleCalendarDefinition()) renderGroup(group);
 
     const generalGroup = new SettingGroup(containerEl)
       .addSetting((setting) =>
@@ -1603,6 +1581,7 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
         }),
       () => this.plugin.googleCalendarSync,
       this.plugin.app,
+      () => this.plugin.openConnections(),
     );
   }
 

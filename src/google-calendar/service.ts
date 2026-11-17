@@ -163,6 +163,7 @@ export class GoogleCalendarSync {
   private lastSaved = "";
   private lastError = "";
   private viewGeneration = 0;
+  private calendarNames = new Map<string, string>();
 
   /** Last verified note identity for a managed calendar block. */
   importedSource(uid: string) {
@@ -596,6 +597,7 @@ export class GoogleCalendarSync {
     this.busy = true;
     try {
       await this.auth.connect(this.clientId());
+      this.calendarNames.clear();
       void this.refreshView();
       new Notice(
         "Google Calendar connected. Choose a target calendar and run Sync Google Calendar now.",
@@ -614,6 +616,7 @@ export class GoogleCalendarSync {
       return;
     }
     this.auth.disconnect();
+    this.calendarNames.clear();
     this.viewGeneration++;
     this.store.dispatch(googleTimeBlocksUpdated([]));
     new Notice(
@@ -1135,7 +1138,28 @@ export class GoogleCalendarSync {
   }
 
   async calendars() {
-    return this.api().calendars();
+    const calendars = await this.api().calendars();
+    this.calendarNames = new Map(
+      calendars.map((calendar) => [
+        calendar.id,
+        calendar.summaryOverride || calendar.summary,
+      ]),
+    );
+    const primary = calendars.find((calendar) => calendar.primary);
+    if (primary)
+      this.calendarNames.set(
+        "primary",
+        primary.summaryOverride || primary.summary,
+      );
+    return calendars;
+  }
+
+  get boundCalendarId() {
+    return this.state.calendarId;
+  }
+
+  calendarName(id: string) {
+    return this.calendarNames.get(id);
   }
 
   async refreshView() {
@@ -1158,7 +1182,7 @@ export class GoogleCalendarSync {
     try {
       const api = this.api();
       const [calendars, palette] = await Promise.all([
-        api.calendars(),
+        this.calendars(),
         api.eventColors(),
       ]);
       const excluded =

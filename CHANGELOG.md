@@ -4,6 +4,13 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.9.8
+
+- Replaced the sync calendar ID field with a searchable calendar picker showing names, colors and access. Display calendars use the same picker with multiple selection and explicit Apply/Cancel.
+- Consolidated Google and Todoist sign-in under Connections at the top of settings.
+- Separated Google schedule sync, planner display and advanced configuration. Kept date-range, import/deletion options and color mappings in collapsible sections.
+- Preserved existing calendar links and settings. The picker explains calendar access and existing destination restrictions.
+
 ## 0.9.7
 
 - Reorganized schedule export into compact controls, a scrollable preview and a destination/action footer, with a stacked layout for smaller screens.

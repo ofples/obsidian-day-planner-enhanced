@@ -20,7 +20,7 @@ No existing drop-in bridge for Day Planner Enhanced's daily-note time ranges was
 
 1. Use **Obsidian 1.11.4 or later** for Google sync and SecretStorage.
 2. Open **Connections** and choose **Sign in with Google**. Packaged builds include the Google Desktop app registration. Select your account and approve calendar access in the system browser.
-3. Choose a dedicated target calendar under Google Calendar settings. Calendar display selections are independent of the target used for schedule synchronization.
+3. Under **Google Calendar - Schedule sync**, use **Choose calendar** to select a dedicated writable calendar by name. Under **Planner display**, use **Choose calendars** for the calendars you want to see. Apply confirms the selection and Cancel discards it. Existing sync links retain their destination, which is marked in the picker.
 4. Set **Sync start date** to the first local day to manage. Use **Sync** in the timeline header and check a disposable event before enabling automatic sync.
 
 ### Optional custom Google app

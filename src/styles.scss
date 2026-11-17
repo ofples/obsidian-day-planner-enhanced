@@ -506,6 +506,94 @@ body:has(.modal.day-planner-nested-items-modal) .popover.hover-popover {
     }
   }
 }
+.planner-calendar-picker {
+  width: min(620px, 94vw);
+  font-family: var(--font-interface);
+
+  .planner-calendar-picker-intro,
+  .planner-calendar-picker-hint {
+    margin-block: 0 var(--size-4-3);
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .planner-calendar-search {
+    width: 100%;
+    margin-bottom: var(--size-4-3);
+  }
+
+  .planner-calendar-follow {
+    display: flex;
+    align-items: center;
+    gap: var(--size-4-2);
+    margin-bottom: var(--size-4-3);
+  }
+
+  .planner-calendar-list {
+    overflow: auto;
+    max-height: 45vh;
+  }
+
+  .planner-calendar-row {
+    display: grid;
+    grid-template-columns: auto 10px minmax(0, 1fr);
+    gap: var(--size-4-2) var(--size-4-3);
+    align-items: center;
+    padding: var(--size-4-3);
+    border-radius: var(--radius-m);
+
+    &:hover {
+      background: var(--background-modifier-hover);
+    }
+
+    &.is-disabled {
+      color: var(--text-muted);
+    }
+
+    input {
+      margin: 0;
+    }
+
+    small {
+      grid-column: 3;
+      color: var(--text-muted);
+    }
+  }
+
+  .planner-calendar-color {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+  }
+
+  .planner-calendar-name {
+    overflow-wrap: anywhere;
+  }
+
+  .planner-calendar-picker-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--size-4-2);
+    margin-top: var(--size-4-4);
+  }
+}
+
+.planner-calendar-selected {
+  display: block;
+  margin-bottom: var(--size-4-1);
+  font-weight: var(--font-semibold);
+  color: var(--text-normal);
+}
+
+.planner-google-options {
+  margin-top: var(--size-4-2);
+
+  summary {
+    cursor: pointer;
+    color: var(--text-normal);
+  }
+}
+
 .planner-google-setup-details {
   max-width: 70ch;
   margin-top: var(--size-4-3);

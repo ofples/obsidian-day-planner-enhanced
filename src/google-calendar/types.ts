@@ -42,6 +42,10 @@ export interface GoogleCalendarInfo {
   backgroundColor?: string;
   selected?: boolean;
   hidden?: boolean;
+  accessRole?: string;
+  primary?: boolean;
+  summaryOverride?: string;
+  deleted?: boolean;
 }
 
 export interface LocalBlock {

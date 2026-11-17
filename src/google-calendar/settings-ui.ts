@@ -1,5 +1,4 @@
 import {
-  Modal,
   Setting,
   type App,
   type SettingDefinitionGroup,
@@ -8,9 +7,9 @@ import {
 
 import type { DayPlannerSettings } from "../settings";
 
+import { GoogleCalendarPicker } from "./calendar-picker";
 import { eventColorOptions } from "./colors";
 import type { GoogleCalendarSettings, GoogleCalendarSync } from "./service";
-import { visibleGoogleCalendars } from "./view";
 
 /** Native disclosure works in both searchable settings and the legacy settings tab. */
 export function addGoogleCalendarSetupDetails(
@@ -73,7 +72,7 @@ export function addGoogleCalendarSetupDetails(
   );
   addStep(
     "Create a Desktop app client.",
-    "Under Clients, create an OAuth client with application type Desktop app. Open Advanced Google connection below, enter its client ID and secret, and click Save secret. A Web application client or an API key will not work. Keep the secret private.",
+    "Under Clients, create an OAuth client with application type Desktop app. Enable Use your own Google app, enter its client ID and secret, and click Save secret. A Web application client or an API key will not work. Keep the secret private.",
     {
       label: "Open OAuth clients",
       url: "https://console.cloud.google.com/auth/clients",
@@ -81,7 +80,7 @@ export function addGoogleCalendarSetupDetails(
   );
   addStep(
     "Choose a calendar.",
-    "Create a separate calendar such as Day Planner in Google Calendar. Under its Settings → Integrate calendar, copy Calendar ID into Target Google calendar ID below. Use the ID, not the secret iCal/ICS URL.",
+    "Create a separate calendar such as Day Planner in Google Calendar. Open Sync calendar in Day Planner settings and select it by name.",
     {
       label: "Open Google Calendar",
       url: "https://calendar.google.com/calendar/u/0/r/settings",
@@ -89,7 +88,7 @@ export function addGoogleCalendarSetupDetails(
   );
   addStep(
     "Connect and test.",
-    "Click Sign in with Google below or open Connections, choose your Google account in the browser and approve calendar access. Then click Sync. Test one disposable block in each direction before enabling automatic sync. Keep automatic sync enabled on only one desktop at a time.",
+    "Open Connections and choose Sign in with Google, choose your Google account in the browser and approve calendar access. Then click Sync. Test one disposable block in each direction before enabling automatic sync. Keep automatic sync enabled on only one desktop at a time.",
   );
   details.appendChild(steps);
   const note = document.createElement("p");
@@ -108,289 +107,309 @@ export function googleCalendarSettingDefinitions(
   update: (patch: Partial<GoogleCalendarSettings>) => void,
   service: () => GoogleCalendarSync,
   app: App,
-): SettingDefinitionGroup {
-  const text = (
+  openConnections: () => void,
+): SettingDefinitionGroup[] {
+  const toggle = (
     name: string,
-    key: "clientId" | "calendarId",
+    key:
+      | "autoSync"
+      | "showCalendarEvents"
+      | "importEventsToNotes"
+      | "syncDeletions",
     desc: string,
   ): SettingDefinitionRender => ({
     name,
     desc,
     render: (setting) => {
-      setting.addText((control) =>
+      setting.addToggle((control) =>
         control
           .setValue(getSettings().googleCalendar[key])
-          .onChange((value) => update({ [key]: value.trim() })),
+          .onChange((value) => update({ [key]: value })),
       );
     },
   });
-  return {
-    type: "group",
-    heading: "Google Calendar two-way sync",
-    items: [
-      {
-        name: "Sync daily-note time blocks",
-        desc: "Sync eligible daily-note blocks with a dedicated Google calendar. A sync start date enables Google-canonical sync; sync: off or sync: false in note frontmatter excludes that note. Requires Obsidian 1.11.4+.",
-        searchable: true,
-        render: (setting) => addGoogleCalendarSetupDetails(setting.descEl),
-      },
-      {
-        name: "Advanced Google connection",
-        desc: "Optional app configuration for developers and custom Google projects.",
+  const syncOptions: SettingDefinitionRender[] = [
+    ...(["daysPast", "daysAhead"] as const).map(
+      (key): SettingDefinitionRender => ({
+        name:
+          key === "daysPast"
+            ? "Days to sync in the past"
+            : "Days to sync ahead",
         render: (setting) => {
-          const details = setting.descEl.ownerDocument.createElement("details");
-          const summary = details.ownerDocument.createElement("summary");
-          summary.textContent = "Developer options";
-          details.appendChild(summary);
-          setting.descEl.appendChild(details);
-          const custom = details.ownerDocument.createElement("div");
-          custom.hidden = !getSettings().googleCalendar.useCustomClient;
-          new Setting(details)
-            .setName("Use your own Google app")
-            .setDesc(
-              "Use a custom Desktop OAuth client. Changing apps requires signing in again.",
-            )
-            .addToggle((toggle) =>
-              toggle
-                .setValue(getSettings().googleCalendar.useCustomClient)
-                .onChange((useCustomClient) => {
-                  update({ useCustomClient });
-                  custom.hidden = !useCustomClient;
-                }),
-            );
-          details.appendChild(custom);
-          new Setting(custom)
-            .setName("Google OAuth client ID")
-            .setDesc("Use a Desktop app client with the Calendar API enabled.")
-            .addText((control) =>
-              control
-                .setValue(getSettings().googleCalendar.clientId)
-                .onChange((value) => update({ clientId: value.trim() })),
-            );
-          let secret = "";
-          new Setting(custom)
-            .setName("Google OAuth client secret")
-            .setDesc(
-              "Stored in Obsidian SecretStorage. Leave blank to keep the saved secret.",
-            )
-            .addText((control) => {
-              control.inputEl.type = "password";
-              control.onChange((value) => {
-                secret = value;
+          setting.addText((control) => {
+            control.inputEl.type = "number";
+            control.inputEl.min = "0";
+            control.inputEl.max = "365";
+            control
+              .setValue(String(getSettings().googleCalendar[key]))
+              .onChange((value) => {
+                const days = Number(value);
+                if (
+                  value.trim() &&
+                  Number.isInteger(days) &&
+                  days >= 0 &&
+                  days <= 365
+                )
+                  update({ [key]: days });
               });
-            })
-            .addButton((button) =>
-              button
-                .setButtonText("Save secret")
-                .onClick(() => service().setClientSecret(secret)),
-            );
-          addGoogleCalendarSetupDetails(custom, true);
+          });
         },
-      },
-      text(
-        "Target Google calendar ID",
-        "calendarId",
-        "Google Calendar → Settings → your calendar → Integrate calendar → Calendar ID. Linked blocks sync here. Optional note import applies to this calendar.",
-      ),
-      {
-        name: "Show Google calendar events",
-        desc: "Display events as calendar entries without adding tasks to daily notes. Refreshes every minute and when changing planner dates.",
-        render: (setting) => {
-          setting.addToggle((control) =>
-            control
-              .setValue(getSettings().googleCalendar.showCalendarEvents)
-              .onChange((showCalendarEvents) => update({ showCalendarEvents })),
-          );
-        },
-      },
-      {
-        name: "Calendars shown in the planner",
-        desc: "Choose which Google calendars to display. Initially follows the calendars selected in Google Calendar. Linked schedule blocks appear once.",
-        render: (setting) => {
-          setting.addButton((button) =>
-            button.setButtonText("Choose calendars").onClick(async () => {
-              const modal = new Modal(app);
-              modal.titleEl.setText("Google calendars shown in planner");
-              modal.contentEl.setText("Loading calendars…");
-              modal.open();
-              try {
-                const calendars = await service().calendars();
-                const render = () => {
-                  modal.contentEl.empty();
-                  new Setting(modal.contentEl)
-                    .setName("Google Calendar selection")
-                    .setDesc("Use the calendar selection from Google Calendar.")
-                    .addButton((control) =>
-                      control
-                        .setButtonText("Use Google selection")
-                        .onClick(() => {
-                          update({ visibleCalendarIds: null });
-                          render();
-                        }),
-                    );
-                  const selected = new Set(
-                    visibleGoogleCalendars(
-                      calendars,
-                      getSettings().googleCalendar,
-                    ).map((calendar) => calendar.id),
-                  );
-                  for (const calendar of calendars)
-                    new Setting(modal.contentEl)
-                      .setName(calendar.summary)
-                      .addToggle((control) =>
-                        control
-                          .setValue(selected.has(calendar.id))
-                          .onChange((show) => {
-                            if (show) selected.add(calendar.id);
-                            else selected.delete(calendar.id);
-                            update({ visibleCalendarIds: [...selected] });
-                          }),
-                      );
-                };
-                render();
-              } catch (error) {
-                modal.contentEl.setText(
-                  error instanceof Error
-                    ? error.message
-                    : "Connect Google Calendar first.",
-                );
-              }
-            }),
-          );
-        },
-      },
-      {
-        name: "Import new Google events into daily notes",
-        desc: "Optional. Create Markdown tasks for new timed events in the dedicated sync calendar. By default, new Google events appear only as calendar entries. Existing linked note blocks continue syncing both ways.",
-        render: (setting) => {
-          setting.addToggle((control) =>
-            control
-              .setValue(getSettings().googleCalendar.importEventsToNotes)
-              .onChange((importEventsToNotes) =>
-                update({ importEventsToNotes }),
+      }),
+    ),
+    toggle(
+      "Import new Google events into daily notes",
+      "importEventsToNotes",
+      "Create Markdown tasks for new timed events in the sync calendar. Linked blocks continue syncing both ways.",
+    ),
+    toggle(
+      "Sync local deletions to Google",
+      "syncDeletions",
+      "Removing a linked block deletes its unchanged Google event. Missing notes and ambiguous removals need review.",
+    ),
+  ];
+  return [
+    {
+      type: "group",
+      heading: "Google Calendar - Schedule sync",
+      items: [
+        {
+          name: "Sync calendar",
+          desc: "Daily-note time blocks sync both ways with this calendar.",
+          render: (setting) => {
+            const label = setting.descEl.ownerDocument.createElement("span");
+            label.className = "planner-calendar-selected";
+            const refresh = () => {
+              const id = getSettings().googleCalendar.calendarId;
+              label.textContent = id
+                ? service().calendarName(id) || "Calendar selected"
+                : "Choose a calendar to get started";
+            };
+            refresh();
+            setting.descEl.prepend(label);
+            setting.addButton((button) =>
+              button.setButtonText("Choose calendar").onClick(() =>
+                new GoogleCalendarPicker(app, {
+                  mode: "sync",
+                  settings: getSettings,
+                  service,
+                  update,
+                  openConnections,
+                  onApplied: refresh,
+                }).open(),
               ),
-          );
+            );
+          },
         },
-      },
-      {
-        name: "Google event colors",
-        desc: "Choose how planner colors map to new Google events.",
-        render: (setting) => {
-          const details = setting.descEl.ownerDocument.createElement("details");
-          const summary = details.ownerDocument.createElement("summary");
-          summary.textContent = "Color mappings";
-          details.appendChild(summary);
-          setting.descEl.appendChild(details);
-          for (const override of getSettings().colorOverrides)
+        toggle(
+          "Automatic sync",
+          "autoSync",
+          "Sync after five seconds without note edits and check periodically while Obsidian is open.",
+        ),
+        {
+          name: "Sync and conflicts",
+          desc: "Run a sync or review changes that need your choice.",
+          render: (setting) => {
+            setting.addButton((button) =>
+              button.setButtonText("Sync now").onClick(() => service().run()),
+            );
+            setting.addButton((button) =>
+              button
+                .setButtonText("Review conflicts")
+                .onClick(() => service().reviewConflicts()),
+            );
+          },
+        },
+        {
+          name: "Sync start date",
+          desc: "Sync schedules from this day onward. Leave blank for the original sync mode. Exclude an individual note with sync: off.",
+          render: (setting) => {
+            setting.addText((control) => {
+              control.inputEl.type = "date";
+              control
+                .setValue(getSettings().googleCalendar.syncStartDate)
+                .onChange((value) => {
+                  if (
+                    !value ||
+                    window.moment(value, "YYYY-MM-DD", true).isValid()
+                  )
+                    update({ syncStartDate: value });
+                });
+            });
+          },
+        },
+        {
+          name: "More sync options",
+          desc: "Date range, importing events and deleting linked events.",
+          render: (setting, group) => {
+            const details =
+              setting.descEl.ownerDocument.createElement("details");
+            details.className = "planner-google-options";
+            const summary = details.ownerDocument.createElement("summary");
+            summary.textContent = "Show options";
+            details.append(summary);
+            setting.descEl.append(details);
+            for (const item of syncOptions) {
+              const row = new Setting(details).setName(item.name);
+              if (typeof item.desc === "string") row.setDesc(item.desc);
+              item.render(row, group);
+            }
+          },
+        },
+      ],
+    },
+    {
+      type: "group",
+      heading: "Google Calendar - Planner display",
+      items: [
+        toggle(
+          "Show Google calendar events",
+          "showCalendarEvents",
+          "Show events from the calendars below in the planner. Refreshes every minute and when changing dates.",
+        ),
+        {
+          name: "Calendars shown in the planner",
+          desc: "Display additional calendars alongside your schedule. Linked schedule blocks appear once.",
+          render: (setting) => {
+            const label = setting.descEl.ownerDocument.createElement("span");
+            label.className = "planner-calendar-selected";
+            const refresh = () => {
+              const ids = getSettings().googleCalendar.visibleCalendarIds;
+              label.textContent =
+                ids === null
+                  ? "Following Google Calendar selection"
+                  : ids.length === 1
+                    ? service().calendarName(ids[0]!) || "1 calendar selected"
+                    : `${ids.length} calendars selected`;
+            };
+            refresh();
+            setting.descEl.prepend(label);
+            setting.addButton((button) =>
+              button.setButtonText("Choose calendars").onClick(() =>
+                new GoogleCalendarPicker(app, {
+                  mode: "display",
+                  settings: getSettings,
+                  service,
+                  update,
+                  openConnections,
+                  onApplied: refresh,
+                }).open(),
+              ),
+            );
+          },
+        },
+        {
+          name: "Google event colors",
+          desc: "Choose how planner colors map to new Google events.",
+          render: (setting) => {
+            const details =
+              setting.descEl.ownerDocument.createElement("details");
+            const summary = details.ownerDocument.createElement("summary");
+            summary.textContent = "Color mappings";
+            details.appendChild(summary);
+            setting.descEl.appendChild(details);
+            for (const override of getSettings().colorOverrides)
+              new Setting(details)
+                .setName(override.text || "Empty text rule")
+                .setDesc(
+                  `Planner color ${override.color}. First matching rule wins.`,
+                )
+                .addDropdown((control) =>
+                  control
+                    .addOptions(eventColorOptions)
+                    .setValue(
+                      getSettings().googleCalendar.colorMappings[
+                        override.text
+                      ] ?? "",
+                    )
+                    .onChange((value) =>
+                      update({
+                        colorMappings: {
+                          ...getSettings().googleCalendar.colorMappings,
+                          [override.text]: value,
+                        },
+                      }),
+                    ),
+                );
             new Setting(details)
-              .setName(override.text || "Empty text rule")
+              .setName("Other schedule blocks")
               .setDesc(
-                `Planner color ${override.color}. First matching rule wins.`,
+                "Sets the initial Google color; later Google color changes are preserved.",
               )
               .addDropdown((control) =>
                 control
                   .addOptions(eventColorOptions)
-                  .setValue(
-                    getSettings().googleCalendar.colorMappings[override.text] ??
-                      "",
-                  )
-                  .onChange((value) =>
-                    update({
-                      colorMappings: {
-                        ...getSettings().googleCalendar.colorMappings,
-                        [override.text]: value,
-                      },
-                    }),
-                  ),
+                  .setValue(getSettings().googleCalendar.fallbackColorId)
+                  .onChange((fallbackColorId) => update({ fallbackColorId })),
               );
-          new Setting(details)
-            .setName("Other schedule blocks")
-            .setDesc(
-              "Sets the initial Google color; later Google color changes are preserved.",
-            )
-            .addDropdown((control) =>
-              control
-                .addOptions(eventColorOptions)
-                .setValue(getSettings().googleCalendar.fallbackColorId)
-                .onChange((fallbackColorId) => update({ fallbackColorId })),
-            );
-        },
-      },
-      {
-        name: "Connect Google Calendar",
-        render: (setting) => {
-          setting.addButton((button) =>
-            button
-              .setButtonText("Sign in with Google")
-              .onClick(() => service().connect()),
-          );
-          setting.addButton((button) =>
-            button.setButtonText("Sync").onClick(() => service().run()),
-          );
-          setting.addButton((button) =>
-            button
-              .setButtonText("Disconnect")
-              .onClick(() => service().disconnect()),
-          );
-        },
-      },
-      ...(["daysPast", "daysAhead"] as const).map(
-        (key): SettingDefinitionRender => ({
-          name:
-            key === "daysPast"
-              ? "Days to sync in the past"
-              : "Days to sync ahead",
-          render: (setting) => {
-            setting.addText((control) =>
-              control
-                .setValue(String(getSettings().googleCalendar[key]))
-                .onChange((value) => {
-                  const days = Number(value);
-                  if (Number.isInteger(days) && days >= 0 && days <= 365)
-                    update({ [key]: days });
-                }),
-            );
           },
-        }),
-      ),
-      {
-        name: "Sync start date",
-        desc: "Enables Google-canonical sync from this local day onward. Earlier records are archived and earlier notes are not rewritten. Leave blank for legacy behavior. Use YYYY-MM-DD.",
-        render: (setting) => {
-          setting.addText((control) =>
-            control
-              .setPlaceholder("YYYY-MM-DD")
-              .setValue(getSettings().googleCalendar.syncStartDate)
-              .onChange((value) => {
-                const date = value.trim();
-                if (!date || window.moment(date, "YYYY-MM-DD", true).isValid())
-                  update({ syncStartDate: date });
-              }),
-          );
         },
-      },
-      {
-        name: "Sync local deletions to Google",
-        desc: "When enabled, removing a linked block from an existing daily note deletes its unchanged Google event. Missing notes and ambiguous removals are conflicts. Google cancellations are always preserved as cancelled note entries.",
-        render: (setting) => {
-          setting.addToggle((control) =>
-            control
-              .setValue(getSettings().googleCalendar.syncDeletions)
-              .onChange((value) => update({ syncDeletions: value })),
-          );
+      ],
+    },
+    {
+      type: "group",
+      heading: "Google Calendar - Advanced",
+      items: [
+        {
+          name: "Advanced Google connection",
+          desc: "Optional app configuration for developers and custom Google projects.",
+          render: (setting) => {
+            const details =
+              setting.descEl.ownerDocument.createElement("details");
+            const summary = details.ownerDocument.createElement("summary");
+            summary.textContent = "Developer options";
+            details.appendChild(summary);
+            setting.descEl.appendChild(details);
+            const custom = details.ownerDocument.createElement("div");
+            custom.hidden = !getSettings().googleCalendar.useCustomClient;
+            new Setting(details)
+              .setName("Use your own Google app")
+              .setDesc(
+                "Use a custom Desktop OAuth client. Changing apps requires signing in again.",
+              )
+              .addToggle((toggle) =>
+                toggle
+                  .setValue(getSettings().googleCalendar.useCustomClient)
+                  .onChange((useCustomClient) => {
+                    update({ useCustomClient });
+                    custom.hidden = !useCustomClient;
+                  }),
+              );
+            details.appendChild(custom);
+            new Setting(custom)
+              .setName("Google OAuth client ID")
+              .setDesc(
+                "Use a Desktop app client with the Calendar API enabled.",
+              )
+              .addText((control) =>
+                control
+                  .setValue(getSettings().googleCalendar.clientId)
+                  .onChange((value) => update({ clientId: value.trim() })),
+              );
+            let secret = "";
+            new Setting(custom)
+              .setName("Google OAuth client secret")
+              .setDesc(
+                "Stored in Obsidian SecretStorage. Leave blank to keep the saved secret.",
+              )
+              .addText((control) => {
+                control.inputEl.type = "password";
+                control.onChange((value) => {
+                  secret = value;
+                });
+              })
+              .addButton((button) =>
+                button
+                  .setButtonText("Save secret")
+                  .onClick(() => service().setClientSecret(secret)),
+              );
+            addGoogleCalendarSetupDetails(custom, true);
+          },
         },
-      },
-      {
-        name: "Automatically sync Google Calendar",
-        desc: "Sync after five seconds without note edits, with a periodic check while Obsidian is open.",
-        render: (setting) => {
-          setting.addToggle((control) =>
-            control
-              .setValue(getSettings().googleCalendar.autoSync)
-              .onChange((value) => update({ autoSync: value })),
-          );
+        {
+          name: "Setup help",
+          render: (setting) => addGoogleCalendarSetupDetails(setting.descEl),
         },
-      },
-    ],
-  };
+      ],
+    },
+  ];
 }

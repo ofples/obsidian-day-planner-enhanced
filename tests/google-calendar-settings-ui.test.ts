@@ -103,9 +103,12 @@ test("advanced OAuth and color settings are collapsed and retain editable values
     update,
     () => ({ setClientSecret }) as unknown as GoogleCalendarSync,
     {} as App,
+    vi.fn(),
   );
   const render = (name: string) => {
-    const item = group.items?.find((value) => value.name === name);
+    const item = group
+      .flatMap((value) => value.items ?? [])
+      .find((value) => value.name === name);
     if (!item || !("render" in item) || !item.render)
       throw new Error(`Missing ${name}`);
     const descEl = document.createElement("div");

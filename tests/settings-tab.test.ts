@@ -7,6 +7,7 @@ const { settingTabRefreshDomState, settingTabUpdate } = vi.hoisted(() => ({
 }));
 
 vi.mock("obsidian", () => ({
+  Modal: class {},
   PluginSettingTab: class PluginSettingTab {
     containerEl = document.createElement("div");
 
@@ -82,6 +83,17 @@ describe("DayPlannerSettingsTab declarative settings", () => {
     });
 
     const serializedDefinitions = JSON.stringify(tab.getSettingDefinitions());
+
+    expect(serializedDefinitions).toContain("Google Calendar - Schedule sync");
+    expect(serializedDefinitions).toContain(
+      "Google Calendar - Planner display",
+    );
+    expect(serializedDefinitions).toContain("Google Calendar - Advanced");
+    expect(serializedDefinitions).not.toContain("Target Google calendar ID");
+    expect(serializedDefinitions).not.toContain("Connect Google Calendar");
+    expect(tab.getSettingDefinitions()[0]).toMatchObject({
+      name: "Connections",
+    });
 
     expect(serializedDefinitions).toContain("Show release notes after update");
     expect(serializedDefinitions).toContain("eventFormatOnCreation");
