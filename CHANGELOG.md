@@ -4,6 +4,10 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.9.2
+
+- Fixed a stale conflict count after restoring a renamed Obsidian draft or accepting its Google deletion.
+
 ## 0.9.1
 
 ### Calendar conflict improvements

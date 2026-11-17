@@ -1081,6 +1081,8 @@ export class GoogleCalendarSync {
               "click",
               () =>
                 void choose(async (api, notes) => {
+                  const summaryTitle =
+                    this.state.records[item.uid]?.base.title ?? item.mine.title;
                   await resolveDeletedRemoteConflict(
                     item,
                     choice,
@@ -1092,7 +1094,7 @@ export class GoogleCalendarSync {
                   this.deletedRemote = this.deletedRemote.filter(
                     (other) => other.uid !== item.uid,
                   );
-                  forget(path, item.mine.title);
+                  forget(path, summaryTitle);
                 }),
             );
           }

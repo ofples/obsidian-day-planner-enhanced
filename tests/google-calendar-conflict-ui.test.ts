@@ -4,6 +4,7 @@ import { afterEach, beforeAll, expect, test, vi } from "vitest";
 
 import {
   resolveCalendarConflict,
+  resolveDeletedRemoteConflict,
   type CalendarConflict,
 } from "../src/google-calendar/engine";
 import { GoogleCalendarSync } from "../src/google-calendar/service";
@@ -43,6 +44,7 @@ vi.mock("obsidian", async () => ({
 vi.mock("../src/google-calendar/engine", async (original) => ({
   ...(await original<typeof import("../src/google-calendar/engine")>()),
   resolveCalendarConflict: vi.fn(async () => {}),
+  resolveDeletedRemoteConflict: vi.fn(async () => {}),
 }));
 
 beforeAll(() => {
@@ -165,3 +167,51 @@ test("opening the review prevents automatic sync from replacing choices", async 
   expect(Reflect.get(h.service, "busy")).toBe(false);
   expect(modals[0]!.contentEl.textContent).toContain("2 choices remaining");
 });
+
+test.each(["Restore Obsidian draft", "Accept Google deletion"])(
+  "clears a renamed deletion's original summary after %s",
+  async (label) => {
+    const h = setup();
+    const path = "Daily/2030-01-01.md";
+    const base = {
+      title: "Original title",
+      start: "2030-01-01T09:00:00.000Z",
+      end: "2030-01-01T10:00:00.000Z",
+    };
+    const record = { base, path, eventId: "deleted-event" };
+    Reflect.set(h.service, "state", { records: { deleted: record } });
+    Reflect.set(h.service, "reviewable", []);
+    Reflect.set(h.service, "deletedRemote", [
+      {
+        uid: "deleted",
+        path,
+        eventId: "deleted-event",
+        mine: { ...base, title: "Renamed draft" },
+        raw: "Saved draft",
+        currentRaw: "Saved draft",
+        detectedAt: "2030-01-01T00:00:00.000Z",
+      },
+    ]);
+    Reflect.set(h.service, "conflicts", [
+      `${path}: Original title — Google deleted this event. The local draft is saved for review.`,
+    ]);
+    vi.mocked(resolveDeletedRemoteConflict).mockImplementation(async () => {
+      if (label === "Restore Obsidian draft")
+        record.base = { ...base, title: "Renamed draft" };
+    });
+    h.service.reviewConflicts();
+    const modal = modals[0]!;
+    Array.from(modal.contentEl.querySelectorAll("button"))
+      .find((button) => button.textContent === label)!
+      .click();
+    await vi.waitFor(() =>
+      expect(modal.contentEl.textContent).toContain(
+        "No event choices remaining",
+      ),
+    );
+    expect(get(h.service.conflictCount)).toBe(0);
+    expect(modal.contentEl.textContent).not.toContain(
+      "additional sync details",
+    );
+  },
+);
