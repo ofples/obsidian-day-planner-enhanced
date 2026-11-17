@@ -30,7 +30,7 @@ test("matching labels work for checkbox and bullet parents", () => {
   }
 });
 
-test("every frame category is required and control tags are ignored", () => {
+test("shared frame categories match and control tags are ignored", () => {
   expect(
     frameDropWarning(
       "Admin #frame #karma #urgent #todoist",
@@ -39,7 +39,7 @@ test("every frame category is required and control tags are ignored", () => {
   ).toBeUndefined();
   expect(
     frameDropWarning("Admin #frame #karma #urgent", "Mop #urgent"),
-  ).toContain("#karma and #urgent");
+  ).toBeUndefined();
   expect(frameDropWarning("Admin #frame #locked", "Anything")).toBeUndefined();
   expect(frameDropWarning("Admin #karma", "Anything")).toBeUndefined();
 });
@@ -51,7 +51,36 @@ test("Markdown label mismatches stay visible after adding a child", () => {
       children: [{ text: "Report #work" }],
     }),
   ).toMatchObject({ empty: false, warning: expect.stringContaining("labels") });
-  expect(frameDropWarning("Admin #frame #karma", "Mop `#karma`")).toBeTruthy();
+  expect(
+    frameDropWarning("Admin #frame #karma", "Mop `#karma`"),
+  ).toBeUndefined();
+});
+
+test("missing labels never warn, while explicit different labels do", () => {
+  for (const text of [
+    "Mop",
+    "Mop #todoist #locked",
+    "Mop `#work`",
+    "Mop\n  Description #work",
+  ]) {
+    expect(frameDropWarning("Admin #frame #karma", text)).toBeUndefined();
+    expect(
+      frameState({ text: "Admin #frame #karma", children: [{ text }] }).warning,
+    ).toBe("");
+  }
+  expect(frameDropWarning("Admin #frame #karma", "Report #work")).toBeTruthy();
+  expect(
+    frameDropWarning("Admin #frame #karma #urgent", "Mop #karma"),
+  ).toBeUndefined();
+  expect(
+    frameDropWarning("Admin #frame #karma", "Mop #KARMA #urgent"),
+  ).toBeUndefined();
+  expect(
+    frameState({
+      text: "Admin #frame #karma",
+      children: [{ text: "Mop" }, { text: "Report #work" }],
+    }).warning,
+  ).toContain("do not match");
 });
 
 test("one direct child supplies the frame heading and retains descriptions and labels", () => {

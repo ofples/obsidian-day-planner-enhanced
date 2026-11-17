@@ -4,6 +4,11 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.9.9
+
+- Show frame label warnings only when a child has explicit category labels with no match among the frame labels. Unlabeled children, control tags and missing additional frame labels do not trigger warnings.
+- Apply the same check to timeline badges and task-drop warnings.
+
 ## 0.9.8
 
 - Replaced the sync calendar ID field with a searchable calendar picker showing names, colors and access. Display calendars use the same picker with multiple selection and explicit Apply/Cancel.

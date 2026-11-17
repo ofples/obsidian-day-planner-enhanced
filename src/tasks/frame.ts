@@ -109,12 +109,14 @@ export function frameDropWarning(
   const labels = tags(parent);
   if (!labels.includes("frame")) return;
   const expected = labels.filter((label) => !controlTags.has(label));
+  const actual = tags(child).filter((label) => !controlTags.has(label));
   if (
     !expected.length ||
-    expected.every((label) => tags(child).includes(label))
+    !actual.length ||
+    expected.some((label) => actual.includes(label))
   )
     return;
-  return `This frame expects ${expected.map((label) => `#${label}`).join(" and ")}. The added task does not match the frame labels.`;
+  return `This frame expects ${expected.map((label) => `#${label}`).join(" or ")}. The added task does not match the frame labels.`;
 }
 
 export function frameState(block: {
