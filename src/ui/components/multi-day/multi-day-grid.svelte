@@ -19,6 +19,7 @@
   import { createResizeState } from "../../actions/create-resize-state";
   import { createColumnChangeMenu } from "../../column-change-menu";
   import { createColumnSelectionMenu } from "../../column-selection-menu";
+  import AiProposalBar from "../ai-proposal-bar.svelte";
   import ControlButton from "../control-button.svelte";
   import ErrorBoundary from "../error-boundary.svelte";
   import {
@@ -39,6 +40,7 @@
   import MultiDayRow from "./multi-day-row.svelte";
 
   const {
+    openAiPlanning,
     workspaceFacade,
     settingsStore,
     pointerDateTime,
@@ -210,6 +212,7 @@
 
 <ErrorBoundary>
   <div class="multi-day-main-content">
+    <div class="ai-review-bar"><AiProposalBar /></div>
     <Scroller
       class="planner-multi-day-scroller"
       onscroll={handleScroll}
@@ -226,6 +229,11 @@
     </Scroller>
 
     <div class="controls-sidebar">
+      {#if openAiPlanning}
+        <ControlButton label="Plan with AI" onclick={openAiPlanning}
+          >Plan</ControlButton
+        >
+      {/if}
       <PlannerDayCount />
       <ControlButton label="Settings" onclick={openTimelineSettingsModal}>
         <Settings />
@@ -304,6 +312,15 @@
 <!-- eslint-enable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Re-enable scorecard compatibility suppressions after this file. -->
 
 <style>
+  .ai-review-bar {
+    position: absolute;
+    z-index: 40;
+    bottom: 0;
+    left: 0;
+
+    max-width: 100%;
+  }
+
   :global(.planner-multi-day-scroller) {
     overflow: auto;
     flex: 1 0 0;

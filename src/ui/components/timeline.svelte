@@ -5,6 +5,7 @@
   import { derived, get, readable } from "svelte/store";
   import { isNotVoid } from "typed-assert";
 
+  import type { PlanningState } from "../../ai-scheduling/service";
   import { getObsidianContext } from "../../context/obsidian-context";
   import { currentTimeSignal, isToday } from "../../global-store/current-time";
   import {
@@ -46,6 +47,7 @@
   } from "../../util/time-block-utils";
   import { createGestures } from "../actions/gestures";
   import { createActiveClockMenu } from "../active-clock-menu";
+  import { proposalOverlays } from "../ai-proposal-view";
   import { createCompletedClockMenu } from "../completed-clock-menu";
   import {
     getDragPointerDateTime,
@@ -54,6 +56,7 @@
   } from "../hooks/use-edit/drag-pointer";
   import type { EditOperation } from "../hooks/use-edit/types";
 
+  import AiProposalOverlay from "./ai-proposal-overlay.svelte";
   import Column from "./column.svelte";
   import LocalTimeBlock from "./local-time-block.svelte";
   import Needle from "./needle.svelte";
@@ -91,7 +94,23 @@
     openLogEntryEditModal,
     taskScheduler,
     noteTaskDrag,
+    aiPlanning,
+    openAiPlanning,
   } = getObsidianContext();
+  const aiState = aiPlanning?.state ?? readable<PlanningState | null>(null);
+  const overlays = $derived(
+    proposalOverlays(
+      $aiState?.draft ?? null,
+      day.format("YYYY-MM-DD"),
+      $settingsStore.startHour,
+      24,
+      $settingsStore.zoomLevel,
+    ),
+  );
+  function reviewProposal() {
+    if (openAiPlanning) void openAiPlanning().catch(() => {});
+    else aiPlanning?.show();
+  }
   const providerDraggedTask =
     taskScheduler?.drag.state ?? readable<ProviderTask | null>(null);
   const noteDraggedTask = noteTaskDrag?.state ?? readable(null);
@@ -606,6 +625,7 @@
             {/if}
           </PositionedTimeBlock>
         {/each}
+        <AiProposalOverlay {overlays} review={reviewProposal} />
       </div>
     </Column>
   {/if}

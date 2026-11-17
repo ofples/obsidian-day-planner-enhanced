@@ -115,6 +115,43 @@ function harness(
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 describe("vault calendar adapter", () => {
+  test("batch identity updates share the note journal and resume after interruption", async () => {
+    const h = harness(undefined, true);
+    const [block] = await h.notes.scan();
+    const before = h.texts.get(sourcePath)!;
+    const after = before.replace("Work #work", "Updated #work");
+    const replacement = {
+      ...h.notes.identitySnapshot()[block!.uid]!,
+      raw: block!.raw.replace("Work #work", "Updated #work"),
+      snapshot: { ...block!.snapshot, title: "Updated #work" },
+    };
+    const retired = "c".repeat(32);
+    h.state.identities![retired] = structuredClone(replacement);
+    h.interrupt(true);
+    await expect(
+      h.notes.applyEdits([{ path: sourcePath, before, after }], {
+        [block!.uid]: replacement,
+        [retired]: null,
+      }),
+    ).rejects.toThrow("interrupted");
+    expect(h.state.pendingNoteChange?.identities[block!.uid]).toEqual(
+      replacement,
+    );
+    expect(h.state.pendingNoteChange?.identities[retired]).toBeUndefined();
+    expect(h.state.identities![block!.uid]?.raw).toBe(block!.raw);
+    h.interrupt(false);
+    await h.notes.recoverMove();
+    expect(h.texts.get(sourcePath)).toBe(after);
+    expect(h.state.identities![block!.uid]).toEqual(replacement);
+    expect(h.state.identities![retired]).toBeUndefined();
+    expect(h.state.pendingNoteChange).toBeUndefined();
+    const copy = h.notes.identitySnapshot();
+    copy[block!.uid]!.snapshot.title = "Changed snapshot copy";
+    expect(h.state.identities![block!.uid]?.snapshot.title).toBe(
+      replacement.snapshot.title,
+    );
+  });
+
   test("force sync requires a scanned existing planner document and detects any later edit", async () => {
     const h = harness();
     expect(await h.notes.isDocumentUnchanged(sourcePath)).toBe(false);

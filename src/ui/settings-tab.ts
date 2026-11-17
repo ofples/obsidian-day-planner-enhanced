@@ -55,6 +55,17 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
       },
       ...this.googleCalendarDefinition(),
       {
+        name: "AI planning",
+        desc: "Review schedule suggestions from your assistant and save planning hours and rules.",
+        render: (setting) => {
+          setting.addButton((button) =>
+            button
+              .setButtonText("Open planning and rules")
+              .onClick(() => this.plugin.openAiPlanning()),
+          );
+        },
+      },
+      {
         name: "Experimental two-way Todoist sync",
         desc: "Link note edits and completion back to Todoist. Sign in again after enabling. Otherwise tasks are imported as ordinary Markdown.",
         control: { type: "toggle", key: "experimentalTodoistSync" },
@@ -759,6 +770,21 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
       }
     };
     for (const group of this.googleCalendarDefinition()) renderGroup(group);
+
+    new SettingGroup(containerEl)
+      .setHeading("AI planning")
+      .addSetting((setting) =>
+        setting
+          .setName("Planning and rules")
+          .setDesc(
+            "Review suggestions from your assistant and save planning hours and rules.",
+          )
+          .addButton((button) =>
+            button
+              .setButtonText("Open planning")
+              .onClick(() => this.plugin.openAiPlanning()),
+          ),
+      );
 
     const generalGroup = new SettingGroup(containerEl)
       .addSetting((setting) =>

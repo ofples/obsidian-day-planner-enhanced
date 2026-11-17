@@ -176,16 +176,27 @@ export class TaskScheduler {
     );
   }
 
-  private plainTask(taskId: string) {
-    const browser = get(this.service.state),
-      snapshot = browser.snapshot;
+  plainTask(taskId: string) {
+    const snapshot = get(this.service.state).snapshot;
     if (!snapshot)
       throw new TaskReadError("Connect Todoist before importing a task.");
-    const task = this.previewTask({
+    this.previewTask({
       provider: snapshot.provider,
       accountId: snapshot.account.id,
       taskId,
     });
+    return this.plainCachedTask(taskId);
+  }
+
+  plainCachedTask(taskId: string) {
+    const snapshot = get(this.service.state).snapshot;
+    const task = snapshot?.tasks.find(
+      (item) => item.id === taskId && !item.completed,
+    );
+    if (!snapshot || !task)
+      throw new TaskReadError(
+        "This cached task is unavailable. Refresh the task account.",
+      );
     let raw = withoutTaskCaptureTag(
       newTaskMarkdown(
         {

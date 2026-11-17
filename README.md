@@ -1,6 +1,6 @@
 # Day Planner Enhanced
 
-This fork adds Google Calendar two-way sync, a Tasks pane for Todoist and note tasks, tagged frames, schedule locks and PNG/PDF sharing. The 0.9.9 preview includes the Google Desktop app configuration. Sign in through Connections at the top of settings. Choose the sync destination by name under Schedule sync and additional visible calendars under Planner display. Both use the same searchable picker. Custom Google app configuration remains collapsed under Advanced.
+This fork adds Google Calendar two-way sync, a Tasks pane for Todoist and note tasks, tagged frames, schedule locks and PNG/PDF sharing. The 0.10.0 preview includes the Google Desktop app configuration. Sign in through Connections at the top of settings. Choose the sync destination by name under Schedule sync and additional visible calendars under Planner display. Both use the same searchable picker. Custom Google app configuration remains collapsed under Advanced.
 
 [Download this fork](https://github.com/ofples/obsidian-day-planner-enhanced/releases) · [Google Calendar setup](GOOGLE-CALENDAR.md) · [Tasks guide](docs/task-pane/README.md) · [Privacy notice](PRIVACY.md)
 
@@ -103,11 +103,23 @@ Plans that cross midnight stay anchored to the day where they start while still 
 - Google Calendar, iCloud Calendar, Outlook, and other ICS calendars
 - Desktop and mobile Obsidian 1.11.0 or newer
 
+## AI scheduling preview
+
+Open **Plan** from the planner toolbar or Tasks pane, or use **Day Planner Enhanced: Plan with AI**. Choose one to seven days and save your planning hours and rules there.
+
+Use your existing local assistant with the self-contained [Day Planner AI skill](skills/day-planner-ai/SKILL.md). Install the skill folder into your assistant's skills directory. Its helper reads planning context and submits proposals through Obsidian CLI. Obsidian's supported CLI needs a 1.12 or newer installer and CLI enabled. Alternatively, use **Copy context** and paste your assistant's JSON response under **Import suggestions**.
+
+Review proposed blocks on the timeline, select suggestions to apply, and use **Undo** for the last approved batch. Newer manual note edits are preserved and explained if Undo needs review. AI task buckets use the existing task rows, completion and dragging. **Browse buckets** returns from review to the filtered Tasks pane.
+
+Planning uses cached task/calendar data and the selected daily notes, current note and explicitly scanned notes. Refresh your sources before preparing a plan when you need recent changes. Plain-text rules guide the assistant, while the plugin checks locks, source freshness, frame labels, times and occupied intervals. Importing Todoist tasks preserves the existing best-effort links and leaves provider due dates unchanged.
+
+The preview uses your existing assistant. Schedule changes require approval in Obsidian. Google sync uses the current connection and note mapping. Cloud-only scheduling is a later adapter.
+
 ## Installation
 
 Download the preview from [this fork's releases](https://github.com/ofples/obsidian-day-planner-enhanced/releases). Core planning supports Obsidian 1.11.0 or later. Google and Todoist sign-in require desktop Obsidian 1.11.4 or later.
 
-1. Download `day-planner-enhanced-0.9.9.zip` from the release.
+1. Download `day-planner-enhanced-0.10.0.zip` from the release.
 2. Extract the included `day-planner-enhanced` folder into `<vault>/.obsidian/plugins/`.
 3. Restart Obsidian and enable **Day Planner Enhanced** under **Settings → Community plugins**.
 4. Enable Obsidian's **Daily notes** core plugin, or configure Periodic Notes, then open **Show Timeline** or **Show tasks** from the command palette.

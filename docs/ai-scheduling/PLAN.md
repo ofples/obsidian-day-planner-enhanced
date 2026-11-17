@@ -47,7 +47,9 @@ Review the plan once for workflow and once against the source implementation. Co
 
 ## Progress
 
-- Baseline checkpoint and separate feature worktree are ready.
-- Two independent reviews completed workflow and source checks. The technical contract includes their batch composition, reference resolution and guarded-Undo corrections.
-- User stories and the six-board mockup set are complete. The technical contract follows the reviewed screens, with generated layout/time artifacts called out for correction.
-- The implementation goal is active. Work has started on the pure snapshot/validation/batch-edit core and a self-contained local assistant skill. Host persistence, UI integration and installed acceptance follow in sequence.
+- The 0.9.9 baseline was committed, tagged and pushed before feature work. Its hotfix checkout remains available.
+- User stories, six generated mockup boards and two review passes informed the technical specification and active goal.
+- M1 provides bounded snapshots, proposal validation, composition and durable draft recovery.
+- M2 provides request/rules, timeline previews, selected review, guarded Apply and Undo through the current note journal and Calendar identity map.
+- M3 provides the local facade and self-contained assistant skill/helper, context-copy/import and curated task buckets using the current browser.
+- M4 has source, installed UI, local-agent and disposable Google acceptance evidence in ACCEPTANCE.md. Final release and installation readback complete delivery.

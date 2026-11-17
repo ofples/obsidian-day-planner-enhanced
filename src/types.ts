@@ -3,6 +3,7 @@ import type Fraction from "fraction.js";
 import type { MetadataCache, Vault } from "obsidian";
 import type { Readable, Writable } from "svelte/store";
 
+import type { AiPlanningService } from "./ai-scheduling/service";
 import type { IcalParseTaskResult } from "./redux/ical/init-ical-listeners";
 import { type AppDispatch, type RootState } from "./redux/store";
 import type { UseSelector } from "./redux/use-selector";
@@ -71,6 +72,8 @@ export type PointerDateTime = {
 export type Signal<T> = { current: T };
 
 export interface ObsidianContext {
+  aiPlanning?: AiPlanningService;
+  openAiPlanning?: () => Promise<void>;
   showPlannerDays?: (
     count: number,
     day: Moment,

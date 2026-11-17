@@ -4,6 +4,13 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.10.0 preview
+
+- Add assistant-driven scheduling proposals, task buckets and saved planning rules through the existing planner and Tasks pane.
+- Preview placements, flexible-block moves and frame additions for one through seven days, then approve selected changes.
+- Preserve note/Google identities and existing Markdown content through the current edit queue, with checked batch Undo and resumable calendar cleanup.
+- Add a self-contained local assistant skill/CLI helper, context copy and JSON import. Preparation uses bounded cached data and has no schedule/provider effects.
+
 ## 0.9.9
 
 - Show frame label warnings only when a child has explicit category labels with no match among the frame labels. Unlabeled children, control tags and missing additional frame labels do not trigger warnings.

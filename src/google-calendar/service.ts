@@ -4,7 +4,10 @@ import { writable } from "svelte/store";
 import { z } from "zod";
 
 import { selectSortedDedupedVisibleDays } from "../redux/date-ranges-slice";
-import { googleTimeBlocksUpdated } from "../redux/ical/ical-slice";
+import {
+  googleTimeBlocksUpdated,
+  type SerializedRemoteTimeBlock,
+} from "../redux/ical/ical-slice";
 import type { AppStore } from "../redux/store";
 import type { PeriodicNotes } from "../service/periodic-notes";
 import { googleRequestGate } from "../service/request-gate";
@@ -28,7 +31,7 @@ import {
 import { ObsidianCalendarNotes } from "./notes";
 import { isCalendarDateInScope } from "./scope";
 import type { CalendarSyncState } from "./types";
-import type { LocalBlock } from "./types";
+import type { LocalBlock, LocalIdentity } from "./types";
 import {
   canonicalSnapshotOf,
   sameCanonicalSnapshot,
@@ -154,6 +157,17 @@ const stateSchema = z.object({
     .optional(),
 });
 
+export interface CalendarNoteEditScope {
+  removeProjection(
+    uid: string,
+    snapshot: CalendarSnapshot,
+    path: string,
+  ): Promise<void>;
+}
+
+const planningUndoHoldMessage =
+  "Finish the pending AI Undo in Plan before syncing Google Calendar.";
+
 export class GoogleCalendarSync {
   private state!: CalendarSyncState;
   private auth!: GoogleCalendarAuth;
@@ -187,12 +201,18 @@ export class GoogleCalendarSync {
   private missingLocal: MissingLocalConflict[] = [];
   private deletedRemote: DeletedRemoteConflict[] = [];
   private reviewing = false;
+  private planningUndoHold = false;
 
   private queueAutomaticSync() {
-    if (this.stopped || !this.getSettings().googleCalendar.autoSync) return;
+    if (
+      this.stopped ||
+      this.planningUndoHold ||
+      !this.getSettings().googleCalendar.autoSync
+    )
+      return;
     window.clearTimeout(this.automaticTimer);
     this.automaticTimer = window.setTimeout(() => {
-      if (this.stopped) return;
+      if (this.stopped || this.planningUndoHold) return;
       if (
         this.composing.size ||
         this.edits?.isWriting ||
@@ -385,11 +405,35 @@ export class GoogleCalendarSync {
     return { notes, timeMin, timeMax };
   }
 
+  identitySnapshot(): Record<string, LocalIdentity> {
+    return structuredClone(this.state.identities ?? {});
+  }
+
+  projectionNeedsCleanup(uid: string) {
+    const record = this.state.records[uid];
+    return Boolean(
+      (record && !record.deleted) || this.state.pendingCreate?.uid === uid,
+    );
+  }
+
+  /** The AI batch record persists this hold and reinstates it before reconciliation. */
+  setPlanningUndoHold(held: boolean) {
+    if (this.planningUndoHold === held) return;
+    this.planningUndoHold = held;
+    window.clearTimeout(this.automaticTimer);
+    if (!held) this.queueAutomaticSync();
+  }
+
+  private assertPlanningSyncAvailable() {
+    if (this.planningUndoHold) throw new Error(planningUndoHoldMessage);
+  }
+
   /** Serializes task projections with the existing calendar note journal. */
   async editNotes<T>(
     operation: (
       notes: ObsidianCalendarNotes,
       blocks: LocalBlock[],
+      scope: CalendarNoteEditScope,
     ) => Promise<T>,
     prepare?: () => Promise<void>,
   ): Promise<T> {
@@ -406,7 +450,19 @@ export class GoogleCalendarSync {
         // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Unload can stop the service while scanning notes.
         if (this.stopped)
           throw new Error("Reopen Day Planner before scheduling this task.");
-        return await operation(notes, blocks);
+        let scopeActive = true;
+        const scope: CalendarNoteEditScope = {
+          removeProjection: async (uid, snapshot, path) => {
+            if (!scopeActive || this.stopped)
+              throw new Error("The calendar note-edit operation has finished.");
+            await this.removeProjectionWithinEdit(uid, snapshot, path);
+          },
+        };
+        try {
+          return await operation(notes, blocks, scope);
+        } finally {
+          scopeActive = false;
+        }
       } finally {
         this.busy = false;
         this.queueAutomaticSync();
@@ -417,6 +473,7 @@ export class GoogleCalendarSync {
   }
 
   async syncProjection(uid: string, snapshot: CalendarSnapshot) {
+    this.assertPlanningSyncAvailable();
     if (
       !isCalendarDateInScope(
         snapshot,
@@ -460,6 +517,7 @@ export class GoogleCalendarSync {
     path: string,
     base?: CalendarSnapshot,
   ) {
+    this.assertPlanningSyncAvailable();
     if (
       !isCalendarDateInScope(
         base ?? snapshot,
@@ -502,7 +560,31 @@ export class GoogleCalendarSync {
     snapshot: CalendarSnapshot,
     path: string,
   ) {
-    const baseline = this.state.records[uid]?.base ?? snapshot;
+    this.assertPlanningSyncAvailable();
+    if (this.busy || this.stopped)
+      throw new Error(
+        "Calendar sync is busy. Removing this schedule is saved for retry.",
+      );
+    this.busy = true;
+    try {
+      await this.removeProjectionWithinEdit(uid, snapshot, path);
+    } finally {
+      this.busy = false;
+      await this.refreshView();
+    }
+  }
+
+  private async removeProjectionWithinEdit(
+    uid: string,
+    snapshot: CalendarSnapshot,
+    path: string,
+  ) {
+    const record = this.state.records[uid];
+    const pending =
+      this.state.pendingCreate?.uid === uid
+        ? this.state.pendingCreate
+        : undefined;
+    const baseline = record?.base ?? pending?.snapshot ?? snapshot;
     if (
       !isCalendarDateInScope(
         baseline,
@@ -511,61 +593,52 @@ export class GoogleCalendarSync {
       !(await this.noteContext().notes.canSync(path, snapshot))
     )
       throw new Error("This schedule is outside Google Calendar sync scope.");
-    if (this.busy || this.stopped)
+    if (record?.deleted && !pending) return;
+    const api = this.api();
+    const calendarId = await api.validateCalendar();
+    if (this.state.calendarId && this.state.calendarId !== calendarId)
       throw new Error(
-        "Calendar sync is busy. Removing this schedule is saved for retry.",
+        "Choose the original managed calendar before removing this schedule.",
       );
-    this.busy = true;
-    try {
-      const record = this.state.records[uid];
-      if (record?.deleted) return;
-      const api = this.api();
-      const calendarId = await api.validateCalendar();
-      if (this.state.calendarId && this.state.calendarId !== calendarId)
+    const eventId =
+      record?.eventId ?? pending?.eventId ?? `dp${this.state.namespace}${uid}`;
+    const event = await api.get(eventId);
+    if (event && event.status !== "cancelled") {
+      const canonical = baseline.tags !== undefined;
+      if (canonical && !isCanonicalOwned(event, this.state.namespace, uid))
         throw new Error(
-          "Choose the original managed calendar before removing this schedule.",
+          "Review this event's calendar ownership before removing the schedule.",
         );
-      const eventId = record?.eventId ?? `dp${this.state.namespace}${uid}`;
-      const event = await api.get(eventId);
-      if (event && event.status !== "cancelled") {
-        const canonical = record?.base.tags !== undefined;
-        if (canonical && !isCanonicalOwned(event, this.state.namespace, uid))
-          throw new Error(
-            "Review this event's calendar ownership before removing the schedule.",
+      if (!record && !isOwned(event, this.state.namespace, uid))
+        throw new Error(
+          "Review this event's calendar ownership before removing the schedule.",
+        );
+      const current = canonical
+        ? canonicalSnapshotOf(event, baseline)
+        : snapshotOf(
+            event,
+            isOwned(event, this.state.namespace, uid) ? "" : undefined,
           );
-        if (!record && !isOwned(event, this.state.namespace, uid))
-          throw new Error(
-            "Review this event's calendar ownership before removing the schedule.",
-          );
-        const current = canonical
-          ? canonicalSnapshotOf(event, record!.base)
-          : snapshotOf(
-              event,
-              isOwned(event, this.state.namespace, uid) ? "" : undefined,
-            );
-        if (
-          !current ||
-          !(canonical
-            ? sameCanonicalSnapshot(current, record!.base)
-            : sameSnapshot(current, record?.base ?? snapshot))
-        )
-          throw new Error(
-            "This event changed in Google Calendar. Review the changes before removing its schedule.",
-          );
-        await api.remove(event);
-      }
-      this.state.calendarId = calendarId;
-      this.state.records[uid] = {
-        eventId,
-        path,
-        base: record?.base ?? snapshot,
-        deleted: true,
-      };
-      await this.save();
-    } finally {
-      this.busy = false;
-      await this.refreshView();
+      if (
+        !current ||
+        !(canonical
+          ? sameCanonicalSnapshot(current, baseline)
+          : sameSnapshot(current, baseline))
+      )
+        throw new Error(
+          "This event changed in Google Calendar. Review the changes before removing its schedule.",
+        );
+      await api.remove(event);
     }
+    this.state.calendarId = calendarId;
+    this.state.records[uid] = {
+      eventId,
+      path,
+      base: baseline,
+      deleted: true,
+    };
+    if (pending) delete this.state.pendingCreate;
+    await this.save();
   }
 
   isConnected() {
@@ -666,6 +739,10 @@ export class GoogleCalendarSync {
   }
 
   async run(automatic = false, noteAuthority?: string) {
+    if (this.planningUndoHold) {
+      if (!automatic) new Notice(planningUndoHoldMessage);
+      return;
+    }
     if (noteAuthority) {
       window.clearTimeout(this.automaticTimer);
       while (!this.stopped && (this.busy || this.edits?.isWriting))
@@ -906,6 +983,7 @@ export class GoogleCalendarSync {
         while (!this.stopped && (this.busy || this.edits?.isWriting))
           await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
         if (this.stopped) return;
+        this.assertPlanningSyncAvailable();
         this.busy = true;
         acquired = true;
         this.syncing.set(true);
@@ -1162,6 +1240,56 @@ export class GoogleCalendarSync {
     return this.calendarNames.get(id);
   }
 
+  async readCalendarBlocks(
+    first: Moment,
+    lastExclusive: Moment,
+  ): Promise<SerializedRemoteTimeBlock[]> {
+    if (!first.isValid() || !lastExclusive.isAfter(first))
+      throw new Error("Choose a valid calendar date range.");
+    const config = this.getSettings().googleCalendar;
+    if (!config.showCalendarEvents) return [];
+    if (
+      !this.isConnected() &&
+      !config.calendarId.trim() &&
+      !config.visibleCalendarIds?.length
+    )
+      return [];
+    if (
+      this.stopped ||
+      !Platform.isDesktopApp ||
+      !this.clientId() ||
+      !this.isConnected()
+    )
+      throw new Error(
+        "Connect Google Calendar before checking calendar availability.",
+      );
+    const api = this.api();
+    const [calendars, palette] = await Promise.all([
+      this.calendars(),
+      api.eventColors(),
+    ]);
+    const excluded =
+      this.store.getState().ical.taskCalendarDisplay.googleCalendarIds;
+    const selected = visibleGoogleCalendars(calendars, config).filter(
+      (calendar) => !excluded.includes(calendar.id),
+    );
+    return (
+      await Promise.all(
+        selected.map(async (calendar) =>
+          googleEventsToBlocks(
+            await this.api(calendar.id).list(
+              first.toISOString(),
+              lastExclusive.toISOString(),
+            ),
+            calendar,
+            palette,
+            this.state,
+          ),
+        ),
+      )
+    ).flat();
+  }
+
   async refreshView() {
     const generation = ++this.viewGeneration;
     const config = this.getSettings().googleCalendar;
@@ -1180,31 +1308,7 @@ export class GoogleCalendarSync {
     const last = days.at(-1)?.clone().startOf("day").add(1, "day");
     if (!first || !last) return;
     try {
-      const api = this.api();
-      const [calendars, palette] = await Promise.all([
-        this.calendars(),
-        api.eventColors(),
-      ]);
-      const excluded =
-        this.store.getState().ical.taskCalendarDisplay.googleCalendarIds;
-      const selected = visibleGoogleCalendars(calendars, config).filter(
-        (calendar) => !excluded.includes(calendar.id),
-      );
-      const blocks = (
-        await Promise.all(
-          selected.map(async (calendar) =>
-            googleEventsToBlocks(
-              await this.api(calendar.id).list(
-                first.toISOString(),
-                last.toISOString(),
-              ),
-              calendar,
-              palette,
-              this.state,
-            ),
-          ),
-        )
-      ).flat();
+      const blocks = await this.readCalendarBlocks(first, last);
       if (generation === this.viewGeneration)
         this.store.dispatch(googleTimeBlocksUpdated(blocks));
     } catch (error) {

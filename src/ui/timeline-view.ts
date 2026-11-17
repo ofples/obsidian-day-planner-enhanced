@@ -77,6 +77,17 @@ export default class TimelineView extends ItemView {
     };
   }
 
+  getPlanningRange() {
+    return {
+      startDate: (
+        this.dateRange?.first ??
+        this.savedDay ??
+        window.moment()
+      ).format("YYYY-MM-DD"),
+      dayCount: 1,
+    };
+  }
+
   async setState(state: unknown, result: ViewStateResult) {
     const day = getSavedViewDay(state);
     if (day) {

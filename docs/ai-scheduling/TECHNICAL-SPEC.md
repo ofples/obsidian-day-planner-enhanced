@@ -36,7 +36,7 @@ Use opaque context-local references for blocks, frames and tasks. The model retu
 
 Keep full document snapshots inside the plugin's private state. The public assistant context contains task subtrees, descriptions, scheduling fields and reference IDs, while omitting unrelated document paragraphs. Include existing provider priority, due date, estimated duration and project metadata when available. The current task serializer's descendant IDs let batch validation detect overlapping parent/child selections without new ownership records.
 
-Context collection performs no scheduling or provider writes and starts no provider refresh loop. Use the current cached calendar commitments and disclose their freshness. The selected displayed calendars define the commitments visible to this local planner. Live provider conflict checks continue through the established synchronization code.
+Context collection performs no scheduling or provider writes and starts no provider refresh loop. Read the selected calendars over the requested planning dates with one bounded, read-only Google refresh and the current cached ICS feeds. Repeat this range read once before applying the selected batch. The selected displayed calendars define the commitments visible to this local planner. Live provider conflict checks continue through the established synchronization code.
 
 Timed displayed events reserve their interval. All-day entries provide context and remain informational in this preview. Include that distinction in the assistant context. Refreshing context reuses the current Todoist cache, whose timestamp remains visible. Use the normal provider refresh to learn about new remote changes.
 
@@ -54,7 +54,7 @@ Buckets contain a short title and current task references. They reuse current ta
 
 Retain the bucket's context mapping even when showTaskView is called without a schedule proposal. Resolve references against current task sources and remove unavailable/completed rows through existing filters. Bucket controls can select a source and filter the current rows, preserving ordinary completion and drag handlers.
 
-The service validates the entire input shape, ID uniqueness and referenced entities before showing it. Validation issues identify their action and use plain language. Reject unknown or completed sources and duplicate placements. Task text is data and cannot request extra tools or change the proposal contract. Also reject selected parent/descendant sources whose source ranges overlap, since distinct references can still represent one subtree.
+The service rejects invalid input shapes and duplicate identifiers during import. Valid-shaped suggestions with stale sources or schedule conflicts remain visible with per-action issues. Approval rejects unknown or completed sources and duplicate placements. Task text is data and cannot request extra tools or change the proposal contract. Also reject selected parent/descendant sources whose source ranges overlap, since distinct references can still represent one subtree.
 
 ## Validation and scheduling constraints
 

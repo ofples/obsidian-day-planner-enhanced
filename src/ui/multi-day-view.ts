@@ -63,6 +63,20 @@ export default class MultiDayView extends ItemView {
     };
   }
 
+  getPlanningRange() {
+    return {
+      startDate: (
+        this.dateRange?.first ??
+        this.savedDay ??
+        window.moment()
+      ).format("YYYY-MM-DD"),
+      dayCount: Math.min(
+        7,
+        this.dateRange?.current.length ?? this.savedDayCount ?? 1,
+      ),
+    };
+  }
+
   async setState(state: unknown, result: ViewStateResult) {
     const day = getSavedViewDay(state);
     const previousCount = this.savedDayCount;

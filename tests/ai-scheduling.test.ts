@@ -118,6 +118,7 @@ function build(
   ctx: PlanningContext,
   plan: PlanningProposal,
   selected = plan.actions.map((action) => action.id),
+  templates = { [nextPath]: "# Daily template\n\n# Plan\n" },
 ) {
   return buildPlanningBatch(ctx, plan, selected, {
     settings,
@@ -127,7 +128,7 @@ function build(
         document.text,
       ]),
     ),
-    templates: { [nextPath]: "# Daily template\n\n# Plan\n" },
+    templates,
     newUids: Object.fromEntries(
       plan.actions.map((action, index) => [
         action.id,
@@ -255,6 +256,25 @@ test("a cross-day move preserves identity, description and subtree with an absen
   expect(batch.edits.find((edit) => edit.path === path)!.after).not.toContain(
     "Focus #work",
   );
+});
+
+test("an approved future placement respects commitments created by its daily template", () => {
+  const ctx = context();
+  const plan = proposal([
+    {
+      id: "future",
+      kind: "move",
+      sourceRef: ctx.blocks[1]!.ref,
+      start: time("14:00", "2031-01-02"),
+      end: time("14:30", "2031-01-02"),
+    },
+  ]);
+  expect(() =>
+    build(ctx, plan, ["future"], {
+      [nextPath]:
+        "# Plan\n\n- [ ] 14:00 - 15:00 Fixed template commitment #locked\n",
+    }),
+  ).toThrow(PlanningValidationError);
 });
 
 test("accepting a subset rebases remaining frame additions and reserves newly accepted slots", () => {

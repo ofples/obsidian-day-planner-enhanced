@@ -2,13 +2,16 @@ import { flushSync, mount, unmount, type ComponentProps } from "svelte";
 import { get, writable } from "svelte/store";
 import { expect, test, vi } from "vitest";
 
+import type { AiPlanningService } from "../src/ai-scheduling/service";
 import { defaultSettings, defaultSettingsForTests } from "../src/settings";
+import { planningTaskSelection } from "../src/tasks/ai-task-view";
 import { taskViewStateSchema } from "../src/tasks/browser";
 import { parseCaptureCandidates } from "../src/tasks/capture-parser";
 import { TaskDrag, taskDragMime } from "../src/tasks/drag";
 import type { TaskScheduler } from "../src/tasks/schedule";
 import type { TaskBrowserState, TaskService } from "../src/tasks/service";
 import type { ProviderTask, TaskSnapshot } from "../src/tasks/types";
+import type { PlanningPanelState } from "../src/ui/ai-planning-panel";
 import SimpleTasksPane from "../src/ui/components/simple-tasks-pane.svelte";
 import TaskPaneRoot from "../src/ui/components/task-pane-root.svelte";
 
@@ -322,4 +325,175 @@ test("default setting selects the simple pane and enabling experimental sync sel
   expect(mocks.legacy).toHaveBeenCalled();
   await unmount(component);
   target.remove();
+});
+
+test("assistant buckets mix current note and provider sources without changing normal browsing", async () => {
+  const h = fixture();
+  const originalPreferences = {
+    ...get(h.preferences),
+    query: "ordinary search",
+    source: "notes" as const,
+  };
+  h.preferences.set(originalPreferences);
+  h.noteTasks.set(
+    parseCaptureCandidates(
+      "Notes.md",
+      "- [ ] Local reading\n- [ ] Unrelated note task",
+    ),
+  );
+  h.browser.update((state) => ({
+    ...state,
+    snapshot: {
+      ...snapshot,
+      tasks: [task, { ...task, id: "other", title: "Other provider task" }],
+    },
+  }));
+  const note = get(h.noteTasks)[0]!;
+  const state = writable<PlanningPanelState>({
+    ready: true,
+    busy: false,
+    error: "",
+    context: null,
+    draft: null,
+    lastBatch: null,
+    issues: [],
+    taskView: {
+      contextId: "context",
+      tasks: [
+        {
+          ref: "note",
+          kind: "note",
+          title: note.title,
+          path: note.path,
+          from: note.from,
+          raw: note.raw,
+        },
+        {
+          ref: "provider",
+          kind: "todoist",
+          title: task.title,
+          raw: "- [ ] Provider work",
+          provider: "todoist",
+          accountId: "account",
+          taskId: task.id,
+        },
+      ],
+      buckets: [
+        {
+          id: "morning",
+          title: "Morning focus",
+          taskRefs: ["note", "provider"],
+        },
+      ],
+    },
+  });
+  const planning = {
+    state,
+    visible: writable(false),
+    show: vi.fn(),
+    clearTaskView: vi.fn(() =>
+      state.update((current) => ({ ...current, taskView: null })),
+    ),
+  } as unknown as AiPlanningService;
+  const target = document.createElement("div");
+  document.body.append(target);
+  const component = mount(SimpleTasksPane, {
+    target,
+    props: { ...h, planning },
+  });
+  flushSync();
+  expect(target.textContent).toContain("Morning focus");
+  expect(target.textContent).toContain("Local reading");
+  expect(target.textContent).toContain("Provider work");
+  expect(target.textContent).not.toContain("Unrelated note task");
+  expect(target.textContent).not.toContain("Other provider task");
+  expect(get(h.preferences)).toEqual(originalPreferences);
+  target
+    .querySelector<HTMLButtonElement>('[aria-label="Complete Provider work"]')!
+    .click();
+  expect(h.completeTask).toHaveBeenCalledWith(task);
+  // The curated view uses the ordinary provider drag entry point and its payload.
+  const row = target.querySelector<HTMLElement>(
+    '[aria-label="Provider work"]',
+  )!;
+  const data = new Map<string, string>();
+  const transfer = {
+    setData: (key: string, value: string) => data.set(key, value),
+    getData: (key: string) => data.get(key) ?? "",
+    effectAllowed: "",
+  } as unknown as DataTransfer;
+  const drag = new Event("dragstart", { bubbles: true, cancelable: true });
+  Object.defineProperty(drag, "dataTransfer", { value: transfer });
+  row.dispatchEvent(drag);
+  expect(h.scheduler.drag.current()).toEqual(task);
+  expect(data.has(taskDragMime)).toBe(true);
+  row.dispatchEvent(new Event("dragend", { bubbles: true }));
+  h.browser.update((current) => ({
+    ...current,
+    snapshot: { ...snapshot, tasks: [{ ...task, completed: true }] },
+  }));
+  flushSync();
+  expect(
+    target.querySelector('[aria-label="Complete Provider work"]'),
+  ).toBeNull();
+  const button = (text: string) =>
+    Array.from(target.querySelectorAll<HTMLButtonElement>("button")).find(
+      (item) => item.textContent?.trim() === text,
+    )!;
+  button("Plan").click();
+  expect(planning.show).toHaveBeenCalledOnce();
+  button("Clear view").click();
+  flushSync();
+  expect(get(h.preferences)).toEqual(originalPreferences);
+  expect(target.textContent).not.toContain("Morning focus");
+  expect(
+    target.querySelector<HTMLInputElement>('[aria-label="Search tasks"]')!
+      .value,
+  ).toBe("ordinary search");
+  await unmount(component);
+  target.remove();
+});
+
+test("assistant note identity follows unique raw text drift and preserves parent context", () => {
+  const original = parseCaptureCandidates(
+    "Notes.md",
+    "- [ ] Parent\n  - [ ] Child\n- [ ] Unrelated",
+  );
+  const child = original[1]!;
+  const selected = {
+    ref: "child",
+    kind: "note" as const,
+    title: child.title,
+    raw: child.raw,
+    path: child.path,
+    from: child.from,
+  };
+  const current = parseCaptureCandidates(
+    "Notes.md",
+    "Some new text\n\n- [ ] Parent\n  - [ ] Child\n- [ ] Unrelated",
+  );
+  expect(
+    planningTaskSelection(
+      [selected],
+      new Set(["child"]),
+      current,
+      null,
+    ).notes.map((task) => task.title),
+  ).toEqual(["Parent", "Child"]);
+  const duplicates = parseCaptureCandidates(
+    "Notes.md",
+    "Some new text\n\n  - [ ] Child\n  - [ ] Child",
+  );
+  expect(
+    planningTaskSelection([selected], new Set(["child"]), duplicates, null)
+      .notes,
+  ).toEqual([]);
+  expect(
+    planningTaskSelection(
+      [{ ...selected, raw: "- [ ] Changed" }],
+      new Set(["child"]),
+      current,
+      null,
+    ).notes,
+  ).toEqual([]);
 });

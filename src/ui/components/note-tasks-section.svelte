@@ -24,6 +24,7 @@
     currentPath = "",
     scannedPaths = [],
     showAdded = false,
+    matchingKeys,
     scan,
     remove,
     openNote,
@@ -34,6 +35,7 @@
     currentPath?: string;
     scannedPaths?: string[];
     showAdded?: boolean;
+    matchingKeys?: ReadonlySet<string>;
     scan: () => void;
     remove: (path: string) => void;
     openNote: (path: string, line: number) => void;
@@ -70,7 +72,17 @@
         byPath.get(path) ?? [],
         query,
         showAdded && path === currentPath,
-      ),
+      ).map((row) => ({
+        ...row,
+        context:
+          row.context ||
+          Boolean(
+            matchingKeys &&
+              !matchingKeys.has(
+                JSON.stringify([row.candidate.path, row.candidate.from]),
+              ),
+          ),
+      })),
     })),
   );
   const key = (row: NoteTaskRow) =>

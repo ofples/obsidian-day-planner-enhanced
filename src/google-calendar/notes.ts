@@ -549,8 +549,13 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     return plan.block;
   }
 
+  identitySnapshot(): Record<string, LocalIdentity> {
+    return structuredClone(this.state.identities ?? {});
+  }
+
   async applyEdits(
     edits: Array<{ path: string; before: string; after: string }>,
+    identityPatch: Record<string, LocalIdentity | null> = {},
   ) {
     for (const edit of edits) {
       const file = this.file(edit.path);
@@ -566,12 +571,12 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       throw new Error(
         "Finish the pending note operation before applying another write.",
       );
-    await this.changeNotes(
-      edits,
-      { ...this.state.identities },
-      undefined,
-      this.localWrites,
-    );
+    const identities = this.identitySnapshot();
+    for (const [uid, identity] of Object.entries(identityPatch)) {
+      if (identity === null) delete identities[uid];
+      else identities[uid] = structuredClone(identity);
+    }
+    await this.changeNotes(edits, identities, undefined, this.localWrites);
   }
 
   async recoverMove() {

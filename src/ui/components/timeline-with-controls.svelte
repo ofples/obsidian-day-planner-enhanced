@@ -11,6 +11,7 @@
   import { getDayKey } from "../../util/time-block-utils";
   import { createResizeState } from "../actions/create-resize-state";
 
+  import AiProposalBar from "./ai-proposal-bar.svelte";
   import BlockList from "./block-list.svelte";
   import ErrorBoundary from "./error-boundary.svelte";
   import { GripHorizontal } from "./lucide";
@@ -71,6 +72,7 @@
 <ErrorBoundary>
   <div class="controls-row">
     <TimelineControls />
+    <AiProposalBar />
   </div>
 
   <div class="corner">

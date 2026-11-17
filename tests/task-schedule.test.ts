@@ -193,7 +193,10 @@ async function harness() {
     | "assertTaskExportAllowed"
   > = {
     assertTaskExportAllowed: exportGuard,
-    editNotes: async (edit) => edit(notes, await notes.scan()),
+    editNotes: async (edit) =>
+      edit(notes, await notes.scan(), {
+        removeProjection: calendar.removeProjection,
+      }),
     recoverProjection: async (uid, snapshot, path, base) => {
       if (failCalendar) throw new Error("calendar offline");
       await recoverCalendarProjection({

@@ -8,6 +8,7 @@ import { mount, unmount } from "svelte";
 import { get, readable, writable, type Writable } from "svelte/store";
 import type { Readable } from "svelte/store";
 
+import type { AiPlanningService } from "../ai-scheduling/service";
 import { viewTypeTimeline } from "../constants";
 import type { GoogleCalendarSync } from "../google-calendar/service";
 import type { AppStore } from "../redux/store";
@@ -52,6 +53,7 @@ export class TasksView extends ItemView {
     private readonly openConnections?: () => void,
     private readonly store?: Pick<AppStore, "subscribe">,
     private readonly daily?: Pick<PeriodicNotes, "createDailyNotePath">,
+    private readonly planning?: AiPlanningService,
   ) {
     super(leaf);
   }
@@ -158,6 +160,7 @@ export class TasksView extends ItemView {
         noteContext,
         resolveImported: (uid: string) => this.calendar?.importedSource?.(uid),
         openConnections: this.openConnections,
+        planning: this.planning,
         scheduleImported: (task: ProviderTask) => {
           if (this.scheduler)
             new TaskScheduleModal(

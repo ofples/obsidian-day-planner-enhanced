@@ -2,6 +2,7 @@ import "./styles.scss";
 
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
 import { Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { tick } from "svelte";
 import {
   derived,
   get,
@@ -12,6 +13,8 @@ import {
 } from "svelte/store";
 import { isNotVoid } from "typed-assert";
 
+import { ObsidianPlanningHost } from "./ai-scheduling/obsidian";
+import { AiPlanningService } from "./ai-scheduling/service";
 import {
   obsidianContextKey,
   viewTypeReleaseNotes,
@@ -53,6 +56,8 @@ import { selectVisibleDays } from "./redux/date-ranges-slice";
 import {
   icalRefreshRequested,
   taskCalendarDisplayUpdated,
+  selectAllIcalEventsWithIcalConfigs,
+  icalSlice,
 } from "./redux/ical/ical-slice";
 import { type IcalParseTaskResult } from "./redux/ical/init-ical-listeners";
 import { selectActiveLogTimeBlocks } from "./redux/index/index-selectors";
@@ -153,12 +158,19 @@ import {
   dayPlannerHoverLinkSource,
 } from "./util/create-show-preview";
 import { runWithNoticeOnError } from "./util/effect";
+import { icalEventToTimeBlocksForRange } from "./util/ical";
 import { notifyAboutStartedTimeBlocks } from "./util/notify-about-started-time-blocks";
 import { createBackgroundBatchScheduler } from "./util/scheduler";
 import { sortPlannerTasks } from "./util/sort-planner-tasks";
 import { isWithDuration } from "./util/time-block-utils";
 
 export default class DayPlanner extends Plugin {
+  aiPlanning?: AiPlanningService;
+  aiPlanner?: Pick<
+    AiPlanningService,
+    "getContext" | "submitProposal" | "showTaskView" | "getStatus"
+  >;
+  private lastPlanningView?: TimelineView | MultiDayView;
   googleCalendarSync!: GoogleCalendarSync;
   taskService!: TaskService;
   taskCapture!: TaskCapture;
@@ -441,6 +453,83 @@ export default class DayPlanner extends Plugin {
       this.transactionWriter,
     );
     let calendarReady = false;
+    this.aiPlanning = new AiPlanningService(
+      new ObsidianPlanningHost({
+        plugin: this,
+        daily: this.periodicNotes,
+        calendar: this.googleCalendarSync,
+        tasks: this.taskService,
+        scheduler: () => this.taskScheduler,
+        settings: this.getSettings,
+        range: () =>
+          this.lastPlanningView?.getPlanningRange() ?? {
+            startDate: window.moment().format("YYYY-MM-DD"),
+            dayCount: 1,
+          },
+        sourcePaths: () =>
+          [
+            this.app.workspace.getActiveFile()?.path ?? "",
+            ...this.app.workspace
+              .getLeavesOfType(viewTypeTasks)
+              .flatMap(
+                (leaf) => (leaf.view as TasksView).getState().scannedNotePaths,
+              ),
+          ].filter((path): path is string => Boolean(path)),
+        commitments: async (startDate, dayCount) => {
+          const first = window.moment(startDate, "YYYY-MM-DD").startOf("day");
+          const last = first.clone().add(dayCount - 1, "days");
+          const policy = icalSlice.selectors.selectTaskCalendarDisplay(
+            store.getState(),
+          );
+          const feeds = selectAllIcalEventsWithIcalConfigs(store.getState())
+            .filter((event) => !policy.icalUrls.includes(event.calendar.url))
+            .flatMap((event) =>
+              icalEventToTimeBlocksForRange(event, first, last),
+            )
+            .filter((block) => block !== undefined);
+          const google = await this.googleCalendarSync.readCalendarBlocks(
+            first,
+            first.clone().add(dayCount, "days"),
+          );
+          return [
+            ...feeds,
+            ...google.map((block) => ({
+              ...block,
+              startTime: window.moment(block.startTime),
+            })),
+          ].filter(isWithDuration);
+        },
+        preview: noteFeedback,
+      }),
+    );
+    try {
+      await this.aiPlanning.initialize();
+      const planning = this.aiPlanning;
+      this.aiPlanner = {
+        getContext: (input) => planning.getContext(input),
+        submitProposal: (input) => planning.submitProposal(input),
+        showTaskView: (input) => planning.showTaskView(input),
+        getStatus: () => planning.getStatus(),
+      };
+    } catch {
+      new Notice(
+        "AI planning could not load its saved draft. Open Plan to review the error.",
+      );
+    }
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", (leaf) => {
+        if (
+          leaf?.view instanceof TimelineView ||
+          leaf?.view instanceof MultiDayView
+        )
+          this.lastPlanningView = leaf.view;
+      }),
+    );
+    this.addCommand({
+      id: "ai-planning",
+      name: "Plan with AI",
+      callback: () => this.openAiPlanning(),
+    });
     try {
       await this.googleCalendarSync.initialize();
       calendarReady = true;
@@ -510,6 +599,7 @@ export default class DayPlanner extends Plugin {
             () => this.openConnections(),
             store,
             this.periodicNotes,
+            this.aiPlanning,
           ),
       );
     this.addCommand({
@@ -789,7 +879,19 @@ export default class DayPlanner extends Plugin {
     await this.app.workspace.revealLeaf(leaf);
   }
 
+  async openAiPlanning() {
+    if (!this.aiPlanning) return;
+    const active = this.app.workspace.getMostRecentLeaf()?.view;
+    if (active instanceof TimelineView || active instanceof MultiDayView)
+      this.lastPlanningView = active;
+    this.aiPlanning.hide();
+    await tick();
+    this.aiPlanning.show();
+    await this.openTasks();
+  }
+
   private registerCommands() {
+    // Planning uses the shared Tasks pane and its current source selection.
     const timeTrackerCommand = (execute: () => void) =>
       createTimeTrackerCommandCheck({
         execute,
@@ -1325,6 +1427,8 @@ export default class DayPlanner extends Plugin {
     };
 
     const defaultObsidianContext: ObsidianContext = {
+      aiPlanning: this.aiPlanning,
+      openAiPlanning: () => this.openAiPlanning(),
       noteTaskDrag: this.noteTaskDrag,
       googleSyncing,
       googleConflictCount: this.googleCalendarSync.conflictCount,

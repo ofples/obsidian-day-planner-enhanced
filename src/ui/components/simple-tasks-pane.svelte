@@ -15,9 +15,17 @@
   } from "lucide-svelte";
   import { DateTime } from "luxon";
   import { Notice } from "obsidian";
-  import { readable, type Readable, type Writable } from "svelte/store";
+  import {
+    get,
+    readable,
+    writable,
+    type Readable,
+    type Writable,
+  } from "svelte/store";
 
+  import type { AiPlanningService } from "../../ai-scheduling/service";
   import { tasksAddedToNote } from "../../tasks/added-to-note";
+  import { planningTaskSelection } from "../../tasks/ai-task-view";
   import { taskDay, taskGroups, type TaskViewState } from "../../tasks/browser";
   import type { CaptureCandidate } from "../../tasks/capture-parser";
   import type { NoteTaskDrag } from "../../tasks/note-drag";
@@ -46,6 +54,7 @@
     completeTask,
     weakCompletionEnabled = true,
     openNote,
+    planning,
   }: {
     service: TaskService;
     scheduler?: TaskScheduler;
@@ -59,10 +68,64 @@
     completeTask?: (task: ProviderTask) => void;
     weakCompletionEnabled?: boolean;
     openNote: (path: string, line: number) => void;
+    planning?: AiPlanningService;
   } = $props();
+  const planningState = $derived(planning?.state ?? readable(null));
+  const taskView = $derived($planningState?.taskView ?? null);
+  let selectedBucket = $state("");
+  const curatedPreferences = writable<TaskViewState>({
+    groupBy: "date",
+    query: "",
+    projectId: "",
+    selectedId: null,
+    collapsed: [],
+  });
+  const viewPreferences = $derived(taskView ? curatedPreferences : preferences);
+  $effect(() => {
+    if (taskView) {
+      selectedBucket = taskView.buckets[0]?.id ?? "";
+      curatedPreferences.set({
+        ...get(preferences),
+        source: "overview",
+        query: "",
+        projectId: "",
+        collapsed: [],
+      });
+    }
+  });
   const browser = $derived(service.state);
   const snapshot = $derived($browser.snapshot);
-  const source = $derived($preferences.source ?? "todoist");
+  const selection = $derived(
+    taskView
+      ? planningTaskSelection(
+          taskView.tasks,
+          new Set(
+            taskView.buckets.find((bucket) => bucket.id === selectedBucket)
+              ?.taskRefs ?? [],
+          ),
+          $noteTasks,
+          $browser.snapshot,
+        )
+      : null,
+  );
+  const displayedNoteTasks = $derived(selection?.notes ?? $noteTasks);
+  const curatedNotePaths = $derived([
+    ...new Set(displayedNoteTasks.map((task) => task.path)),
+  ]);
+  const bucketCounts = $derived(
+    new Map(
+      (taskView?.buckets ?? []).map((bucket) => [
+        bucket.id,
+        planningTaskSelection(
+          taskView?.tasks ?? [],
+          new Set(bucket.taskRefs),
+          $noteTasks,
+          snapshot,
+        ).activeRefs.size,
+      ]),
+    ),
+  );
+  const source = $derived($viewPreferences.source ?? "todoist");
   const emptyImports = readable<Record<string, ImportedTaskSource>>({});
   const imports = $derived(scheduler?.importer.imports ?? emptyImports);
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Older pane hosts can omit drop feedback.
@@ -90,9 +153,17 @@
     }
     return added;
   });
-  const grouping = $derived($preferences.groupBy);
+  const providerExclusions = $derived.by(() => {
+    const excluded = new Set($viewPreferences.showAdded ? [] : addedIds);
+    if (selection)
+      for (const task of snapshot?.tasks ?? []) {
+        if (!selection.providerIds.has(task.id)) excluded.add(task.id);
+      }
+    return excluded;
+  });
+  const grouping = $derived($viewPreferences.groupBy);
   const groups = $derived.by(() => {
-    if (snapshot && source === "overview") {
+    if (snapshot && source === "overview" && !taskView) {
       const now = DateTime.now().setZone(snapshot.account.timezone);
       const today = now.toISODate() ?? "";
       const buckets = [
@@ -115,12 +186,11 @@
           snapshot.tasks
             .filter(
               (task) =>
-                !bucket.matches(task) ||
-                (!$preferences.showAdded && addedIds.has(task.id)),
+                !bucket.matches(task) || providerExclusions.has(task.id),
             )
             .map((task) => task.id),
         );
-        return taskGroups(snapshot, $preferences, now, excluded).map(
+        return taskGroups(snapshot, $viewPreferences, now, excluded).map(
           (group) => ({
             ...group,
             id: `${bucket.id}:${group.id}`,
@@ -130,17 +200,12 @@
       });
     }
     return snapshot
-      ? taskGroups(
-          snapshot,
-          $preferences,
-          undefined,
-          $preferences.showAdded ? undefined : addedIds,
-        )
+      ? taskGroups(snapshot, $viewPreferences, undefined, providerExclusions)
       : [];
   });
   function scanOtherNotes() {
-    $preferences = {
-      ...$preferences,
+    $viewPreferences = {
+      ...$viewPreferences,
       scannedNotePaths: [
         ...new Set(noteTaskRows($noteTasks).map((row) => row.candidate.path)),
       ].sort(),
@@ -165,16 +230,16 @@
       JSON.stringify([snapshot?.provider, snapshot?.account.id, grouping]),
       completeGroups,
       groups,
-      $preferences.collapsed,
+      $viewPreferences.collapsed,
     ),
   );
   const projects = $derived(
     new Map(snapshot?.projects.map((project) => [project.id, project.name])),
   );
   function toggle(id: string) {
-    const collapsed = $preferences.collapsed;
-    $preferences = {
-      ...$preferences,
+    const collapsed = $viewPreferences.collapsed;
+    $viewPreferences = {
+      ...$viewPreferences,
       collapsed: collapsed.includes(id)
         ? collapsed.filter((item) => item !== id)
         : [...collapsed, id],
@@ -209,7 +274,7 @@
     }
   }
   function choose(task: ProviderTask) {
-    $preferences = { ...$preferences, selectedId: task.id };
+    $viewPreferences = { ...$viewPreferences, selectedId: task.id };
     schedule(task);
   }
 </script>
@@ -219,6 +284,10 @@
     <div class="task-heading">
       <h2>Tasks</h2>
       <div class="task-toolbar-actions">
+        {#if planning}<button
+            class="task-text-button"
+            onclick={() => planning.show()}>Plan</button
+          >{/if}
         {#if source === "todoist"}
           <button
             class="task-icon-button"
@@ -243,15 +312,36 @@
         >
       </div>
     </div>
+    {#if taskView}
+      <div class="curated-heading">
+        <strong>Suggested task view</strong><button
+          class="task-text-button"
+          onclick={() => planning?.clearTaskView()}>Clear view</button
+        >
+      </div>
+      <div class="curated-buckets" aria-label="Suggested task buckets">
+        {#each taskView.buckets as bucket (bucket.id)}
+          <button
+            class="curated-bucket"
+            aria-pressed={selectedBucket === bucket.id}
+            onclick={() => (selectedBucket = bucket.id)}
+            >{bucket.title}<span>{bucketCounts.get(bucket.id) ?? 0}</span
+            ></button
+          >
+        {/each}
+      </div>
+    {/if}
     <div class="task-source-tabs" aria-label="Task sources" role="tablist">
       <button
         aria-selected={source === "overview"}
-        onclick={() => ($preferences = { ...$preferences, source: "overview" })}
-        role="tab">Overview</button
+        onclick={() =>
+          ($viewPreferences = { ...$viewPreferences, source: "overview" })}
+        role="tab">{taskView ? "All sources" : "Overview"}</button
       >
       <button
         aria-selected={source === "todoist"}
-        onclick={() => ($preferences = { ...$preferences, source: "todoist" })}
+        onclick={() =>
+          ($viewPreferences = { ...$viewPreferences, source: "todoist" })}
         role="tab"
         ><span class="task-source-mark"><ListChecks size={15} /></span>Todoist
         <span
@@ -265,7 +355,8 @@
       </button>
       <button
         aria-selected={source === "notes"}
-        onclick={() => ($preferences = { ...$preferences, source: "notes" })}
+        onclick={() =>
+          ($viewPreferences = { ...$viewPreferences, source: "notes" })}
         role="tab"><FileText size={15} />Notes</button
       >
     </div>
@@ -275,35 +366,35 @@
         aria-label="Search tasks"
         placeholder={source === "notes" ? "Search note tasks" : "Search tasks"}
         type="search"
-        bind:value={$preferences.query}
+        bind:value={$viewPreferences.query}
       />
-      {#if $preferences.query}<button
+      {#if $viewPreferences.query}<button
           class="task-icon-button"
           aria-label="Clear search"
           onclick={() => {
-            $preferences = { ...$preferences, query: "" };
+            $viewPreferences = { ...$viewPreferences, query: "" };
           }}><X size={14} /></button
         >{/if}
     </label>
     {#if source === "todoist"}<div class="task-filter-row">
         <div class="task-grouping" aria-label="Group tasks">
           <button
-            aria-pressed={$preferences.groupBy === "date"}
+            aria-pressed={$viewPreferences.groupBy === "date"}
             onclick={() => {
-              $preferences = { ...$preferences, groupBy: "date" };
+              $viewPreferences = { ...$viewPreferences, groupBy: "date" };
             }}>Date</button
           >
           <button
-            aria-pressed={$preferences.groupBy === "project"}
+            aria-pressed={$viewPreferences.groupBy === "project"}
             onclick={() => {
-              $preferences = { ...$preferences, groupBy: "project" };
+              $viewPreferences = { ...$viewPreferences, groupBy: "project" };
             }}>Project</button
           >
         </div>
         <label class="task-project-filter"
           ><select
             aria-label="Filter by project"
-            bind:value={$preferences.projectId}
+            bind:value={$viewPreferences.projectId}
           >
             <option value="">All projects</option>
             {#each snapshot?.projects ?? [] as project (project.id)}<option
@@ -312,16 +403,16 @@
           </select><ChevronDown size={13} /></label
         >
       </div>{/if}
-    {#if source === "todoist" && $preferences.groupBy === "project"}<label
+    {#if source === "todoist" && $viewPreferences.groupBy === "project"}<label
         >Sort
         <select
           aria-label="Sort project tasks"
           onchange={(event: Event & { currentTarget: HTMLSelectElement }) =>
-            ($preferences = {
-              ...$preferences,
+            ($viewPreferences = {
+              ...$viewPreferences,
               sortBy: event.currentTarget.value as TaskViewState["sortBy"],
             })}
-          value={$preferences.sortBy ?? "defined"}
+          value={$viewPreferences.sortBy ?? "defined"}
         >
           <option value="defined">Defined order</option><option value="priority"
             >Priority</option
@@ -347,11 +438,11 @@
         aria-label={source === "notes"
           ? "Show scheduled note tasks"
           : "Show tasks already added to this note"}
-        aria-pressed={Boolean($preferences.showAdded)}
+        aria-pressed={Boolean($viewPreferences.showAdded)}
         onclick={() =>
-          ($preferences = {
-            ...$preferences,
-            showAdded: !$preferences.showAdded,
+          ($viewPreferences = {
+            ...$viewPreferences,
+            showAdded: !$viewPreferences.showAdded,
           })}
         ><CheckCheck size={14} />{source === "notes"
           ? "Show scheduled"
@@ -371,32 +462,36 @@
   <div class="task-body">
     <div class="task-list-area">
       {#if source === "overview"}<NoteTasksSection
-          candidates={$noteTasks}
+          candidates={displayedNoteTasks}
           currentPath={$noteContext.currentPath}
+          matchingKeys={selection?.noteKeys}
           {noteDrag}
           {openNote}
-          query={$preferences.query}
+          query={$viewPreferences.query}
           remove={() => {}}
           scan={scanOtherNotes}
-          scannedPaths={[]}
-          showAdded={Boolean($preferences.showAdded)}
+          scannedPaths={taskView ? curatedNotePaths : []}
+          showAdded={Boolean($viewPreferences.showAdded)}
         />{/if}
       {#if source === "notes"}<NoteTasksSection
-          candidates={$noteTasks}
+          candidates={displayedNoteTasks}
           currentPath={$noteContext.currentPath}
+          matchingKeys={selection?.noteKeys}
           {noteDrag}
           {openNote}
-          query={$preferences.query}
+          query={$viewPreferences.query}
           remove={(path) =>
-            ($preferences = {
-              ...$preferences,
-              scannedNotePaths: ($preferences.scannedNotePaths ?? []).filter(
-                (item) => item !== path,
-              ),
+            ($viewPreferences = {
+              ...$viewPreferences,
+              scannedNotePaths: (
+                $viewPreferences.scannedNotePaths ?? []
+              ).filter((item) => item !== path),
             })}
           scan={scanOtherNotes}
-          scannedPaths={$preferences.scannedNotePaths ?? []}
-          showAdded={Boolean($preferences.showAdded)}
+          scannedPaths={taskView
+            ? curatedNotePaths
+            : ($viewPreferences.scannedNotePaths ?? [])}
+          showAdded={Boolean($viewPreferences.showAdded)}
         />{:else}
         {#if !$browser.connected}<div class="task-empty">
             <ListChecks size={28} />
@@ -408,9 +503,9 @@
         {#if snapshot && !groups.length}<div class="task-empty">
             <Search size={25} />
             <p>
-              {!$preferences.showAdded && addedIds.size
+              {!$viewPreferences.showAdded && addedIds.size
                 ? "All matching tasks have been added to this note"
-                : $preferences.query || $preferences.projectId
+                : $viewPreferences.query || $viewPreferences.projectId
                   ? "No matching Todoist tasks"
                   : "No active Todoist tasks"}
             </p>
@@ -425,10 +520,10 @@
             >
               {#if group}<button
                   class="task-group-heading"
-                  aria-expanded={!$preferences.collapsed.includes(group.id)}
+                  aria-expanded={!$viewPreferences.collapsed.includes(group.id)}
                   onclick={() => toggle(group.id)}
                 >
-                  {#if $preferences.collapsed.includes(group.id)}<ChevronRight
+                  {#if $viewPreferences.collapsed.includes(group.id)}<ChevronRight
                       size={15}
                     />{:else}<ChevronDown size={15} />{/if}
                   <strong>{group.label}</strong><span>{group.count}</span
@@ -441,7 +536,8 @@
                   class="import-task task-row-container"
                   class:task-added={addedIds.has(row.task.id)}
                   class:task-nested={row.depth > 0}
-                  class:task-selected={$preferences.selectedId === row.task.id}
+                  class:task-selected={$viewPreferences.selectedId ===
+                    row.task.id}
                   aria-label={row.task.title}
                   draggable={$browser.connected && !!scheduler}
                   hidden={renderedRow.hidden}
@@ -451,14 +547,14 @@
                 >
                   {#if row.hasChildren}<button
                       class="task-tree-toggle task-icon-button"
-                      aria-expanded={!$preferences.collapsed.includes(
+                      aria-expanded={!$viewPreferences.collapsed.includes(
                         `task:${renderedGroup.id}:${row.task.id}`,
                       )}
                       aria-label={`Subtasks of ${row.task.title}`}
                       onclick={() =>
                         toggle(`task:${renderedGroup.id}:${row.task.id}`)}
                     >
-                      {#if $preferences.collapsed.includes(`task:${renderedGroup.id}:${row.task.id}`)}<ChevronRight
+                      {#if $viewPreferences.collapsed.includes(`task:${renderedGroup.id}:${row.task.id}`)}<ChevronRight
                           size={13}
                         />{:else}<ChevronDown size={13} />{/if}
                     </button>{/if}
@@ -519,3 +615,51 @@
     </div>
   </div>
 </section>
+
+<style>
+  .curated-heading {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+
+    margin: 10px 0 6px;
+  }
+
+  .curated-heading strong {
+    font-size: 12px;
+    color: var(--tp-muted);
+  }
+
+  .curated-buckets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .curated-bucket {
+    display: inline-flex;
+    gap: 7px;
+    align-items: center;
+
+    padding: 6px 9px;
+
+    font-size: 12px;
+    color: var(--tp-text);
+
+    background: var(--tp-surface);
+    border: 1px solid var(--tp-line);
+    border-radius: 7px;
+  }
+
+  .curated-bucket[aria-pressed="true"] {
+    background: var(--tp-hover);
+    border-color: var(--tp-accent);
+  }
+
+  .curated-bucket span {
+    font-size: 11px;
+    color: var(--tp-muted);
+  }
+</style>

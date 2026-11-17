@@ -16,6 +16,7 @@
   import PlannerDayCount from "./planner-day-count.svelte";
 
   const {
+    openAiPlanning,
     exportSchedule,
     workspaceFacade,
     periodicNotes,
@@ -102,6 +103,11 @@
       <div class="period">{selectedDay.format("MMM YYYY")}</div>
     {/if}
     <div class="buttons-right">
+      {#if openAiPlanning}
+        <ControlButton label="Plan with AI" onclick={openAiPlanning}
+          >Plan</ControlButton
+        >
+      {/if}
       <PlannerDayCount />
       {#if $isInSidebar}
         <button
@@ -196,6 +202,7 @@
   }
 
   .controls {
+    container-type: inline-size;
     overflow: hidden;
     display: flex;
     flex-direction: column;
@@ -204,5 +211,18 @@
     padding: var(--size-4-2) 0 var(--size-4-2) var(--size-4-3);
 
     font-size: var(--font-ui-small);
+  }
+
+  @container (width <= 420px) {
+    .header {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+    }
+
+    .buttons-right {
+      flex-basis: 100%;
+      justify-content: flex-end;
+    }
   }
 </style>

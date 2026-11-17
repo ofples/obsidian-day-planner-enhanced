@@ -52,8 +52,26 @@ export function buildPlanningBatch(
   selectedIds: string[],
   options: PlanningBatchOptions,
 ): PlanningBatch {
+  const templateCommitments = Object.entries(options.templates ?? {}).flatMap(
+    ([path, text]) => {
+      const document = context.documents[path];
+      if (document?.text !== null || !document.date) return [];
+      return parseBlocks(text, document.date, options.settings).map(
+        (block, index) => ({
+          ref: `template-${path}-${index}`,
+          title: block.snapshot.title,
+          start: block.snapshot.start,
+          end: block.snapshot.end,
+          allDay: false,
+        }),
+      );
+    },
+  );
   const issues = validateProposal(
-    context,
+    {
+      ...context,
+      commitments: [...context.commitments, ...templateCommitments],
+    },
     proposal,
     selectedIds,
     options.currentDocuments,
