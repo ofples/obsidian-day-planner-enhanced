@@ -29,6 +29,14 @@ Under **Advanced Google connection**, expand **Developer options** and enable **
 
 Custom registrations require a Google Cloud project with Calendar API enabled. An External app in Testing issues limited-lifetime authorizations for these Calendar scopes. Publishing a personal-use app to Production removes the testing lifetime for newly issued tokens. An unverified personal app can still show Google's warning and user cap. Public distribution requires the appropriate Google verification.
 
+### Conflicts and explicit note authority
+
+A red dot and count beside the planner controls opens conflict review. Choices are grouped by daily note, with expandable comparisons. **Use Obsidian** applies the saved Obsidian draft and **Use Google** accepts Google's version. Each choice updates the open review immediately. Automatic sync pauses its reconciliation while the review is open.
+
+Choose **Force sync note to Google…** from the planner menu or conflict review. The command palette also provides **Force sync current note to Google Calendar**. Confirm once to send the selected daily note's current timed blocks in one outbound pass. Titles, times, tags, descriptions and subtasks become authoritative. The force action includes removal of linked Google events whose note blocks were removed, and recreates linked events deleted from Google. Existing Google event colors are retained.
+
+Forcing a note clears that note's saved conflict drafts. Review a saved draft with **Use Obsidian** first if you want to restore it to the note. The selected daily note must exist, have its configured planner section and be enabled for sync. The sync start date and `sync: off` property apply. Editing the note during the operation stops further writes. Google version checks and request-rate limits apply to force sync too.
+
 ### Building with a Google registration
 
 Provide the Google Desktop OAuth download as the ignored file `google-oauth-client.private.json`, or set `DAY_PLANNER_GOOGLE_APP_CONFIG` to its path. Run `npm ci` and `npm run build`. The production build includes only the Desktop app's client ID and app credential. Account access and refresh tokens stay in SecretStorage. Tests use an unconfigured build and synthetic credentials.

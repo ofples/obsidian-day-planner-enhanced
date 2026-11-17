@@ -326,6 +326,20 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     return this.notesCurrent() && this.locate(text, block) >= 0;
   }
 
+  async isDocumentUnchanged(path: string) {
+    const before = this.scannedDocuments[path];
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (
+      !this.notesCurrent() ||
+      before === undefined ||
+      !(file instanceof TFile) ||
+      !hasPlannerSection(before, this.settings)
+    )
+      return false;
+    const text = await this.app.vault.read(file);
+    return this.notesCurrent() && text === before;
+  }
+
   async canDelete(record: SyncRecord, uid: string, owned = false) {
     if (!this.notesCurrent()) return false;
     if (!this.settings.googleCalendar.syncDeletions) return false;

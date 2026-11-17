@@ -442,9 +442,37 @@ export class GoogleCalendarApi implements CalendarApi {
     }
   }
 
-  async update(event: GoogleEvent, snapshot: CalendarSnapshot) {
+  async update(
+    event: GoogleEvent,
+    snapshot: CalendarSnapshot,
+    overwrite = false,
+  ) {
     if (!event.etag)
       throw new Error("Google event has no version; refusing to overwrite it.");
+    if (this.canonical && overwrite)
+      return this.request<GoogleEvent>(
+        `${this.eventsPath()}/${encodeURIComponent(event.id)}?sendUpdates=none`,
+        "PATCH",
+        {
+          ...this.body(snapshot),
+          ...(snapshot.colorId !== undefined
+            ? { colorId: snapshot.colorId }
+            : {}),
+          description: plainCalendarDescription(
+            snapshot.description ?? "",
+            snapshot.subtasks ?? "",
+            snapshot.taskUrl,
+          ),
+          extendedProperties: {
+            private: {
+              ...event.extendedProperties?.private,
+              dayPlannerTags: this.structuredTags(snapshot),
+              dayPlannerSchemaVersion: "4",
+            },
+          },
+        },
+        event.etag,
+      );
     if (this.canonical) {
       const current = canonicalSnapshotOf(event);
       if (!current)

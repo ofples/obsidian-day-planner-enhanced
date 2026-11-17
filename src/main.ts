@@ -1282,6 +1282,8 @@ export default class DayPlanner extends Plugin {
     const defaultObsidianContext: ObsidianContext = {
       noteTaskDrag: this.noteTaskDrag,
       googleSyncing,
+      googleConflictCount: this.googleCalendarSync.conflictCount,
+      forceSyncNote: (day) => this.googleCalendarSync.forceDay(day),
       openReviewSyncConflicts: () => this.googleCalendarSync.reviewConflicts(),
       toggleTaskLock: async (block) => {
         if (block.source === "unwritten") return;

@@ -118,6 +118,7 @@ export async function syncCanonicalCalendar({
   timeMin,
   timeMax,
   importEvents,
+  noteAuthority,
 }: {
   state: CalendarSyncState;
   api: CalendarApi;
@@ -126,6 +127,7 @@ export async function syncCanonicalCalendar({
   timeMin: string;
   timeMax: string;
   importEvents: boolean;
+  noteAuthority?: string;
 }): Promise<SyncResult> {
   const result: SyncResult = {
     pushed: 0,
@@ -139,6 +141,25 @@ export async function syncCanonicalCalendar({
   const allowed = async (path: string, snapshot: CalendarSnapshot) =>
     !notes.canSync || (await notes.canSync(path, snapshot));
   const locals = await notes.scan();
+  const assertAuthoritativeNote = async () => {
+    if (noteAuthority && !(await notes.isDocumentUnchanged?.(noteAuthority)))
+      throw new Error(
+        "The selected daily note changed or its planner section is unavailable. Finish editing and force sync again.",
+      );
+  };
+  await assertAuthoritativeNote();
+  if (noteAuthority && state.pendingImport)
+    throw new Error(
+      "Finish the pending calendar import before forcing a note.",
+    );
+  if (
+    noteAuthority &&
+    state.pendingCreate &&
+    state.pendingCreate.path !== noteAuthority
+  )
+    throw new Error(
+      "Finish the pending export for the other note before forcing this note.",
+    );
   const byUid = new Map<string, LocalBlock>();
   for (const block of locals) {
     if (byUid.has(block.uid))
@@ -263,11 +284,17 @@ export async function syncCanonicalCalendar({
       if (pending.eventId) {
         const local = byUid.get(pending.uid);
         const draft = state.records[pending.uid]?.pendingConflict;
-        if (!local || !draft || !(await notes.isUnchanged(local)))
+        if (
+          !local ||
+          (!draft && !pending.preserveNote) ||
+          !(await notes.isUnchanged(local))
+        )
           throw new Error(
             "The pending restored task changed. Review the note before retrying.",
           );
         if (
+          !pending.preserveNote &&
+          !noteAuthority &&
           !sameCanonicalSnapshot(
             localSnapshot(local, pending.snapshot),
             pending.snapshot,
@@ -281,7 +308,7 @@ export async function syncCanonicalCalendar({
             pending.uid,
             pending.snapshot,
             local,
-            draft.raw,
+            draft?.raw,
           );
           byUid.set(pending.uid, restored);
           path = restored.path;
@@ -308,6 +335,12 @@ export async function syncCanonicalCalendar({
   for (const [uid, record] of Object.entries(state.records)) {
     if (record.deleted || !(await allowed(record.path, record.base))) continue;
     const local = byUid.get(uid);
+    if (
+      noteAuthority &&
+      (local ? local.path !== noteAuthority : record.path !== noteAuthority)
+    )
+      continue;
+    await assertAuthoritativeNote();
     const conflict = (message: string) =>
       result.conflicts.push(
         `${record.path}: ${record.base.title} — ${message}`,
@@ -316,6 +349,39 @@ export async function syncCanonicalCalendar({
       let event =
         byEvent.get(record.eventId) ?? (await api.get(record.eventId));
       if (!event || event.status === "cancelled") {
+        if (noteAuthority && local) {
+          const snapshot = localSnapshot(local, record.base);
+          const eventId = crypto.randomUUID().replace(/-/g, "");
+          state.pendingCreate = {
+            uid,
+            path: local.path,
+            snapshot,
+            eventId,
+            currentRaw: local.raw,
+            preserveNote: true,
+          };
+          await save();
+          await assertAuthoritativeNote();
+          const created = await api.create(eventId, uid, snapshot, local);
+          if (
+            created.id !== eventId ||
+            !isCanonicalOwned(created, state.namespace, uid) ||
+            !sameCanonicalSnapshot(validSnapshot(created, snapshot), snapshot)
+          )
+            throw new Error("Google did not confirm the recreated note event.");
+          remember(created);
+          state.records[uid] = {
+            eventId,
+            path: local.path,
+            base: snapshot,
+            remoteEtag: created.etag,
+            remoteUpdated: created.updated,
+          };
+          delete state.pendingCreate;
+          await save();
+          result.pushed++;
+          continue;
+        }
         if (local) {
           const mine = localSnapshot(local, record.base);
           if (
@@ -372,8 +438,10 @@ export async function syncCanonicalCalendar({
         result.deleted++;
         continue;
       }
-      const remote = validSnapshot(event, record.base);
-      if (!(await allowed("", remote))) {
+      const remote = noteAuthority
+        ? { ...record.base, colorId: event.colorId ?? null }
+        : validSnapshot(event, record.base);
+      if (!noteAuthority && !(await allowed("", remote))) {
         conflict("Google moved this event outside the enabled note dates.");
         continue;
       }
@@ -386,21 +454,24 @@ export async function syncCanonicalCalendar({
         remember(event);
       }
       if (!local) {
-        missingPaths.add(record.path);
         if (record.pendingDelete) delete record.pendingDelete;
         if (
           isCanonicalOwned(event, state.namespace, uid) &&
-          (await notes.canDelete(record, uid, true)) &&
-          sameCanonicalSnapshot(remote, record.base)
+          (noteAuthority ||
+            ((await notes.canDelete(record, uid, true)) &&
+              sameCanonicalSnapshot(remote, record.base)))
         ) {
           record.pendingDelete = true;
           await save();
+          await assertAuthoritativeNote();
           await api.remove(event);
           record.deleted = true;
           delete record.pendingDelete;
+          delete record.pendingConflict;
           await save();
           result.deleted++;
         } else {
+          missingPaths.add(record.path);
           conflict(
             "The note block is missing. Choose whether to restore it or remove the Google event.",
           );
@@ -431,7 +502,10 @@ export async function syncCanonicalCalendar({
             }
           : record.base;
       const change = mergeCalendarFields(base, current, remote);
-      if (record.pendingConflict) {
+      if (noteAuthority) {
+        change.merged = { ...current, colorId: remote.colorId };
+        change.conflicts = [];
+      } else if (record.pendingConflict) {
         const saved = record.pendingConflict;
         const mine = { ...remote };
         const competing: Field[] = [];
@@ -459,7 +533,10 @@ export async function syncCanonicalCalendar({
         change.mine = mine;
         change.conflicts = competing;
       }
-      const confirmed = await api.update(event, change.merged);
+      await assertAuthoritativeNote();
+      const confirmed = noteAuthority
+        ? await api.update(event, change.merged, true)
+        : await api.update(event, change.merged);
       remember(confirmed);
       if (
         !sameCanonicalSnapshot(
@@ -483,7 +560,7 @@ export async function syncCanonicalCalendar({
         await save();
       }
       let cached = local;
-      if (!sameCanonicalSnapshot(current, accepted)) {
+      if (!noteAuthority && !sameCanonicalSnapshot(current, accepted)) {
         cached = await notes.write(uid, accepted, local);
         result.pulled++;
       }
@@ -509,24 +586,32 @@ export async function syncCanonicalCalendar({
         });
       }
     } catch (error) {
+      if (state.pendingCreate) throw error;
+      if (!local) missingPaths.add(record.path);
       conflict(
         error instanceof Error ? error.message : "Calendar sync needs review.",
       );
     }
   }
 
+  for (const path of missingPaths)
+    if (
+      locals.some((local) => local.path === path && !state.records[local.uid])
+    )
+      result.conflicts.push(
+        `${path}: Resolve the missing note blocks before exporting new blocks, or force sync this note to Google.`,
+      );
   for (const local of locals) {
     if (
       state.records[local.uid] ||
+      (noteAuthority && local.path !== noteAuthority) ||
       !(await allowed(local.path, local.snapshot))
     )
       continue;
     if (missingPaths.has(local.path)) {
-      result.conflicts.push(
-        `${local.path}: Link the missing event before exporting unmatched note blocks.`,
-      );
       continue;
     }
+    await assertAuthoritativeNote();
     if (
       local.snapshot.start < timeMin ||
       local.snapshot.start >= timeMax ||
@@ -536,6 +621,7 @@ export async function syncCanonicalCalendar({
     const snapshot = normalizeLocalSnapshot(local);
     const id = exportId(state.namespace, local.uid);
     let event = byEvent.get(id) ?? (await api.get(id));
+    const existing = Boolean(event);
     if (!event) {
       state.pendingCreate = { uid: local.uid, path: local.path, snapshot };
       await save();
@@ -544,9 +630,21 @@ export async function syncCanonicalCalendar({
     }
     if (!isOwned(event, state.namespace, local.uid))
       throw new Error("The event identity belongs to another source.");
+    if (noteAuthority) {
+      const desired = { ...snapshot, colorId: event.colorId ?? null };
+      const confirmed = existing
+        ? await api.update(event, desired, true)
+        : event;
+      if (!sameCanonicalSnapshot(validSnapshot(confirmed, desired), desired))
+        throw new Error("Google did not confirm the new note event.");
+      event = remember(confirmed);
+    }
     const accepted = validSnapshot(event, snapshot);
     let cached = local;
-    if (!sameCanonicalSnapshot(localSnapshot(local, accepted), accepted))
+    if (
+      !noteAuthority &&
+      !sameCanonicalSnapshot(localSnapshot(local, accepted), accepted)
+    )
       cached = await notes.write(local.uid, accepted, local);
     state.records[local.uid] = {
       eventId: event.id,
@@ -561,7 +659,7 @@ export async function syncCanonicalCalendar({
     result.pushed++;
   }
 
-  if (!importEvents) return result;
+  if (!importEvents || noteAuthority) return result;
   for (const event of events) {
     if (
       recordsByEvent.has(event.id) ||

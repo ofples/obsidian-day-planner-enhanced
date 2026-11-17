@@ -405,6 +405,7 @@ export async function syncCalendar({
   timeMax,
   importEvents = true,
   canonical = false,
+  noteAuthority,
 }: {
   state: CalendarSyncState;
   api: CalendarApi;
@@ -414,8 +415,9 @@ export async function syncCalendar({
   timeMax: string;
   importEvents?: boolean;
   canonical?: boolean;
+  noteAuthority?: string;
 }): Promise<SyncResult> {
-  if (canonical)
+  if (canonical || noteAuthority)
     return syncCanonicalCalendar({
       state,
       api,
@@ -424,6 +426,7 @@ export async function syncCalendar({
       timeMin,
       timeMax,
       importEvents,
+      noteAuthority,
     });
   const result: SyncResult = {
     pushed: 0,

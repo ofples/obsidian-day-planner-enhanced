@@ -115,6 +115,28 @@ function harness(
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 describe("vault calendar adapter", () => {
+  test("force sync requires a scanned existing planner document and detects any later edit", async () => {
+    const h = harness();
+    expect(await h.notes.isDocumentUnchanged(sourcePath)).toBe(false);
+    await h.notes.scan();
+    expect(await h.notes.isDocumentUnchanged(sourcePath)).toBe(true);
+    h.texts.set(sourcePath, h.texts.get(sourcePath)! + "New paragraph\n");
+    expect(await h.notes.isDocumentUnchanged(sourcePath)).toBe(false);
+    await h.notes.scan();
+    expect(await h.notes.isDocumentUnchanged(sourcePath)).toBe(true);
+    expect(await h.notes.isDocumentUnchanged("Daily/missing.md")).toBe(false);
+    h.texts.set(sourcePath, "# Journal\nA daily note without a planner\n");
+    await h.notes.scan();
+    expect(await h.notes.isDocumentUnchanged(sourcePath)).toBe(false);
+  });
+
+  test("excluded daily notes cannot be used as force-sync documents", async () => {
+    const h = harness();
+    h.texts.set(sourcePath, "---\nsync: off\n---\n" + h.texts.get(sourcePath)!);
+    await h.notes.scan();
+    expect(await h.notes.isDocumentUnchanged(sourcePath)).toBe(false);
+  });
+
   test("explicit local writes work in excluded notes while calendar writes stay blocked", async () => {
     const h = harness(undefined, true);
     h.settings.googleCalendar.syncStartDate = "2026-11-14";

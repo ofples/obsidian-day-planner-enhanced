@@ -21,6 +21,8 @@
     periodicNotes,
     reSync,
     googleSyncing = readable(false),
+    googleConflictCount = readable(0),
+    forceSyncNote,
     openReviewSyncConflicts,
     initWeeklyView,
     openTimelineSettingsModal,
@@ -68,6 +70,7 @@
       exportSchedule,
       reSync,
       openReviewSyncConflicts,
+      forceSyncNote,
       initWeeklyView,
       openTimelineSettingsModal,
       settingsStore,
@@ -116,6 +119,18 @@
           <EllipsisVertical class="svg-icon" />
         </ControlButton>
       {/if}
+      {#if $googleConflictCount > 0}
+        <button
+          class="sync-conflicts clickable-icon"
+          aria-label={`Review ${$googleConflictCount} calendar sync conflicts`}
+          onclick={openReviewSyncConflicts}
+          title={`Review ${$googleConflictCount} calendar sync conflicts`}
+          type="button"
+        >
+          <span class="conflict-dot" aria-hidden="true"></span>
+          {$googleConflictCount}
+        </button>
+      {/if}
     </div>
   </div>
 
@@ -123,6 +138,19 @@
 </div>
 
 <style>
+  .sync-conflicts {
+    gap: 4px;
+    font-size: var(--font-ui-small);
+    color: var(--text-error);
+  }
+
+  .conflict-dot {
+    width: 7px;
+    height: 7px;
+    background: var(--text-error);
+    border-radius: 50%;
+  }
+
   :global(.mod-error) {
     color: var(--text-error);
   }

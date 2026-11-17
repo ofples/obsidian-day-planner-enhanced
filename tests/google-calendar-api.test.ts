@@ -45,6 +45,58 @@ beforeEach(() => {
 });
 
 describe("Google REST transport", () => {
+  test("explicit overwrite replaces managed fields despite malformed metadata and retains the ETag", async () => {
+    const api = new GoogleCalendarApi(
+      { token: async () => "credential" } as unknown as GoogleCalendarAuth,
+      "client",
+      "calendar",
+      "namespace",
+      () => true,
+      true,
+    );
+    const existing = {
+      ...event,
+      description: "--- Day Planner fields --- broken",
+      extendedProperties: {
+        private: { dayPlannerTags: "invalid-json", unrelated: "retained" },
+      },
+    };
+    vi.mocked(requestUrl).mockResolvedValue(response(200, existing));
+    await api.update(
+      existing,
+      {
+        ...snapshot,
+        tags: ["work"],
+        description: "Current prose",
+        subtasks: "- [ ] Child",
+        colorId: "7",
+      },
+      true,
+    );
+    const arg = vi.mocked(requestUrl).mock.calls[0]![0] as {
+      body: string;
+      headers: Record<string, string>;
+    };
+    const body = JSON.parse(arg.body);
+    expect(body).toMatchObject({
+      summary: snapshot.title,
+      start: { dateTime: snapshot.start },
+      end: { dateTime: snapshot.end },
+      colorId: "7",
+      description: "Current prose\n\n⬜ Child",
+      extendedProperties: {
+        private: {
+          unrelated: "retained",
+          dayPlannerTags: '["work"]',
+          dayPlannerSchemaVersion: "4",
+        },
+      },
+    });
+    expect(arg.headers["If-Match"]).toBe(existing.etag);
+    expect(body.attendees).toBeUndefined();
+    expect(body.recurrence).toBeUndefined();
+  });
+
   test("migrates an unchanged v3 event description to the clean format", async () => {
     const api = new GoogleCalendarApi(
       { token: async () => "credential" } as unknown as GoogleCalendarAuth,

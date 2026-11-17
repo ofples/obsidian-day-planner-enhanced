@@ -90,6 +90,7 @@ function harness(local = block(base), remote = event(base)) {
     scan: vi.fn(async () => [current]),
     canSync: vi.fn(async () => true),
     isUnchanged: vi.fn(async () => true),
+    isDocumentUnchanged: vi.fn(async () => true),
     canDelete: vi.fn(async () => false),
     write: vi.fn(async (_uid, value, previous) => {
       current = {
@@ -101,7 +102,7 @@ function harness(local = block(base), remote = event(base)) {
     cancel: vi.fn(async () => {}),
   };
   const save = vi.fn(async () => {});
-  const run = () =>
+  const run = (noteAuthority?: string) =>
     syncCalendar({
       state,
       api,
@@ -111,6 +112,7 @@ function harness(local = block(base), remote = event(base)) {
       timeMax: window.moment("2026-11-20").toISOString(),
       importEvents: true,
       canonical: true,
+      noteAuthority,
     });
   return {
     state,
@@ -314,5 +316,218 @@ describe("canonical calendar engine", () => {
     await h.run();
     expect(h.state.records[uid]?.eventId).toBe(id);
     expect(h.api.create).toHaveBeenCalledOnce();
+  });
+});
+
+describe("explicit note-authoritative sync", () => {
+  test("keeps an unfinished export for another note pending without executing it", async () => {
+    const h = harness();
+    h.state.pendingCreate = {
+      uid: "c".repeat(32),
+      path: "Daily/2026-11-15.md",
+      snapshot: base,
+    };
+    await expect(h.run(path)).rejects.toThrow("other note");
+    expect(h.api.list).not.toHaveBeenCalled();
+    expect(h.api.create).not.toHaveBeenCalled();
+    expect(h.state.pendingCreate.path).toBe("Daily/2026-11-15.md");
+  });
+  test("current Markdown wins over Google and a saved conflict draft without rewriting the note", async () => {
+    const h = harness(
+      block({
+        ...base,
+        title: "Current note",
+        subtasks: "- [x] Current child",
+        description: "Current description",
+      }),
+      event({ ...base, title: "Google version", colorId: "7" }),
+    );
+    h.state.records[uid]!.pendingConflict = {
+      mine: { ...base, title: "Old saved draft" },
+      raw: "old",
+      fields: ["title"],
+      detectedAt: "2030-01-01T00:00:00Z",
+    };
+    const result = await h.run(path);
+    expect(result.conflicts).toEqual([]);
+    expect(result.pulled).toBe(0);
+    expect(h.state.records[uid]!.base).toMatchObject({
+      title: "Current note",
+      subtasks: "- [x] Current child",
+      description: "Current description",
+      colorId: "7",
+    });
+    expect(h.state.records[uid]!.pendingConflict).toBeUndefined();
+    expect(h.api.update).toHaveBeenCalledOnce();
+    expect(vi.mocked(h.api.update).mock.calls[0]?.[2]).toBe(true);
+    expect(h.notes.write).not.toHaveBeenCalled();
+    expect(h.notes.cancel).not.toHaveBeenCalled();
+  });
+
+  test("removes a missing linked event and exports replacement blocks in the same pass", async () => {
+    const h = harness(
+      block(base),
+      event({ ...base, title: "Changed remotely" }),
+    );
+    const replacement = {
+      ...block({ ...base, title: "Replacement" }),
+      uid: "c".repeat(32),
+    };
+    vi.mocked(h.notes.scan).mockResolvedValue([replacement]);
+    vi.mocked(h.api.get).mockResolvedValue(null);
+    vi.mocked(h.api.create).mockImplementation(async (id, uid, snapshot) => ({
+      ...event(snapshot),
+      id,
+      extendedProperties: {
+        private: { dayPlannerVault: namespace, dayPlannerBlock: uid },
+      },
+    }));
+    const result = await h.run(path);
+    expect(result.conflicts).toEqual([]);
+    expect(h.notes.canDelete).not.toHaveBeenCalled();
+    expect(h.api.remove).toHaveBeenCalledOnce();
+    expect(h.api.create).toHaveBeenCalledOnce();
+    expect(h.api.update).not.toHaveBeenCalled();
+    expect(h.state.records[uid]!.deleted).toBe(true);
+    expect(h.state.records[replacement.uid]!.base.title).toBe("Replacement");
+    expect(h.notes.write).not.toHaveBeenCalled();
+  });
+
+  test("one missing block produces one export-blocker message for many unmatched blocks", async () => {
+    const h = harness();
+    vi.mocked(h.notes.scan).mockResolvedValue(
+      Array.from({ length: 8 }, (_, index) => ({
+        ...block({ ...base, title: `New ${index}` }),
+        uid: String(index).repeat(32),
+      })),
+    );
+    const result = await h.run();
+    expect(result.missingLocal).toHaveLength(1);
+    expect(result.conflicts).toHaveLength(2);
+    expect(
+      result.conflicts.filter((message) =>
+        message.includes("before exporting new blocks"),
+      ),
+    ).toHaveLength(1);
+    expect(h.api.create).not.toHaveBeenCalled();
+  });
+
+  test("a successfully propagated deletion does not block new exports", async () => {
+    const h = harness();
+    const replacement = {
+      ...block({ ...base, title: "New" }),
+      uid: "c".repeat(32),
+    };
+    vi.mocked(h.notes.scan).mockResolvedValue([replacement]);
+    vi.mocked(h.notes.canDelete).mockResolvedValue(true);
+    vi.mocked(h.api.get).mockResolvedValue(null);
+    vi.mocked(h.api.create).mockImplementation(async (id, uid, snapshot) => ({
+      ...event(snapshot),
+      id,
+      extendedProperties: {
+        private: { dayPlannerVault: namespace, dayPlannerBlock: uid },
+      },
+    }));
+    expect((await h.run()).conflicts).toEqual([]);
+    expect(h.api.remove).toHaveBeenCalledOnce();
+    expect(h.api.create).toHaveBeenCalledOnce();
+  });
+
+  test("leaves other notes, moved-out blocks and unlinked Google events alone", async () => {
+    const h = harness();
+    const other = { ...block(base), path: "Daily/2026-11-15.md" };
+    vi.mocked(h.notes.scan).mockResolvedValue([other]);
+    const unlinked = { ...event(base), id: "outside", extendedProperties: {} };
+    vi.mocked(h.api.list).mockResolvedValue([h.remote(), unlinked]);
+    const result = await h.run(path);
+    expect(result.conflicts).toEqual([]);
+    expect(h.api.update).not.toHaveBeenCalled();
+    expect(h.api.remove).not.toHaveBeenCalled();
+    expect(h.notes.write).not.toHaveBeenCalled();
+    expect(h.api.link).toBeUndefined();
+  });
+
+  test.each(["document", "scope"])(
+    "requires a current enabled daily note for %s",
+    async (reason) => {
+      const h = harness();
+      if (reason === "document") {
+        vi.mocked(h.notes.isDocumentUnchanged!).mockResolvedValue(false);
+        await expect(h.run(path)).rejects.toThrow(
+          "selected daily note changed",
+        );
+        expect(h.api.list).not.toHaveBeenCalled();
+      } else {
+        vi.mocked(h.notes.canSync!).mockResolvedValue(false);
+        expect((await h.run(path)).conflicts).toEqual([]);
+      }
+      expect(h.api.update).not.toHaveBeenCalled();
+      expect(h.api.remove).not.toHaveBeenCalled();
+    },
+  );
+
+  test("stops if the note changes while a force operation is running", async () => {
+    const h = harness();
+    vi.mocked(h.notes.isDocumentUnchanged!)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    const result = await h.run(path);
+    expect(result.conflicts[0]).toContain("selected daily note changed");
+    expect(h.api.update).not.toHaveBeenCalled();
+    expect(h.state.records[uid]!.base).toEqual(base);
+  });
+
+  test("a failed conditional write is attempted once and keeps its conflict draft", async () => {
+    const h = harness();
+    const draft = {
+      mine: base,
+      raw: "saved",
+      fields: ["title"],
+      detectedAt: "2030-01-01T00:00:00Z",
+    };
+    h.state.records[uid]!.pendingConflict = draft;
+    vi.mocked(h.api.update).mockRejectedValue(
+      new Error("Google changed during sync"),
+    );
+    expect((await h.run(path)).conflicts[0]).toContain(
+      "Google changed during sync",
+    );
+    expect(h.api.update).toHaveBeenCalledOnce();
+    expect(h.state.records[uid]!.pendingConflict).toEqual(draft);
+    expect(h.state.records[uid]!.base).toEqual(base);
+    expect(h.notes.write).not.toHaveBeenCalled();
+  });
+
+  test("recovers an interrupted recreation with the same event ID and retains the current note", async () => {
+    const h = harness(block({ ...base, title: "Keep this" }), {
+      ...event(base),
+      status: "cancelled",
+    });
+    let created: GoogleEvent | null = null;
+    vi.mocked(h.api.get).mockImplementation(async (id) =>
+      id === created?.id ? created : null,
+    );
+    vi.mocked(h.api.create).mockImplementation(async (id, uid, snapshot) => {
+      created = {
+        ...event(snapshot),
+        id,
+        extendedProperties: {
+          private: { dayPlannerVault: namespace, dayPlannerBlock: uid },
+        },
+      };
+      throw new Error("Lost create response");
+    });
+    await expect(h.run(path)).rejects.toThrow("Lost create response");
+    const pending = structuredClone(h.state.pendingCreate)!;
+    expect(pending.preserveNote).toBe(true);
+    expect(pending.eventId).toBeTruthy();
+    const result = await h.run(path);
+    expect(result.conflicts).toEqual([]);
+    expect(h.api.create).toHaveBeenCalledOnce();
+    expect(h.state.pendingCreate).toBeUndefined();
+    expect(h.state.records[uid]!.eventId).toBe(pending.eventId);
+    expect(h.state.records[uid]!.base.title).toBe("Keep this");
+    expect(h.notes.write).not.toHaveBeenCalled();
   });
 });

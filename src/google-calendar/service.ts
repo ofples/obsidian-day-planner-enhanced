@@ -1,3 +1,4 @@
+import type { Moment } from "moment";
 import { Modal, Notice, Platform, type App, type Plugin } from "obsidian";
 import { writable } from "svelte/store";
 import { z } from "zod";
@@ -140,6 +141,7 @@ const stateSchema = z.object({
       snapshot: snapshotSchema,
       eventId: z.string().optional(),
       currentRaw: z.string().optional(),
+      preserveNote: z.boolean().optional(),
     })
     .optional(),
   pendingMove: z
@@ -176,19 +178,26 @@ export class GoogleCalendarSync {
     };
   }
   readonly syncing = writable(false);
+  readonly conflictCount = writable(0);
   private automaticTimer?: number;
   private readonly composing = new Set<Document>();
   private conflicts: string[] = [];
   private reviewable: CalendarConflict[] = [];
   private missingLocal: MissingLocalConflict[] = [];
   private deletedRemote: DeletedRemoteConflict[] = [];
+  private reviewing = false;
 
   private queueAutomaticSync() {
     if (this.stopped || !this.getSettings().googleCalendar.autoSync) return;
     window.clearTimeout(this.automaticTimer);
     this.automaticTimer = window.setTimeout(() => {
       if (this.stopped) return;
-      if (this.composing.size || this.edits?.isWriting || this.busy) {
+      if (
+        this.composing.size ||
+        this.edits?.isWriting ||
+        this.busy ||
+        this.reviewing
+      ) {
         this.queueAutomaticSync();
         return;
       }
@@ -228,6 +237,7 @@ export class GoogleCalendarSync {
       };
       await this.save();
     }
+    this.updateConflictCount();
     this.auth = new GoogleCalendarAuth(
       this.app,
       `day-planner-google-${this.state.namespace}`,
@@ -302,6 +312,11 @@ export class GoogleCalendarSync {
       name: "Disconnect Google Calendar on this device",
       callback: () => this.disconnect(),
     });
+    this.plugin.addCommand({
+      id: "google-calendar-force-note",
+      name: "Force sync current note to Google Calendar",
+      callback: () => this.confirmForceNote(),
+    });
     this.plugin.registerInterval(
       window.setInterval(() => {
         if (
@@ -339,15 +354,19 @@ export class GoogleCalendarSync {
     this.lastSaved = serialized;
   }
 
-  private noteContext(settings = this.getSettings(), localWrites = false) {
+  private noteContext(
+    settings = this.getSettings(),
+    localWrites = false,
+    day = window.moment(),
+  ) {
     const config = settings.googleCalendar;
-    const timeMin = window
-      .moment()
+    const timeMin = day
+      .clone()
       .startOf("day")
       .subtract(config.daysPast, "days")
       .toISOString();
-    const timeMax = window
-      .moment()
+    const timeMax = day
+      .clone()
       .startOf("day")
       .add(config.daysAhead + 1, "days")
       .toISOString();
@@ -643,8 +662,13 @@ export class GoogleCalendarSync {
     return googleRequestGate(this.auth).resetForUserRetry();
   }
 
-  async run(automatic = false) {
-    if (this.busy || this.stopped) return;
+  async run(automatic = false, noteAuthority?: string) {
+    if (noteAuthority) {
+      window.clearTimeout(this.automaticTimer);
+      while (!this.stopped && (this.busy || this.edits?.isWriting))
+        await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+    }
+    if (this.busy || this.stopped || (automatic && this.reviewing)) return;
     if (!automatic && !this.resetForUserRetry()) {
       new Notice("Google Calendar is waiting for its retry deadline.");
       return;
@@ -674,13 +698,27 @@ export class GoogleCalendarSync {
         config.calendarId.trim(),
         this.state.namespace,
         () => !this.stopped,
-        Boolean(config.syncStartDate),
+        Boolean(config.syncStartDate || noteAuthority),
       );
       const canonicalId = await this.validateManagedCalendar(api);
       await api.usePlannerColors(settings);
       this.state.calendarId = canonicalId;
       await this.save();
-      const { notes, timeMin, timeMax } = this.noteContext(settings);
+      const selected = noteAuthority
+        ? Object.values(this.daily.getAllDailyNotes()).find(
+            (file) => file.path === noteAuthority,
+          )
+        : undefined;
+      if (noteAuthority && !selected)
+        throw new Error("Choose an existing daily note to force sync.");
+      const day = selected
+        ? this.daily.getDateFromFile(selected, "day")
+        : undefined;
+      const { notes, timeMin, timeMax } = this.noteContext(
+        settings,
+        false,
+        day ?? undefined,
+      );
       await notes.recoverMove();
       const result = await syncCalendar({
         state: this.state,
@@ -691,11 +729,37 @@ export class GoogleCalendarSync {
         timeMax,
         importEvents: config.importEventsToNotes,
         canonical: Boolean(config.syncStartDate),
+        noteAuthority,
       });
-      this.conflicts = result.conflicts;
-      this.reviewable = result.reviewable;
-      this.missingLocal = result.missingLocal;
-      this.deletedRemote = result.deletedRemote;
+      this.conflicts = [
+        ...new Set([
+          ...(noteAuthority
+            ? this.conflicts.filter(
+                (message) => !message.startsWith(`${noteAuthority}:`),
+              )
+            : []),
+          ...result.conflicts,
+        ]),
+      ];
+      this.reviewable = [
+        ...(noteAuthority
+          ? this.reviewable.filter((item) => item.local.path !== noteAuthority)
+          : []),
+        ...result.reviewable,
+      ];
+      this.missingLocal = [
+        ...(noteAuthority
+          ? this.missingLocal.filter((item) => item.path !== noteAuthority)
+          : []),
+        ...result.missingLocal,
+      ];
+      this.deletedRemote = [
+        ...(noteAuthority
+          ? this.deletedRemote.filter((item) => item.path !== noteAuthority)
+          : []),
+        ...result.deletedRemote,
+      ];
+      this.updateConflictCount();
       this.lastError = "";
       if (!automatic) {
         new Notice(
@@ -722,195 +786,338 @@ export class GoogleCalendarSync {
     }
   }
 
-  reviewConflicts() {
+  private conflictMessages() {
+    const represented = [
+      ...this.reviewable.map(
+        (item) => `${item.local.path}: ${item.base.title} — `,
+      ),
+      ...this.missingLocal.map((item) => `${item.path}: ${item.base.title} — `),
+      ...this.deletedRemote.map(
+        (item) =>
+          `${item.path}: ${this.state.records[item.uid]?.base.title ?? item.mine.title} — `,
+      ),
+    ];
+    return [...new Set(this.conflicts)].filter(
+      (message) =>
+        !represented.some((prefix) => message.startsWith(prefix)) &&
+        !this.missingLocal.some((item) =>
+          message.startsWith(`${item.path}: Resolve the missing note blocks`),
+        ),
+    );
+  }
+
+  private updateConflictCount() {
+    const persisted = Object.values(this.state.records).filter(
+      (record) =>
+        !record.deleted &&
+        record.pendingConflict &&
+        isCalendarDateInScope(
+          record.base,
+          this.getSettings().googleCalendar.syncStartDate,
+        ),
+    ).length;
+    this.conflictCount.set(
+      Math.max(persisted, this.reviewable.length + this.deletedRemote.length) +
+        this.missingLocal.length +
+        this.conflictMessages().length,
+    );
+  }
+
+  forceDay(day: Moment) {
+    const file = Object.values(this.daily.getAllDailyNotes()).find((note) =>
+      this.daily.getDateFromFile(note, "day")?.isSame(day, "day"),
+    );
+    this.confirmForceNote(file?.path);
+  }
+
+  confirmForceNote(path = this.app.workspace.getActiveFile()?.path) {
+    if (
+      !path ||
+      !Object.values(this.daily.getAllDailyNotes()).some(
+        (file) => file.path === path,
+      )
+    ) {
+      new Notice("Open or select an existing daily note to force sync.");
+      return;
+    }
     const modal = new Modal(this.app);
-    modal.titleEl.setText("Google Calendar sync conflicts");
-    if (!this.conflicts.length)
-      modal.contentEl.createEl("p", {
-        text: "No conflicts found. Run Sync to check again.",
+    modal.titleEl.setText("Force sync note to Google");
+    modal.contentEl.createEl("h3", { text: path });
+    modal.contentEl.createEl("p", {
+      text: "Send the current note's timed blocks to the connected schedule calendar. Its titles, times, tags, descriptions and subtasks replace Google's values. Linked Google events whose blocks were removed from this note are deleted. Saved conflict drafts for this note are cleared.",
+    });
+    const button = modal.contentEl.createEl("button", {
+      text: "Force sync this note",
+      cls: "mod-cta",
+    });
+    button.addEventListener("click", () => {
+      button.disabled = true;
+      modal.close();
+      void this.run(false, path);
+    });
+    modal.contentEl
+      .createEl("button", { text: "Cancel" })
+      .addEventListener("click", () => modal.close());
+    modal.open();
+  }
+
+  reviewConflicts() {
+    if (this.reviewing) return;
+    const modal = new Modal(this.app);
+    modal.titleEl.setText("Calendar sync conflicts");
+    this.reviewing = true;
+    let changed = false;
+    let running = false;
+    let api: GoogleCalendarApi | undefined;
+    modal.onClose = () => {
+      this.reviewing = false;
+      if (changed && !this.busy) void this.refreshView();
+    };
+    const forget = (path: string, title: string) => {
+      this.conflicts = this.conflicts.filter(
+        (message) =>
+          !message.startsWith(`${path}: ${title} — `) &&
+          !(
+            !this.missingLocal.some((item) => item.path === path) &&
+            message.startsWith(`${path}: Resolve the missing note blocks`)
+          ),
+      );
+      this.updateConflictCount();
+    };
+    const choose = async (
+      operation: (
+        api: GoogleCalendarApi,
+        notes: ObsidianCalendarNotes,
+      ) => Promise<void>,
+    ) => {
+      if (running) return;
+      running = true;
+      let acquired = false;
+      modal.contentEl.querySelectorAll("button").forEach((button) => {
+        button.disabled = true;
       });
-    for (const conflict of this.conflicts)
-      modal.contentEl.createEl("p", { text: conflict });
-    if (this.conflicts.length)
-      modal.contentEl.createEl("p", {
-        text: "For conflicts without a choice below, review the listed note and Google event, then run Sync again.",
+      const status = modal.contentEl.createEl("p", {
+        text: "Applying your choice…",
       });
-    for (const conflict of this.missingLocal) {
-      const section = modal.contentEl.createDiv();
-      section.createEl("h3", { text: conflict.path });
-      section.createEl("p", {
-        text: `The note task is missing. Google: ${conflict.remoteSnapshot.title} — ${conflict.remoteSnapshot.start} to ${conflict.remoteSnapshot.end}`,
-      });
-      const restore = section.createEl("button", { text: "Restore to note" });
-      const remove = section.createEl("button", {
-        text: "Remove Google event",
-      });
-      const choose = async (choice: "restore" | "remove") => {
-        if (this.busy || this.stopped) {
-          new Notice("Wait for calendar sync to finish, then retry.");
-          return;
-        }
-        restore.disabled = true;
-        remove.disabled = true;
+      try {
+        while (!this.stopped && (this.busy || this.edits?.isWriting))
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 100));
+        if (this.stopped) return;
         this.busy = true;
+        acquired = true;
         this.syncing.set(true);
-        try {
-          const api = this.api();
-          await this.validateManagedCalendar(api);
-          await resolveMissingLocalConflict(
-            conflict,
-            choice,
-            this.state,
-            api,
-            this.noteContext().notes,
-            () => this.save(),
-          );
-          this.missingLocal = this.missingLocal.filter(
-            (item) => item.uid !== conflict.uid,
-          );
-          modal.close();
-          new Notice(
-            "Calendar conflict resolved. Sync again to review remaining conflicts.",
-          );
-        } catch (error) {
-          this.report(error);
-          restore.disabled = false;
-          remove.disabled = false;
-        } finally {
-          this.busy = false;
-          this.syncing.set(false);
+        if (!api) {
+          const candidate = this.api();
+          await this.validateManagedCalendar(candidate);
+          api = candidate;
         }
-      };
-      restore.addEventListener("click", () => void choose("restore"));
-      remove.addEventListener("click", () => void choose("remove"));
-    }
-    for (const conflict of this.deletedRemote) {
-      const section = modal.contentEl.createDiv();
-      section.createEl("h3", { text: conflict.mine.title || "Untitled event" });
-      section.createEl("p", {
-        text: `Google deleted this event. Your Obsidian draft is saved in ${conflict.path}.`,
-      });
-      section.createEl("pre", { text: conflict.raw });
-      const restore = section.createEl("button", {
-        text: "Restore Obsidian draft to Google",
-      });
-      const accept = section.createEl("button", {
-        text: "Accept Google deletion",
-      });
-      const choose = async (choice: "restore" | "accept") => {
-        if (this.busy || this.stopped) return;
-        restore.disabled = true;
-        accept.disabled = true;
-        this.busy = true;
-        this.syncing.set(true);
-        try {
-          const api = this.api();
-          await this.validateManagedCalendar(api);
-          await resolveDeletedRemoteConflict(
-            conflict,
-            choice,
-            this.state,
-            api,
-            this.noteContext().notes,
-            () => this.save(),
-          );
-          this.deletedRemote = this.deletedRemote.filter(
-            (item) => item.uid !== conflict.uid,
-          );
-          modal.close();
-          new Notice(
-            "Calendar deletion resolved. Sync to review remaining changes.",
-          );
-        } catch (error) {
-          this.report(error);
-          restore.disabled = false;
-          accept.disabled = false;
-        } finally {
-          this.busy = false;
-          this.syncing.set(false);
-        }
-      };
-      restore.addEventListener("click", () => void choose("restore"));
-      accept.addEventListener("click", () => void choose("accept"));
-    }
-    for (const conflict of this.reviewable) {
-      const section = modal.contentEl.createDiv();
-      section.createEl("h3", { text: conflict.local.path });
-      const describe = (snapshot: CalendarSnapshot) =>
-        `${snapshot.title} — ${window.moment(snapshot.start).format("ddd D MMM, HH:mm")} to ${window.moment(snapshot.end).format("ddd D MMM, HH:mm")}`;
-      const mine = conflict.mine ?? conflict.local.snapshot;
-      section.createEl("p", { text: `Obsidian: ${describe(mine)}` });
-      section.createEl("p", {
-        text: `Google: ${describe(conflict.remoteSnapshot)}`,
-      });
-      const fields: Array<[string, keyof CalendarSnapshot]> = [
-        ["Title", "title"],
-        ["Start", "start"],
-        ["End", "end"],
-        ["Tags", "tags"],
-        ["Subtasks", "subtasks"],
-        ["Color", "colorId"],
-        ["Description", "description"],
-        ["Todoist link", "taskUrl"],
-      ];
-      for (const [label, field] of fields) {
-        const mineValue = mine[field],
-          theirs = conflict.remoteSnapshot[field];
-        if (
-          JSON.stringify(mineValue) !== JSON.stringify(theirs) &&
-          field !== "title" &&
-          field !== "start" &&
-          field !== "end"
-        )
-          section.createEl("p", {
-            text: `${label}: Obsidian ${Array.isArray(mineValue) ? mineValue.join(", ") : String(mineValue ?? "—")} | Google ${Array.isArray(theirs) ? theirs.join(", ") : String(theirs ?? "—")}`,
-          });
-      }
-      if (conflict.remote.updated)
-        section.createEl("p", {
-          text: `Google updated ${window.moment(conflict.remote.updated).format("D MMM, HH:mm:ss")}`,
+        await operation(api, this.noteContext().notes);
+        changed = true;
+        render();
+      } catch (error) {
+        status.setText(
+          error instanceof Error
+            ? error.message
+            : "Calendar choice could not be applied.",
+        );
+        modal.contentEl.querySelectorAll("button").forEach((button) => {
+          button.disabled = false;
         });
-      const noteButton = section.createEl("button", { text: "Use Obsidian" });
-      const googleButton = section.createEl("button", { text: "Use Google" });
-      const choose = async (choice: "note" | "google") => {
-        if (this.busy || this.stopped) {
-          new Notice("Wait for calendar sync to finish, then retry.");
-          return;
-        }
-        noteButton.disabled = true;
-        googleButton.disabled = true;
-        this.busy = true;
-        this.syncing.set(true);
-        try {
-          const api = this.api();
-          await this.validateManagedCalendar(api);
-          await resolveCalendarConflict(
-            conflict,
-            choice,
-            this.state,
-            api,
-            this.noteContext().notes,
-            () => this.save(),
-          );
-          modal.close();
-          new Notice(
-            "Calendar conflict resolved. Sync again to review remaining conflicts.",
-          );
-          this.reviewable = this.reviewable.filter(
-            (item) => item.uid !== conflict.uid,
-          );
-        } catch (error) {
-          this.report(error);
-          noteButton.disabled = false;
-          googleButton.disabled = false;
-        } finally {
+      } finally {
+        if (acquired) {
           this.busy = false;
           this.syncing.set(false);
         }
-      };
-      noteButton.addEventListener("click", () => void choose("note"));
-      googleButton.addEventListener("click", () => void choose("google"));
-    }
+        running = false;
+        if (changed && !this.reviewing) void this.refreshView();
+      }
+    };
+    const render = () => {
+      modal.contentEl.empty();
+      const count =
+        this.reviewable.length +
+        this.missingLocal.length +
+        this.deletedRemote.length;
+      modal.contentEl.createEl("p", {
+        text: count
+          ? `${count} ${count === 1 ? "choice" : "choices"} remaining`
+          : "No event choices remaining.",
+      });
+      const messages = this.conflictMessages();
+      const paths = new Set([
+        ...this.reviewable.map((item) => item.local.path),
+        ...this.missingLocal.map((item) => item.path),
+        ...this.deletedRemote.map((item) => item.path),
+        ...Object.values(this.state.records)
+          .filter(
+            (record) =>
+              record.pendingConflict ||
+              this.conflicts.some((message) =>
+                message.startsWith(`${record.path}:`),
+              ),
+          )
+          .map((record) => record.path),
+      ]);
+      if (!paths.size) {
+        const current = this.app.workspace.getActiveFile()?.path;
+        if (current) paths.add(current);
+      }
+      for (const path of paths) {
+        const group = modal.contentEl.createDiv();
+        group.createEl("h3", { text: path });
+        const force = group.createEl("button", {
+          text: "Force sync this note to Google…",
+        });
+        force.addEventListener("click", () => {
+          modal.close();
+          this.confirmForceNote(path);
+        });
+        for (const item of this.reviewable.filter(
+          (item) => item.local.path === path,
+        )) {
+          const section = group.createDiv();
+          const mine = item.mine ?? item.local.snapshot;
+          section.createEl("h4", { text: mine.title || "Untitled event" });
+          const details = section.createEl("details");
+          details.createEl("summary", {
+            text: `Compare ${item.fields?.join(", ") || "event changes"}`,
+          });
+          for (const [label, snapshot] of [
+            ["Obsidian draft", mine],
+            ["Google", item.remoteSnapshot],
+          ] as const) {
+            details.createEl("h5", { text: label });
+            details.createEl("p", {
+              text: `${snapshot.title} · ${window.moment(snapshot.start).format("D MMM, HH:mm")}–${window.moment(snapshot.end).format("HH:mm")}`,
+            });
+            details.createEl("pre", {
+              text: [
+                snapshot.tags?.map((tag) => `#${tag}`).join(" "),
+                snapshot.description,
+                snapshot.subtasks,
+                snapshot.taskUrl,
+              ]
+                .filter(Boolean)
+                .join("\n\n"),
+            });
+          }
+          for (const [label, choice] of [
+            ["Use Obsidian", "note"],
+            ["Use Google", "google"],
+          ] as const) {
+            const button = section.createEl("button", { text: label });
+            button.addEventListener(
+              "click",
+              () =>
+                void choose(async (api, notes) => {
+                  await resolveCalendarConflict(
+                    item,
+                    choice,
+                    this.state,
+                    api,
+                    notes,
+                    () => this.save(),
+                  );
+                  this.reviewable = this.reviewable.filter(
+                    (other) => other.uid !== item.uid,
+                  );
+                  forget(path, item.base.title);
+                }),
+            );
+          }
+        }
+        for (const item of this.missingLocal.filter(
+          (item) => item.path === path,
+        )) {
+          const section = group.createDiv();
+          section.createEl("h4", {
+            text: item.remoteSnapshot.title || "Untitled event",
+          });
+          section.createEl("p", {
+            text: "This block was removed from the note.",
+          });
+          for (const [label, choice] of [
+            ["Restore to note", "restore"],
+            ["Remove Google event", "remove"],
+          ] as const) {
+            const button = section.createEl("button", { text: label });
+            button.addEventListener(
+              "click",
+              () =>
+                void choose(async (api, notes) => {
+                  await resolveMissingLocalConflict(
+                    item,
+                    choice,
+                    this.state,
+                    api,
+                    notes,
+                    () => this.save(),
+                  );
+                  this.missingLocal = this.missingLocal.filter(
+                    (other) => other.uid !== item.uid,
+                  );
+                  forget(path, item.base.title);
+                }),
+            );
+          }
+        }
+        for (const item of this.deletedRemote.filter(
+          (item) => item.path === path,
+        )) {
+          const section = group.createDiv();
+          section.createEl("h4", { text: item.mine.title || "Untitled event" });
+          section.createEl("p", {
+            text: "Google deleted this event. Your Obsidian draft is saved.",
+          });
+          const details = section.createEl("details");
+          details.createEl("summary", { text: "View saved draft" });
+          details.createEl("pre", { text: item.raw });
+          for (const [label, choice] of [
+            ["Restore Obsidian draft", "restore"],
+            ["Accept Google deletion", "accept"],
+          ] as const) {
+            const button = section.createEl("button", { text: label });
+            button.addEventListener(
+              "click",
+              () =>
+                void choose(async (api, notes) => {
+                  await resolveDeletedRemoteConflict(
+                    item,
+                    choice,
+                    this.state,
+                    api,
+                    notes,
+                    () => this.save(),
+                  );
+                  this.deletedRemote = this.deletedRemote.filter(
+                    (other) => other.uid !== item.uid,
+                  );
+                  forget(path, item.mine.title);
+                }),
+            );
+          }
+        }
+      }
+      if (messages.length) {
+        const details = modal.contentEl.createEl("details");
+        details.createEl("summary", {
+          text: `${messages.length} additional sync details`,
+        });
+        for (const message of messages)
+          details.createEl("p", { text: message });
+      }
+      const refresh = modal.contentEl.createEl("button", {
+        text: "Refresh conflicts",
+      });
+      refresh.addEventListener("click", () => {
+        modal.close();
+        void this.run();
+      });
+      modal.contentEl
+        .createEl("button", { text: "Done" })
+        .addEventListener("click", () => modal.close());
+    };
+    render();
     modal.open();
   }
 

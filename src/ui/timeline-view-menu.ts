@@ -10,6 +10,7 @@ export interface TimelineViewMenuProps {
   exportSchedule: ObsidianContext["exportSchedule"];
   reSync: ObsidianContext["reSync"];
   openReviewSyncConflicts?: () => void;
+  forceSyncNote?: ObsidianContext["forceSyncNote"];
   initWeeklyView: ObsidianContext["initWeeklyView"];
   openTimelineSettingsModal: ObsidianContext["openTimelineSettingsModal"];
   openFileForDay: ObsidianContext["workspaceFacade"]["openFileForDay"];
@@ -25,6 +26,7 @@ export function addTimelineViewMenuItems(
     exportSchedule,
     reSync,
     openReviewSyncConflicts,
+    forceSyncNote,
     initWeeklyView,
     openTimelineSettingsModal,
     openFileForDay,
@@ -66,6 +68,17 @@ export function addTimelineViewMenuItems(
         .setTitle("Review sync conflicts")
         .setIcon("git-compare")
         .onClick(openReviewSyncConflicts),
+    );
+  if (forceSyncNote)
+    menu.addItem((item) =>
+      item
+        .setSection("action")
+        .setTitle("Force sync note to Google…")
+        .setIcon("upload")
+        .onClick(() => {
+          const day = getSelectedDay();
+          if (day) forceSyncNote(day);
+        }),
     );
 
   menu.addItem((item) =>

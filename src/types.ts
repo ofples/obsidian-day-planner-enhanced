@@ -79,6 +79,8 @@ export interface ObsidianContext {
   noteTaskDrag?: NoteTaskDrag;
   toggleTaskLock?: (block: EditableTimeBlock) => Promise<void>;
   googleSyncing?: Readable<boolean>;
+  googleConflictCount?: Readable<number>;
+  forceSyncNote?: (day: Moment) => void;
   openReviewSyncConflicts?: () => void;
   taskScheduler?: TaskScheduler;
   editTaskPreview?: (block: RemoteTimeBlock) => void;

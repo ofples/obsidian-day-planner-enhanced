@@ -97,6 +97,12 @@ export default class TimelineView extends ItemView {
         context.exportSchedule(day);
       },
       reSync: this.reSync,
+      forceSyncNote: (day) => {
+        const context = this.componentContext.get(
+          obsidianContextKey,
+        ) as ObsidianContext;
+        context.forceSyncNote?.(day);
+      },
       openReviewSyncConflicts: () => {
         const context = this.componentContext.get(
           obsidianContextKey,

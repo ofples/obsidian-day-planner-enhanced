@@ -101,6 +101,7 @@ export interface CalendarSyncState {
     snapshot: CalendarSnapshot;
     eventId?: string;
     currentRaw?: string;
+    preserveNote?: boolean;
   };
   pendingMove?: {
     source: LocalBlock;
@@ -129,7 +130,11 @@ export interface CalendarApi {
     snapshot: CalendarSnapshot,
     block?: LocalBlock,
   ): Promise<GoogleEvent>;
-  update(event: GoogleEvent, snapshot: CalendarSnapshot): Promise<GoogleEvent>;
+  update(
+    event: GoogleEvent,
+    snapshot: CalendarSnapshot,
+    overwrite?: boolean,
+  ): Promise<GoogleEvent>;
   remove(event: GoogleEvent): Promise<void>;
   syncColor?(
     event: GoogleEvent,
@@ -142,6 +147,7 @@ export interface CalendarNotes {
   canSync?(path: string, snapshot: CalendarSnapshot): Promise<boolean>;
   scan(): Promise<LocalBlock[]>;
   isUnchanged(block: LocalBlock): Promise<boolean>;
+  isDocumentUnchanged?(path: string): Promise<boolean>;
   canDelete(record: SyncRecord, uid: string, owned?: boolean): Promise<boolean>;
   write(
     uid: string,

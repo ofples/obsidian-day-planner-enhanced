@@ -4,6 +4,16 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.9.1
+
+### Calendar conflict improvements
+
+- Added explicit note-authoritative force sync for the selected daily note, available from the planner menu, conflict review and command palette.
+- Added a clickable red conflict indicator and count beside the planner controls.
+- Grouped conflicts by note with expandable comparisons and kept individual choices in the open review.
+- Reduced repeated conflict messages and allowed newly added blocks to export after successful deletion reconciliation in the same sync.
+- Kept request throttling, conditional Google writes and interrupted-create recovery in the force-sync path.
+
 ## 0.9.0
 
 ### Preview release
