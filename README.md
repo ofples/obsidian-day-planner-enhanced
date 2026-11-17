@@ -1,6 +1,6 @@
 # Day Planner Enhanced
 
-This fork adds Google Calendar two-way sync, a Tasks pane for Todoist and note tasks, tagged frames, schedule locks and PNG/PDF sharing. The 0.9.6 preview includes the Google Desktop app configuration. Sign in through Connections and choose the calendars to display and synchronize.
+This fork adds Google Calendar two-way sync, a Tasks pane for Todoist and note tasks, tagged frames, schedule locks and PNG/PDF sharing. The 0.9.7 preview includes the Google Desktop app configuration. Sign in through Connections and choose the calendars to display and synchronize.
 
 [Download this fork](https://github.com/ofples/obsidian-day-planner-enhanced/releases) · [Google Calendar setup](GOOGLE-CALENDAR.md) · [Tasks guide](docs/task-pane/README.md) · [Privacy notice](PRIVACY.md)
 
@@ -107,7 +107,7 @@ Plans that cross midnight stay anchored to the day where they start while still 
 
 Download the preview from [this fork's releases](https://github.com/ofples/obsidian-day-planner-enhanced/releases). Core planning supports Obsidian 1.11.0 or later. Google and Todoist sign-in require desktop Obsidian 1.11.4 or later.
 
-1. Download `day-planner-enhanced-0.9.6.zip` from the release.
+1. Download `day-planner-enhanced-0.9.7.zip` from the release.
 2. Extract the included `day-planner-enhanced` folder into `<vault>/.obsidian/plugins/`.
 3. Restart Obsidian and enable **Day Planner Enhanced** under **Settings → Community plugins**.
 4. Enable Obsidian's **Daily notes** core plugin, or configure Periodic Notes, then open **Show Timeline** or **Show tasks** from the command palette.

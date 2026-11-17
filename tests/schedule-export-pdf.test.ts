@@ -1,6 +1,9 @@
 import { expect, test, vi } from "vitest";
 
-import { writeSchedulePdf } from "../src/ui/schedule-export-pdf";
+import {
+  renderSchedulePdf,
+  writeSchedulePdf,
+} from "../src/ui/schedule-export-pdf";
 
 function fixture() {
   const destroy = vi.fn(),
@@ -73,4 +76,13 @@ test("PDF cancel creates no window and print failure still closes it", async () 
   );
   expect(h.destroy).toHaveBeenCalledOnce();
   expect(h.write).not.toHaveBeenCalled();
+});
+
+test("PDF can render directly for the configured destination without a second dialog", async () => {
+  const h = fixture();
+  expect(await renderSchedulePdf("<p>Schedule</p>", h.runtime)).toEqual(
+    new Uint8Array([1, 2]),
+  );
+  expect(h.dialog.showSaveDialog).not.toHaveBeenCalled();
+  expect(h.destroy).toHaveBeenCalledOnce();
 });

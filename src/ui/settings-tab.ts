@@ -90,6 +90,21 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
       },
       {
         type: "group",
+        heading: "Exports",
+        items: [
+          {
+            name: "Default export folder",
+            desc: "Save PNG and PDF schedules here. Use a vault folder or an absolute filesystem path on desktop. Missing folders are created automatically.",
+            control: {
+              type: "text",
+              key: "scheduleExportFolder",
+              placeholder: "Schedule Exports",
+            },
+          },
+        ],
+      },
+      {
+        type: "group",
         items: [
           {
             name: "Show release notes after update",
@@ -947,6 +962,22 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
             }),
         ),
       );
+
+    new SettingGroup(containerEl).setHeading("Exports").addSetting((setting) =>
+      setting
+        .setName("Default export folder")
+        .setDesc(
+          "Save PNG and PDF schedules here. Use a vault folder or an absolute filesystem path on desktop. Missing folders are created automatically.",
+        )
+        .addText((text) =>
+          text
+            .setPlaceholder("Schedule Exports")
+            .setValue(this.plugin.getSettings().scheduleExportFolder)
+            .onChange((scheduleExportFolder) =>
+              this.updateSettings({ scheduleExportFolder }),
+            ),
+        ),
+    );
 
     new SettingGroup(containerEl)
       .setHeading("Enhanced features")

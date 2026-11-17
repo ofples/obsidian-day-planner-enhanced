@@ -128,6 +128,8 @@ export default defineConfig((env) => ({
         "obsidian",
         "electron",
         "node:http",
+        "node:fs",
+        "node:path",
         "@codemirror/state",
         "@codemirror/view",
       ],

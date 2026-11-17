@@ -102,12 +102,14 @@ export interface DayPlannerSettings {
   eventFormatOnCreation: (typeof eventFormats)[number];
   sortTasksInPlanAfterEdit: boolean;
   nextTaskSlotOnEnter: boolean;
+  scheduleExportFolder: string;
   firstDayOfWeek: (typeof firstDaysOfWeek)[number];
   multiDayRange: "full-week" | "work-week" | "3-days";
   timelineColumns: TimelineColumns;
 }
 
 export const defaultSettings: DayPlannerSettings = {
+  scheduleExportFolder: "Schedule Exports",
   experimentalTodoistSync: false,
   weakTodoistSync: true,
   taskCapture: taskCaptureSettingsSchema.parse({}),
@@ -192,6 +194,10 @@ export function mergeStoredSettings(
   return {
     ...defaultSettings,
     ...currentSettings,
+    scheduleExportFolder:
+      typeof currentSettings.scheduleExportFolder === "string"
+        ? currentSettings.scheduleExportFolder
+        : defaultSettings.scheduleExportFolder,
     taskCapture: taskCaptureSettingsSchema.parse(
       currentSettings.taskCapture ?? {},
     ),

@@ -4,6 +4,12 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.9.7
+
+- Reorganized schedule export into compact controls, a scrollable preview and a destination/action footer, with a stacked layout for smaller screens.
+- Added the default export folder under Exports in Day Planner settings. Both PNG and PDF use it, create missing folders and preserve existing exports with numbered filenames.
+- Support vault-relative folders and absolute desktop filesystem paths. Exports default to Schedule Exports.
+
 ## 0.9.6
 
 - The subtask-count button expands and collapses the current block directly in the timeline. Expanded blocks show their complete nested list above later blocks.

@@ -9,6 +9,15 @@ import {
 } from "../src/settings";
 
 describe("settings migration", () => {
+  test("exports default to the existing vault folder and preserve a custom path", () => {
+    expect(mergeStoredSettings(null).scheduleExportFolder).toBe(
+      "Schedule Exports",
+    );
+    expect(
+      mergeStoredSettings({ scheduleExportFolder: "Shares/Schedules" })
+        .scheduleExportFolder,
+    ).toBe("Shares/Schedules");
+  });
   test("retains legacy custom Google apps and respects an explicit built-in choice", () => {
     const googleCalendar = { clientId: "custom.apps.googleusercontent.com" };
     expect(

@@ -331,8 +331,87 @@ body:has(.modal.day-planner-nested-items-modal) .popover.hover-popover {
 .planner-settings-warning {
   margin-bottom: var(--size-4-6);
 }
-// A scrollable on-screen preview; the PNG itself retains its full height.
+.planner-export-dialog {
+  width: min(940px, 94vw);
+  max-width: 94vw;
+}
+
 .planner-export-modal {
+  .planner-export-date {
+    margin: 0 0 16px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+  }
+
+  .planner-export-workspace {
+    display: grid;
+    grid-template-columns: 210px minmax(0, 1fr);
+    gap: 20px;
+    height: min(58vh, 620px);
+    min-height: 300px;
+  }
+
+  .planner-export-controls {
+    align-self: start;
+    padding: 16px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 10px;
+  }
+
+  .planner-export-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 16px;
+    font-size: var(--font-ui-small);
+    font-weight: var(--font-medium);
+
+    select {
+      width: 100%;
+      height: 34px;
+    }
+  }
+
+  .planner-export-include {
+    min-width: 0;
+    margin: 4px 0 0;
+    padding: 0;
+    border: 0;
+
+    legend {
+      margin-bottom: 6px;
+      padding: 0;
+      font-size: var(--font-ui-small);
+      font-weight: var(--font-medium);
+      color: var(--text-muted);
+    }
+    .setting-item {
+      min-height: 36px;
+      padding: 8px 0;
+      border: 0;
+    }
+    .setting-item-info {
+      margin-right: 12px;
+    }
+    .setting-item-name {
+      font-size: var(--font-ui-small);
+    }
+    .setting-item-control {
+      padding: 0;
+    }
+  }
+
+  .planner-export-preview-pane {
+    overflow: auto;
+    min-width: 0;
+    min-height: 0;
+    padding: 12px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 10px;
+  }
+
   .planner-export-preview {
     display: block;
     width: 100%;
@@ -346,17 +425,85 @@ body:has(.modal.day-planner-nested-items-modal) .popover.hover-popover {
   }
 
   iframe.planner-export-preview {
-    width: 703px;
-    max-width: none;
-    height: 70vh;
+    width: 100%;
+    height: 100%;
+    min-height: 300px;
     background: #fff;
   }
 
-  .planner-export-buttons {
+  .planner-export-footer {
     position: sticky;
     z-index: 1;
-    top: 0;
-    background: var(--background-primary);
+    bottom: 0;
+
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 18px;
+    padding-top: 16px;
+    padding-bottom: 4px;
+    background: var(--modal-background, var(--background-primary));
+    border-top: 1px solid var(--background-modifier-border);
+  }
+
+  .planner-export-destination {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+
+    strong {
+      overflow: hidden;
+      font-weight: var(--font-medium);
+      color: var(--text-normal);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .planner-export-buttons {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 8px;
+  }
+
+  .planner-export-status {
+    margin-top: 8px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    &:empty {
+      display: none;
+    }
+  }
+
+  @media (max-width: 700px) {
+    .planner-export-workspace {
+      grid-template-columns: 1fr;
+      height: auto;
+    }
+    .planner-export-controls {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .planner-export-field {
+      margin: 0;
+    }
+    .planner-export-include {
+      grid-column: 1 / -1;
+    }
+    .planner-export-preview-pane {
+      max-height: 48vh;
+    }
+    iframe.planner-export-preview {
+      height: 48vh;
+    }
+    .planner-export-footer {
+      align-items: flex-end;
+    }
   }
 }
 .planner-google-setup-details {

@@ -78,6 +78,20 @@
         ),
     );
 
+    new SettingGroup(el).setHeading("Exports").addSetting((setting) =>
+      setting
+        .setName("Default export folder")
+        .setDesc("Vault folder or absolute filesystem path on desktop.")
+        .addText((text) =>
+          text
+            .setPlaceholder("Schedule Exports")
+            .setValue($settings.scheduleExportFolder)
+            .onChange((scheduleExportFolder) => {
+              $settings = { ...$settings, scheduleExportFolder };
+            }),
+        ),
+    );
+
     new SettingGroup(el).setHeading("Experimental").addSetting((setting) =>
       setting
         .setName("Two-way Todoist sync")
