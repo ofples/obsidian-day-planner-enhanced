@@ -140,7 +140,7 @@
       onEditNestedItems: () => openNestedItemsEditModal(timeBlock),
       onDelete: removeTask,
     })}
-  selectionBlocked={Boolean($editOperation)}
+  selectionBlocked={timeBlock.optimistic === true || Boolean($editOperation)}
 >
   {#snippet children(selectable)}
     <FloatingControls

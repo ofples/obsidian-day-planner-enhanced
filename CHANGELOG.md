@@ -4,6 +4,14 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.9.5
+
+- Drops appear immediately in the timeline, inside frames and at the Markdown release point while their existing save queue runs.
+- Tasks added to the selected note hide from the sidebar immediately. Failed drops restore their own previews and sidebar rows.
+- Local completion, title, lock, nested-item and removal edits display before file saving and indexing finish. Failed writes restore the displayed note.
+- Weak Todoist completion and title/description edits display immediately and revert on failure.
+- Clear the drag session on release so a previous save cannot cancel the next drag. Preserve newer edits when an older operation fails.
+
 ## 0.9.4
 
 - Single-child frames display the child's name in the planner, Google Calendar and schedule exports. Empty frames and frames with several direct children display their container name.

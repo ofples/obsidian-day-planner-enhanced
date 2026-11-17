@@ -171,6 +171,17 @@
     };
   }
 
+  function startDrop(save: () => Promise<unknown>) {
+    try {
+      return save();
+    } finally {
+      taskScheduler?.drag.cancel();
+      noteTaskDrag?.cancel();
+      clearSubtaskDrop();
+      taskDropPreview = null;
+    }
+  }
+
   async function dropSubtask(
     event: DragEvent,
     block: {
@@ -184,30 +195,28 @@
     event.preventDefault();
     event.stopPropagation();
     try {
-      const parent = {
-        path: block.path,
-        line: block.position.start.line,
-        text: block.text,
-      };
-      if (event.dataTransfer.types.includes(noteTaskDragMime) && noteTaskDrag) {
-        const drop = noteTaskDrag.accept(event.dataTransfer);
-        await taskScheduler.nestNote(drop.reference, parent, drop.id);
-      } else {
-        const drop = taskScheduler.drag.accept(event.dataTransfer);
-        await (
-          taskScheduler.nestFromPane?.bind(taskScheduler) ??
-          taskScheduler.nest.bind(taskScheduler)
-        )(drop.task.id, parent, drop.id);
-      }
+      await startDrop(() => {
+        const transfer = event.dataTransfer!;
+        const parent = {
+          path: block.path,
+          line: block.position.start.line,
+          text: block.text,
+        };
+        if (transfer.types.includes(noteTaskDragMime) && noteTaskDrag) {
+          const drop = noteTaskDrag.accept(transfer);
+          return taskScheduler.nestNote(drop.reference, parent, drop.id);
+        } else {
+          const drop = taskScheduler.drag.accept(transfer);
+          return (
+            taskScheduler.nestFromPane?.bind(taskScheduler) ??
+            taskScheduler.nest.bind(taskScheduler)
+          )(drop.task.id, parent, drop.id);
+        }
+      });
     } catch (error) {
       new Notice(
         error instanceof Error ? error.message : "Could not add this subtask.",
       );
-    } finally {
-      taskScheduler.drag.cancel();
-      noteTaskDrag?.cancel();
-      clearSubtaskDrop();
-      taskDropPreview = null;
     }
   }
 
@@ -217,36 +226,33 @@
     event.preventDefault();
     event.stopPropagation();
     try {
-      const interval = taskIntervalAt(event);
-      if (interval) {
-        const target = {
-          start: interval.start.toISOString(),
-          end: interval.end.toISOString(),
-        };
-        if (
-          event.dataTransfer.types.includes(noteTaskDragMime) &&
-          noteTaskDrag
-        ) {
-          const drop = noteTaskDrag.accept(event.dataTransfer);
-          await taskScheduler.placeNote(drop.reference, target, drop.id);
-        } else {
-          const drop = taskScheduler.drag.accept(event.dataTransfer);
-          await (
-            taskScheduler.place?.bind(taskScheduler) ??
-            taskScheduler.schedule.bind(taskScheduler)
-          )(drop.task.id, target, drop.id);
+      await startDrop(() => {
+        const transfer = event.dataTransfer!;
+        const interval = taskIntervalAt(event);
+        if (interval) {
+          const target = {
+            start: interval.start.toISOString(),
+            end: interval.end.toISOString(),
+          };
+          if (transfer.types.includes(noteTaskDragMime) && noteTaskDrag) {
+            const drop = noteTaskDrag.accept(transfer);
+            return taskScheduler.placeNote(drop.reference, target, drop.id);
+          } else {
+            const drop = taskScheduler.drag.accept(transfer);
+            return (
+              taskScheduler.place?.bind(taskScheduler) ??
+              taskScheduler.schedule.bind(taskScheduler)
+            )(drop.task.id, target, drop.id);
+          }
         }
-      }
+        return Promise.resolve();
+      });
     } catch (error) {
       new Notice(
         error instanceof Error
           ? error.message
           : "Could not save this task drop.",
       );
-    } finally {
-      taskScheduler.drag.cancel();
-      noteTaskDrag?.cancel();
-      taskDropPreview = null;
     }
   }
 

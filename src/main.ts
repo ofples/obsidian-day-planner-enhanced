@@ -29,6 +29,7 @@ import {
 } from "./create-update-handler";
 import { createDumpMetadataCommand } from "./dump-metadata";
 import { registerNextTaskSlot } from "./feature/next-task-slot";
+import { registerPendingTaskDrops } from "./feature/pending-task-drops";
 import { VaultIndexAdapter } from "./feature/vault-index-adapter";
 import { currentTime } from "./global-store/current-time";
 import { settingsSignal, settingsStore } from "./global-store/settings";
@@ -72,6 +73,7 @@ import { ListItemEntryEditor } from "./service/list-item-entry-editor";
 import { ListPropsParser } from "./service/list-props-parser";
 import { LogEntryEditor } from "./service/log-entry-editor";
 import { MetadataCacheFacade } from "./service/metadata-cache-facade";
+import { OptimisticNoteEdits } from "./service/optimistic-note-edits";
 import { PeriodicNotes } from "./service/periodic-notes";
 import {
   DefaultSearchOrderingService,
@@ -95,6 +97,7 @@ import {
 import type { TaskDeletionController } from "./tasks/deletion";
 import { createTaskDeletionController } from "./tasks/deletion-obsidian";
 import { taskDragMime } from "./tasks/drag";
+import { withPendingDrops } from "./tasks/drop-feedback";
 import { taskDropOffset } from "./tasks/editor-drop";
 import { NoteTaskDrag } from "./tasks/note-drag";
 import { createTaskService } from "./tasks/obsidian";
@@ -261,7 +264,6 @@ export default class DayPlanner extends Plugin {
       useSelector,
       listenerMiddleware,
       remoteTimeBlocks,
-      localTimeBlocks,
       pointerDateTime,
       dateRanges,
     } = createReactor({
@@ -275,6 +277,20 @@ export default class DayPlanner extends Plugin {
     });
 
     const { dispatch } = store;
+    const noteFeedback = new OptimisticNoteEdits(indexServices, store.getState);
+    this.vaultFacade.previewEdit = noteFeedback.begin;
+    const displayState = readable(store.getState(), (set) =>
+      store.subscribe(() => set(store.getState())),
+    );
+    const responsiveLocalTimeBlocks = derived(
+      [displayState, noteFeedback.state],
+      ([state, previews]) => noteFeedback.blocks(state, previews),
+    );
+    this.register(store.subscribe(() => noteFeedback.reconcile()));
+    this.register(() => {
+      this.vaultFacade.previewEdit = undefined;
+      noteFeedback.clear();
+    });
 
     this.getActiveClockCount = () =>
       selectActiveLogTimeBlocks(store.getState(), window.moment()).length;
@@ -449,7 +465,9 @@ export default class DayPlanner extends Plugin {
         this.googleCalendarSync,
         this.settingsStore,
         this.workspaceFacade,
+        this.periodicNotes,
       );
+      registerPendingTaskDrops(this, this.taskScheduler.dropFeedback);
       createWeakTaskSync(
         this,
         this.taskService,
@@ -578,7 +596,7 @@ export default class DayPlanner extends Plugin {
       remoteTimeBlocks,
       pointerDateTime,
       useSelector,
-      localTimeBlocks,
+      localTimeBlocks: responsiveLocalTimeBlocks,
       dateRanges,
     });
 
@@ -1048,6 +1066,32 @@ export default class DayPlanner extends Plugin {
       new Notice("Tasks changed externally; edit canceled");
     };
 
+    const displayedLocalTimeBlocks = this.taskScheduler
+      ? derived(
+          [localTimeBlocks, this.taskScheduler.dropFeedback.state],
+          ([blocks, drops]) => withPendingDrops(blocks, drops),
+        )
+      : localTimeBlocks;
+    if (this.taskScheduler)
+      this.register(
+        localTimeBlocks.subscribe((blocks) =>
+          this.taskScheduler?.dropFeedback.reconcile(blocks),
+        ),
+      );
+    if (this.taskScheduler)
+      this.register(
+        store.subscribe(() => {
+          if (
+            get(this.taskScheduler!.dropFeedback.state).some(
+              (drop) => drop.saved,
+            )
+          )
+            this.taskScheduler!.dropFeedback.reconcileSources(
+              Object.values(store.getState().tracker.captureEntries).flat(),
+            );
+        }),
+      );
+
     const calendarBlocks = this.taskScheduler
       ? derived(
           [
@@ -1055,7 +1099,7 @@ export default class DayPlanner extends Plugin {
             this.taskService.state,
             this.taskScheduler.state,
             this.settingsStore,
-            localTimeBlocks,
+            displayedLocalTimeBlocks,
             this.taskScheduler.importer.imports,
           ],
           ([remote, browser, _schedules, settings, local, imports]) => [
@@ -1120,6 +1164,7 @@ export default class DayPlanner extends Plugin {
         pointerDateTime,
         remoteTimeBlocks: calendarBlocks,
         localTimeBlocks,
+        pendingDrops: this.taskScheduler?.dropFeedback.state,
       });
 
     this.registerInterval(

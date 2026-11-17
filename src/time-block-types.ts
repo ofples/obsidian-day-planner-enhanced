@@ -21,6 +21,8 @@ export interface TimelineSegment {
 }
 
 export interface BaseTimeBlock {
+  /** A display-only change whose note write is still being confirmed. */
+  optimistic?: boolean;
   /**
    * Time blocks get an ID on parsing. It is unique to a line in a file, not to a
    * block, visible in the UI (because blocks might get split at midnight, etc.).

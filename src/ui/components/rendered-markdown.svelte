@@ -180,13 +180,19 @@
   const nestedListItemLinesKey = $derived(
     (promotedChild ? flatten(promotedChild.children) : nestedItems)
       .filter((nestedItem) => nestedItem.task !== undefined)
-      .map((nestedItem) => nestedItem.position.start.line)
+      .map((nestedItem) =>
+        nestedItem.id.startsWith("pending-drop-")
+          ? -1
+          : nestedItem.position.start.line,
+      )
       .join(","),
   );
   const nestedListItemLines = $derived(
     nestedListItemLinesKey.length === 0
       ? []
-      : nestedListItemLinesKey.split(",").map(Number),
+      : nestedListItemLinesKey
+          .split(",")
+          .map((line) => (Number(line) < 0 ? undefined : Number(line))),
   );
 </script>
 

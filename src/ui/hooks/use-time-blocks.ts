@@ -4,6 +4,7 @@ import { derived, type Readable, type Writable } from "svelte/store";
 import type { PeriodicNotes } from "../../service/periodic-notes";
 import { WorkspaceFacade } from "../../service/workspace-facade";
 import type { DayPlannerSettings } from "../../settings";
+import type { PendingDrop } from "../../tasks/drop-feedback";
 import type {
   EditableTimeBlock,
   RemoteTimeBlock,
@@ -33,6 +34,7 @@ export function useTimeBlocks(props: {
   remoteTimeBlocks: Readable<RemoteTimeBlock[]>;
   periodicNotes: PeriodicNotes;
   localTimeBlocks: Readable<EditableTimeBlock[]>;
+  pendingDrops?: Readable<PendingDrop[]>;
 }) {
   const {
     settingsStore,
@@ -71,6 +73,7 @@ export function useTimeBlocks(props: {
   const abortEditTrigger = derived(localTimeBlocks, getUpdateTrigger);
 
   const editContext = useEditContext({
+    pendingDrops: props.pendingDrops,
     periodicNotes,
     workspaceFacade,
     onUpdate,

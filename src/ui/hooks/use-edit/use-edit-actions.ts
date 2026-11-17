@@ -56,9 +56,11 @@ export function useEditActions({
         currentTimeBlocks,
         currentOperation.mode,
       );
-      if (!succeeded) baselineTimeBlocks.set(oldBase);
+      if (!succeeded && get(baselineTimeBlocks) === currentTimeBlocks)
+        baselineTimeBlocks.set(oldBase);
     } catch (error) {
-      baselineTimeBlocks.set(oldBase);
+      if (get(baselineTimeBlocks) === currentTimeBlocks)
+        baselineTimeBlocks.set(oldBase);
       throw error;
     }
   }

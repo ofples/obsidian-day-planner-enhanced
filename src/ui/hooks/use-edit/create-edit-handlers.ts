@@ -65,7 +65,8 @@ export function createEditHandlers({
     dragOriginClientY?: number,
     dragOriginMinutes?: number,
   ) {
-    if (isLocked(timeBlock) || get(editOperation)) return;
+    if (timeBlock.optimistic || isLocked(timeBlock) || get(editOperation))
+      return;
     const pointerDay = get(pointerDateTime).dateTime;
 
     isNotVoid(pointerDay, "Day cannot be undefined on edit");

@@ -393,3 +393,10 @@ body:has(.modal.day-planner-nested-items-modal) .popover.hover-popover {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+
+.dp-pending-editor-task {
+  padding: 2px 0;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

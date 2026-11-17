@@ -30,7 +30,7 @@ export function taskCalendarPreviews(
   const weakLinks = new Map<string, Set<string | undefined>>();
   if (snapshot.provider === "todoist") {
     for (const block of localBlocks) {
-      if (block.source === "unwritten") continue;
+      if (block.source === "unwritten" && !block.optimistic) continue;
       const pending: Array<{
         text: string;
         children?: import("../redux/index/index-slice").ListItemEntryWithChildren[];

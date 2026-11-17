@@ -124,7 +124,13 @@ export default defineConfig((env) => ({
           return assetInfo.name;
         },
       },
-      external: ["obsidian", "electron", "node:http"],
+      external: [
+        "obsidian",
+        "electron",
+        "node:http",
+        "@codemirror/state",
+        "@codemirror/view",
+      ],
     },
   },
   test: {

@@ -65,9 +65,11 @@
   const source = $derived($preferences.source ?? "todoist");
   const emptyImports = readable<Record<string, ImportedTaskSource>>({});
   const imports = $derived(scheduler?.importer.imports ?? emptyImports);
+  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Older pane hosts can omit drop feedback.
+  const pendingDrops = $derived(scheduler?.dropFeedback?.state ?? readable([]));
   const addedIds = $derived.by(() => {
     void $imports;
-    return snapshot
+    const added = snapshot
       ? tasksAddedToNote({
           snapshot,
           path: $noteContext.targetPath,
@@ -76,6 +78,17 @@
           resolve: resolveImported,
         })
       : new Set<string>();
+    for (const drop of $pendingDrops) {
+      const path =
+        "path" in drop.destination
+          ? drop.destination.path
+          : "parent" in drop.destination
+            ? drop.destination.parent.path
+            : drop.targetPath;
+      if (path === $noteContext.targetPath)
+        for (const id of drop.taskIds) added.add(id);
+    }
+    return added;
   });
   const grouping = $derived($preferences.groupBy);
   const groups = $derived.by(() => {

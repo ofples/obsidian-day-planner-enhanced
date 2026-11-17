@@ -13,6 +13,7 @@ import {
 } from "./capture-settings";
 import { pendingTaskDeletion } from "./deletion-types";
 import { TaskDrag } from "./drag";
+import { TaskDropFeedback, type DropDestination } from "./drop-feedback";
 import { pendingIdentityDecision } from "./identity-types";
 import type { NoteTaskReference } from "./note-drag";
 import {
@@ -56,6 +57,7 @@ import { formatTaskLink, stripTaskLink } from "./weak-links";
 export class TaskProjectionConflict extends TaskReadError {}
 
 export class TaskScheduler {
+  readonly dropFeedback = new TaskDropFeedback();
   readonly drag: TaskDrag;
   readonly importer: PlainTaskImporter;
   readonly state = writable<{
@@ -83,6 +85,7 @@ export class TaskScheduler {
       writeImports?(value: string): Promise<void>;
       reveal?(source: TaskSource): Promise<void>;
       warn?(message: string): void;
+      dailyPath?(date: string): string;
     },
   ) {
     this.drag = new TaskDrag(service);
@@ -222,7 +225,59 @@ export class TaskScheduler {
     };
   }
 
-  async place(
+  private previewDrop<T>(
+    taskId: string,
+    destination: DropDestination,
+    id: string,
+    persist: () => Promise<T>,
+  ) {
+    const { raw, taskIds } = this.plainTask(taskId);
+    const targetPath =
+      "interval" in destination
+        ? this.host.dailyPath?.(destination.interval.start)
+        : undefined;
+    return this.dropFeedback.run(
+      { id, raw, taskIds, destination, targetPath },
+      persist,
+    );
+  }
+
+  place(
+    taskId: string,
+    interval: ScheduleInterval,
+    id: string = crypto.randomUUID(),
+  ) {
+    return this.previewDrop(taskId, { interval }, id, () =>
+      this.placeSaved(taskId, interval, id),
+    );
+  }
+
+  insertFromPane(
+    taskId: string,
+    target: {
+      path: string;
+      offset: number;
+      before: string;
+      timePrefix?: string;
+    },
+    id: string = crypto.randomUUID(),
+  ) {
+    return this.previewDrop(taskId, target, id, () =>
+      this.insertSaved(taskId, target, id),
+    );
+  }
+
+  nestFromPane(
+    taskId: string,
+    parent: NoteTaskReference,
+    id: string = crypto.randomUUID(),
+  ) {
+    return this.previewDrop(taskId, { parent }, id, () =>
+      this.nestSaved(taskId, parent, id),
+    );
+  }
+
+  private async placeSaved(
     taskId: string,
     interval: ScheduleInterval,
     id: string = crypto.randomUUID(),
@@ -231,7 +286,7 @@ export class TaskScheduler {
       return this.schedule(taskId, interval, id);
     const { raw, key, taskIds } = this.plainTask(taskId);
     const target = scheduleIntervalSchema.parse(interval);
-    await this.importer.runPane(
+    return this.importer.runPane(
       key,
       id,
       JSON.stringify(["schedule", raw, target]),
@@ -248,7 +303,7 @@ export class TaskScheduler {
     );
   }
 
-  async insertFromPane(
+  private async insertSaved(
     taskId: string,
     target: {
       path: string;
@@ -261,7 +316,7 @@ export class TaskScheduler {
     if (this.host.linkedSync?.() !== false)
       return this.insert(taskId, target, id);
     const { raw, key, taskIds } = this.plainTask(taskId);
-    await this.importer.runPane(
+    return this.importer.runPane(
       key,
       id,
       JSON.stringify([
@@ -284,7 +339,7 @@ export class TaskScheduler {
     );
   }
 
-  async nestFromPane(
+  private async nestSaved(
     taskId: string,
     parent: { path: string; line: number; text: string },
     id: string = crypto.randomUUID(),
@@ -292,7 +347,7 @@ export class TaskScheduler {
     if (this.host.linkedSync?.() !== false)
       return this.nest(taskId, parent, id);
     const { raw, key, taskIds } = this.plainTask(taskId);
-    await this.importer.runPane(
+    return this.importer.runPane(
       key,
       id,
       JSON.stringify(["nest", raw, parent.path, parent.line, parent.text]),
@@ -316,7 +371,41 @@ export class TaskScheduler {
     return noteTaskSource(text, reference);
   }
 
-  async placeNote(
+  placeNote(
+    reference: NoteTaskReference,
+    interval: ScheduleInterval,
+    id: string,
+  ) {
+    return this.dropFeedback.run(
+      {
+        id,
+        raw: `- [ ] ${reference.text}`,
+        destination: { interval },
+        previous: reference,
+        taskIds: [],
+      },
+      () => this.placeNoteSaved(reference, interval, id),
+    );
+  }
+
+  nestNote(
+    reference: NoteTaskReference,
+    parent: NoteTaskReference,
+    id: string,
+  ) {
+    return this.dropFeedback.run(
+      {
+        id,
+        raw: `- [ ] ${reference.text}`,
+        destination: { parent },
+        previous: reference,
+        taskIds: [],
+      },
+      () => this.nestNoteSaved(reference, parent, id),
+    );
+  }
+
+  private async placeNoteSaved(
     reference: NoteTaskReference,
     interval: ScheduleInterval,
     id: string,
@@ -330,7 +419,7 @@ export class TaskScheduler {
     );
   }
 
-  async nestNote(
+  private async nestNoteSaved(
     reference: NoteTaskReference,
     parent: { path: string; line: number; text: string },
     id: string,
@@ -1870,6 +1959,7 @@ export class TaskScheduler {
 
   stop() {
     this.stopped = true;
+    this.dropFeedback.clear();
     this.drag.cancel();
   }
 }

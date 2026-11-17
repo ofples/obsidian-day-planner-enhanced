@@ -2,6 +2,7 @@ import { MarkdownView, Notice, type Plugin } from "obsidian";
 import { get, type Writable } from "svelte/store";
 
 import type { GoogleCalendarSync } from "../google-calendar/service";
+import type { PeriodicNotes } from "../service/periodic-notes";
 import { locateSource } from "../service/source-identity";
 import type { WorkspaceFacade } from "../service/workspace-facade";
 import type { DayPlannerSettings } from "../settings";
@@ -15,9 +16,11 @@ export function createTaskScheduler(
   calendar: GoogleCalendarSync,
   settings: Writable<DayPlannerSettings>,
   workspaceFacade: WorkspaceFacade,
+  daily: PeriodicNotes,
 ) {
   const { app } = plugin;
   const scheduler = new TaskScheduler(service, calendar, {
+    dailyPath: (date) => daily.createDailyNotePath(window.moment(date)),
     read: async (path) => {
       const file = app.vault.getFileByPath(path);
       return file ? app.vault.read(file) : null;

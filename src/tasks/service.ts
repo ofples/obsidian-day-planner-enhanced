@@ -78,6 +78,15 @@ export class TaskService {
   private canWrite = false;
   private weakTail: Promise<void> = Promise.resolve();
   private weakCommands = new Map<string, TaskOperation>();
+  private readonly optimisticWeakEdits = new Map<
+    object,
+    {
+      provider: string;
+      accountId: string;
+      taskId: string;
+      changes: Partial<ProviderTask>;
+    }
+  >();
   private refreshAgain = false;
   private stopRestoration?: () => void;
   registry!: TaskRegistry;
@@ -147,9 +156,28 @@ export class TaskService {
     task: ProviderTask,
     change: { title?: string; description?: string } | "complete" | "reopen",
   ): Promise<void> {
+    const snapshotAtStart = this.cache.snapshot;
+    const generationAtStart = this.generation;
+    const feedback = {};
+    if (snapshotAtStart && !this.closed && this.weakWritesEnabled()) {
+      this.optimisticWeakEdits.set(feedback, {
+        provider: snapshotAtStart.provider,
+        accountId: snapshotAtStart.account.id,
+        taskId: task.id,
+        changes:
+          typeof change === "string"
+            ? { completed: change === "complete" }
+            : change,
+      });
+      this.publish();
+    }
     const action = this.weakTail.then(async () => {
       await this.pending;
-      if (this.closed || !this.weakWritesEnabled())
+      if (
+        this.closed ||
+        generationAtStart !== this.generation ||
+        !this.weakWritesEnabled()
+      )
         throw new TaskReadError("Linked Todoist editing is disabled.");
       const token = this.storage.getSecret(this.secretKey());
       const snapshot = this.cache.snapshot;
@@ -174,7 +202,10 @@ export class TaskService {
       }
     });
     this.weakTail = action.catch(() => {});
-    return action;
+    return action.finally(() => {
+      this.optimisticWeakEdits.delete(feedback);
+      if (!this.closed) this.publish();
+    });
   }
 
   private async applyWeak(
@@ -360,9 +391,21 @@ export class TaskService {
         operation.accountId === snapshot.account.id,
     );
     const operations = owned.filter(isOutstanding);
-    const effective = this.writesEnabled()
+    let effective = this.writesEnabled()
       ? pendingSnapshot(snapshot, operations)
       : snapshot;
+    for (const edit of this.optimisticWeakEdits.values()) {
+      if (
+        effective?.provider === edit.provider &&
+        effective.account.id === edit.accountId
+      )
+        effective = {
+          ...effective,
+          tasks: effective.tasks.map((task) =>
+            task.id === edit.taskId ? { ...task, ...edit.changes } : task,
+          ),
+        };
+    }
     const deletedIds = new Set(
       owned
         .filter(

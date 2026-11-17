@@ -40,6 +40,28 @@ const snapshot = (
 });
 
 const settings = structuredClone(defaultSettingsForTests);
+test("a pending scheduled drop immediately replaces its provider calendar preview", () => {
+  const current = task("pending");
+  const block: EditableTimeBlock = {
+    id: "pending-drop",
+    source: "unwritten",
+    destination: { type: "plannerHeading" },
+    optimistic: true,
+    startTime: window.moment("2026-11-13T09:30:00Z"),
+    durationMinutes: 30,
+    text: `Task pending ${formatTaskLink(current.id)}`,
+    symbol: "-",
+    task: " ",
+  };
+  expect(
+    taskCalendarPreviews(
+      { connected: true, snapshot: snapshot([current]) },
+      { links: {} },
+      settings,
+      [block],
+    ),
+  ).toEqual([]);
+});
 settings.defaultDurationMinutes = 45;
 settings.taskCapture.accounts[taskAccountKey(snapshot([]))] = {
   defaultProjectId: "work",

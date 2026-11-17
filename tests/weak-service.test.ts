@@ -83,6 +83,30 @@ test("weak completion requires enabled mode and does not create a legacy outbox 
   h.service.stop();
 });
 
+test("weak completion updates immediately and rolls back on a rejected request", async () => {
+  const h = await harness();
+  let fail!: (reason: Error) => void;
+  h.apply.mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        fail = reject;
+      }),
+  );
+  const saving = h.service.completeWeak(task);
+  expect(
+    get(h.service.state).snapshot?.tasks.find((row) => row.id === task.id)
+      ?.completed,
+  ).toBe(true);
+  await vi.waitFor(() => expect(h.apply).toHaveBeenCalled());
+  fail(new Error("Offline"));
+  await expect(saving).rejects.toThrow("Offline");
+  expect(
+    get(h.service.state).snapshot?.tasks.find((row) => row.id === task.id)
+      ?.completed,
+  ).toBe(false);
+  h.service.stop();
+});
+
 test("an ambiguous readback retains the same command UUID for explicit retry", async () => {
   const h = await harness();
   await expect(h.service.completeWeak(task)).rejects.toThrow(

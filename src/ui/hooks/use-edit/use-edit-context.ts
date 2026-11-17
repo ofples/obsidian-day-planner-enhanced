@@ -1,10 +1,14 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
-import { derived, type Readable, writable } from "svelte/store";
+import { derived, type Readable, readable, writable } from "svelte/store";
 
 import { addHorizontalPlacing } from "../../../overlap/overlap";
 import type { PeriodicNotes } from "../../../service/periodic-notes";
 import { WorkspaceFacade } from "../../../service/workspace-facade";
 import type { DayPlannerSettings } from "../../../settings";
+import {
+  withPendingDrops,
+  type PendingDrop,
+} from "../../../tasks/drop-feedback";
 import type {
   EditableTimeBlock,
   RemoteTimeBlock,
@@ -133,6 +137,7 @@ export function useEditContext(props: {
   onUpdate: OnUpdateFn;
   settingsStore: Readable<DayPlannerSettings>;
   localTimeBlocks: Readable<EditableTimeBlock[]>;
+  pendingDrops?: Readable<PendingDrop[]>;
   remoteTimeBlocks: Readable<RemoteTimeBlock[]>;
   pointerDateTime: Readable<PointerDateTime>;
   abortEditTrigger: Readable<unknown>;
@@ -219,11 +224,19 @@ export function useEditContext(props: {
   });
 
   const combinedTimeBlocks = derived(
-    [remoteTimeBlocks, timeBlocksWithPendingUpdate],
-    ([$remoteTimeBlocks, $timeBlocksWithPendingUpdate]): TimelineTimeBlock[] =>
+    [
+      remoteTimeBlocks,
+      timeBlocksWithPendingUpdate,
+      props.pendingDrops ?? readable<PendingDrop[]>([]),
+    ],
+    ([
+      $remoteTimeBlocks,
+      $timeBlocksWithPendingUpdate,
+      drops,
+    ]): TimelineTimeBlock[] =>
       t.hideNestedLocalPlanTimeBlocks([
         ...$remoteTimeBlocks,
-        ...$timeBlocksWithPendingUpdate,
+        ...withPendingDrops($timeBlocksWithPendingUpdate, drops),
       ]),
   );
 

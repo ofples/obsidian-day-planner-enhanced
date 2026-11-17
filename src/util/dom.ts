@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Obsidian community scorecard can run type-aware rules without resolving plugin source dependencies; tsc and svelte-check cover this source. */
+import { Notice } from "obsidian";
 import { on } from "svelte/events";
 import { isNotVoid } from "typed-assert";
 
@@ -280,7 +281,11 @@ export function addLineDataToCheckboxes(
     (checkbox, i) => {
       const taskLine = taskLines[i];
 
-      if (!isHTMLElement(checkbox) || taskLine === undefined) {
+      if (!isHTMLElement(checkbox)) {
+        return;
+      }
+      if (taskLine === undefined) {
+        (checkbox as HTMLInputElement).disabled = true;
         return;
       }
 
@@ -305,7 +310,16 @@ export async function readCheckboxLineData(
 
   event.stopPropagation();
 
-  await checkFn(Number(line));
+  const input = event.target as HTMLInputElement;
+  const checked = input.checked;
+  try {
+    await checkFn(Number(line));
+  } catch (error) {
+    if (input.checked === checked) input.checked = !checked;
+    new Notice(
+      error instanceof Error ? error.message : "Could not save this checkbox.",
+    );
+  }
 }
 function stopPropagationForElWithLineData(event: Event) {
   if (isHTMLElement(event.target) && event.target.dataset.line) {

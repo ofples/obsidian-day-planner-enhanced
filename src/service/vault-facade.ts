@@ -8,18 +8,41 @@ import { insertRecurringOccurrence } from "../util/materialize-recurring-preview
 import type { RecurringPreview } from "../util/recurring-preview";
 
 export class VaultFacade {
+  previewEdit?: (path: string, text: string) => (saved: boolean) => void;
+  private readonly pendingEdits = new Map<string, Promise<void>>();
   constructor(
     private readonly vault: Vault,
     private readonly getTasksApi: () => TasksApiV1 | undefined,
   ) {}
 
   async editFile(path: string, editFn: (contents: string) => string) {
+    const previous = this.pendingEdits.get(path) ?? Promise.resolve();
+    const operation = previous
+      .catch(() => {})
+      .then(() => this.writeFile(path, editFn));
+    this.pendingEdits.set(path, operation);
+    try {
+      await operation;
+    } finally {
+      if (this.pendingEdits.get(path) === operation)
+        this.pendingEdits.delete(path);
+    }
+  }
+
+  private async writeFile(path: string, editFn: (contents: string) => string) {
     const file = this.getFileByPath(path);
 
     const contents = await this.vault.read(file);
     const newContents = editFn(contents);
 
-    await this.vault.modify(file, newContents);
+    const settle = this.previewEdit?.(path, newContents);
+    try {
+      await this.vault.modify(file, newContents);
+      settle?.(true);
+    } catch (error) {
+      settle?.(false);
+      throw error;
+    }
   }
 
   async createFile(path: string, contents: string) {
