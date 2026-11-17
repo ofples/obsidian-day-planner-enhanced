@@ -35,6 +35,7 @@
     onpointerup?: (event: PointerEvent) => void;
   } = $props();
   const context = getObsidianContext();
+  let subtasksExpanded = $state(false);
   const frame = $derived(frameState(timeBlock));
   const locked = $derived(
     timeBlock.source !== "frontmatterLog" && isLocked(timeBlock),
@@ -114,6 +115,7 @@
   {allDayList}
   {blockEndDecoration}
   {onpointerup}
+  {subtasksExpanded}
   {timeBlock}
   use={[...use, hoverPreview(timeBlock), [noteDrag, timeBlock]]}
 >
@@ -138,7 +140,7 @@
   {#if timeBlock.source === "frontmatterLog"}
     <FrontmatterLogContent {bottomDecoration} {timeBlock} />
   {:else}
-    <RenderedMarkdown {bottomDecoration} {timeBlock} />
+    <RenderedMarkdown {bottomDecoration} {timeBlock} bind:subtasksExpanded />
   {/if}
 </TimeBlockBase>
 

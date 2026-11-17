@@ -746,4 +746,9 @@
     top: 0;
     max-height: 100%;
   }
+
+  .tasks :global(.planner-sticky-block-content.subtasks-expanded) {
+    position: relative;
+    max-height: none;
+  }
 </style>

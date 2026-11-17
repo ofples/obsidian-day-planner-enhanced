@@ -16,6 +16,7 @@
     use?: ActionArray;
     onpointerup?: (event: PointerEvent) => void;
     showAllDayStrip?: boolean;
+    subtasksExpanded?: boolean;
   }
 
   const {
@@ -27,6 +28,7 @@
     timeBlock,
     use = [],
     showAllDayStrip = true,
+    subtasksExpanded = false,
   }: Props = $props();
 
   const {
@@ -63,7 +65,11 @@
 <div
   style:--all-day-color={allDayColor}
   style:--all-day-strip-width={showAllDayStrip ? "4px" : "0"}
-  class={["padding", allDayList && "all-day-list"]}
+  class={[
+    "padding",
+    allDayList && "all-day-list",
+    subtasksExpanded && "subtasks-expanded",
+  ]}
 >
   <div
     style:--text-faint={faint}
@@ -72,6 +78,7 @@
     style:--time-block-bg-color={backgroundColor}
     class={[
       "content",
+      subtasksExpanded && "subtasks-expanded",
       allDayList && "all-day-list",
       timeBlock.timelineSegment?.startsBeforeSegment &&
         "continues-from-previous-day",
@@ -180,6 +187,20 @@
     width: var(--time-block-strip-width, 0);
 
     background-color: var(--time-block-strip-color, transparent);
+  }
+
+  .padding.subtasks-expanded {
+    z-index: 40;
+  }
+
+  .content.subtasks-expanded {
+    overflow: visible;
+    align-self: flex-start;
+
+    height: max-content;
+    min-height: 100%;
+
+    box-shadow: var(--shadow-s);
   }
 
   .content::after {

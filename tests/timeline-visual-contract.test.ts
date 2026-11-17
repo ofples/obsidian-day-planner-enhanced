@@ -76,8 +76,8 @@ describe("timeline visual contract", () => {
 
   test("keeps short time-block headers readable with long task titles", () => {
     expect(renderedMarkdown).toContain("const compactMaxHeightPx = 20;");
-    expect(renderedMarkdown).toContain(
-      "!timeBlock.isAllDayEvent && blockHeightPx <= compactMaxHeightPx",
+    expect(renderedMarkdown.replace(/\s+/g, " ")).toContain(
+      "!subtasksExpanded && !timeBlock.isAllDayEvent && blockHeightPx <= compactMaxHeightPx",
     );
     expect(renderedMarkdown).toContain("const stackedHeaderBaseHeightPx = 40;");
     expect(renderedMarkdown).toContain(

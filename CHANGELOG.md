@@ -4,6 +4,11 @@ All notable changes to **Day Planner Enhanced** are documented here.
 
 This plugin is an independent fork of [Obsidian Day Planner](https://github.com/ivan-lednev/obsidian-day-planner), based on upstream **0.35.1**, and follows its own versioning.
 
+## 0.9.6
+
+- The subtask-count button expands and collapses the current block directly in the timeline. Expanded blocks show their complete nested list above later blocks.
+- Retained working subtask checkboxes in expanded blocks, including single-child frames and blocks with their default subtask display hidden.
+
 ## 0.9.5
 
 - Drops appear immediately in the timeline, inside frames and at the Markdown release point while their existing save queue runs.

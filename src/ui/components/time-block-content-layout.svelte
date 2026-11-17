@@ -7,17 +7,26 @@
     contents,
     bottomDecoration,
     completed = false,
+    expanded = false,
     ...rest
   }: {
     title: Snippet;
     contents?: Snippet;
     bottomDecoration?: Snippet;
     completed?: boolean;
+    expanded?: boolean;
     class?: string | false;
   } = $props();
 </script>
 
-<div class={["layout", rest.class, completed && "is-completed"]}>
+<div
+  class={[
+    "layout",
+    rest.class,
+    completed && "is-completed",
+    expanded && "is-expanded",
+  ]}
+>
   {@render title()}
   {@render bottomDecoration?.()}
   {@render contents?.()}
@@ -44,5 +53,10 @@
 
   .layout.is-completed {
     color: var(--text-faint);
+  }
+
+  .layout.is-expanded {
+    overflow: visible;
+    flex-shrink: 0;
   }
 </style>

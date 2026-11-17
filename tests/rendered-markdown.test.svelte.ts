@@ -109,7 +109,7 @@ describe("RenderedMarkdown", () => {
       await unmount(component);
     },
   );
-  test("compact children expose a count button without selecting the block", async () => {
+  test("subtask button expands and collapses the block without selecting it or opening a modal", async () => {
     const target = document.createElement("div");
     document.body.append(target);
     const openNestedItemsEditModal = vi.fn();
@@ -149,9 +149,73 @@ describe("RenderedMarkdown", () => {
     expect(pointer).not.toHaveBeenCalled();
     document.removeEventListener("pointerup", pointer);
     button.click();
-    expect(openNestedItemsEditModal).toHaveBeenCalledExactlyOnceWith(timeBlock);
+    flushSync();
+    expect(button.getAttribute("aria-expanded")).toBe("true");
+    expect(target.querySelector(".is-expanded")).not.toBeNull();
+    expect(openNestedItemsEditModal).not.toHaveBeenCalled();
+    button.click();
+    flushSync();
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(target.querySelector(".is-expanded")).toBeNull();
     await unmount(component);
   });
+  test("expanding reveals hidden lists and a promoted frame child's own checkbox", async () => {
+    const target = document.createElement("div");
+    document.body.append(target);
+    const toggleCheckboxInFile = vi.fn(async () => {});
+    const renderMarkdown = (element: HTMLElement, markdown: string) => {
+      element.textContent = markdown;
+      for (const _ of markdown.matchAll(/\[[^\]]\]/gu)) {
+        const item = document.createElement("li");
+        item.dataset.task = " ";
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        item.append(input);
+        element.append(item);
+      }
+      return () => element.replaceChildren();
+    };
+    const component = mount(RenderedMarkdown, {
+      target,
+      context: new Map([
+        [
+          obsidianContextKey,
+          {
+            renderMarkdown,
+            toggleCheckboxInFile,
+            settingsStore: writable({
+              ...defaultSettingsForTests,
+              showSubtasksInTaskBlocks: false,
+            }),
+          },
+        ],
+      ]),
+      props: {
+        timeBlock: {
+          ...baseTimeBlock,
+          text: "09:00 - 09:15 Frame #frame #work",
+          durationMinutes: 15,
+          children: [createNestedListItem("child", "Promoted task #work", 7)],
+        },
+      },
+    });
+    flushSync();
+    expect(target.querySelector(".lines-after-first-wrapper")).toBeNull();
+    target.querySelector<HTMLButtonElement>(".subtask-count")!.click();
+    flushSync();
+    const checkbox = target.querySelector<HTMLInputElement>(
+      ".lines-after-first-wrapper input",
+    )!;
+    expect(checkbox.dataset.line).toBe("7");
+    checkbox.click();
+    await Promise.resolve();
+    expect(toggleCheckboxInFile).toHaveBeenCalledWith("path", 7);
+    target.querySelector<HTMLButtonElement>(".subtask-count")!.click();
+    flushSync();
+    expect(target.querySelector(".lines-after-first-wrapper")).toBeNull();
+    await unmount(component);
+  });
+
   test("short, roomy and all-day blocks keep vertical lists without changing checkbox targets", () => {
     const target = document.createElement("div");
     const settings = writable({ ...defaultSettingsForTests, zoomLevel: 2 });

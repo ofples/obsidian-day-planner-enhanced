@@ -20,17 +20,18 @@
 
   import TimeBlockContentLayout from "./time-block-content-layout.svelte";
 
-  const {
+  let {
     timeBlock,
     bottomDecoration,
-  }: { timeBlock: LocalTimeBlock; bottomDecoration?: Snippet } = $props();
+    subtasksExpanded = $bindable(false),
+  }: {
+    timeBlock: LocalTimeBlock;
+    bottomDecoration?: Snippet;
+    subtasksExpanded?: boolean;
+  } = $props();
 
-  const {
-    renderMarkdown,
-    toggleCheckboxInFile,
-    settingsStore,
-    openNestedItemsEditModal,
-  } = getObsidianContext();
+  const { renderMarkdown, toggleCheckboxInFile, settingsStore } =
+    getObsidianContext();
 
   type NestedListItem = NonNullable<LocalTimeBlock["children"]>[number];
 
@@ -75,7 +76,10 @@
         text: promotedChild
           ? frameHeading({ ...timeBlock, children: [promotedChild] })
           : timeBlock.text,
-        children: promotedChild ? promotedChild.children : visibleChildren,
+        children:
+          promotedChild && !subtasksExpanded
+            ? promotedChild.children
+            : visibleChildren,
       },
       {
         hideTasksMetadata: $settingsStore.hideTasksMetadata,
@@ -125,7 +129,9 @@
   );
   const compactMaxHeightPx = 20;
   const isCompact = $derived(
-    !timeBlock.isAllDayEvent && blockHeightPx <= compactMaxHeightPx,
+    !subtasksExpanded &&
+      !timeBlock.isAllDayEvent &&
+      blockHeightPx <= compactMaxHeightPx,
   );
 
   function flatten(entries: NestedListItem[] = []): NestedListItem[] {
@@ -135,11 +141,7 @@
     ]);
   }
 
-  const nestedItems = $derived(
-    $settingsStore.showSubtasksInTaskBlocks
-      ? flatten(visibleChildren ?? [])
-      : [],
-  );
+  const nestedItems = $derived(flatten(visibleChildren ?? []));
   const nestedItemCount = $derived(nestedItems.length);
   // Stack the header once two lines fit, but keep it inline when nested content
   // needs the same vertical space. These values mirror the rendered list
@@ -158,14 +160,10 @@
   const stackedHeaderRequiredHeightPx = $derived(
     stackedHeaderBaseHeightPx + nestedItemsRequiredHeightPx,
   );
-  const canRevealSubtasks = $derived(
-    nestedItemCount > 0 &&
-      (timeBlock.source === "dailyNoteDate" ||
-        timeBlock.source === "tasksPluginProp") &&
-      Boolean(openNestedItemsEditModal),
-  );
+  const canRevealSubtasks = $derived(nestedItemCount > 0);
   const useStackedHeader = $derived(
-    !isCompact && blockHeightPx >= stackedHeaderRequiredHeightPx,
+    subtasksExpanded ||
+      (!isCompact && blockHeightPx >= stackedHeaderRequiredHeightPx),
   );
   const hideTimeRange = $derived(
     $settingsStore.hideTimeRangeInSingleLine && !useStackedHeader,
@@ -178,7 +176,10 @@
   // Derived through a string key so the array is only rebuilt when the lines
   // themselves change; an equal key leaves the previous array in place.
   const nestedListItemLinesKey = $derived(
-    (promotedChild ? flatten(promotedChild.children) : nestedItems)
+    (promotedChild && !subtasksExpanded
+      ? flatten(promotedChild.children)
+      : nestedItems
+    )
       .filter((nestedItem) => nestedItem.task !== undefined)
       .map((nestedItem) =>
         nestedItem.id.startsWith("pending-drop-")
@@ -194,6 +195,9 @@
           .split(",")
           .map((line) => (Number(line) < 0 ? undefined : Number(line))),
   );
+  $effect(() => {
+    if (!canRevealSubtasks) subtasksExpanded = false;
+  });
 </script>
 
 <TimeBlockContentLayout
@@ -203,7 +207,8 @@
     : isCompact
       ? "var(--rendered-markdown-compact-padding, 3px 11px)"
       : "var(--rendered-markdown-timed-padding, 6px 11px 5px)"}
-  class={`rendered-markdown planner-sticky-block-content${canRevealSubtasks ? " has-subtasks" : ""}`}
+  class={`rendered-markdown planner-sticky-block-content${canRevealSubtasks ? " has-subtasks" : ""}${subtasksExpanded ? " subtasks-expanded" : ""}`}
+  expanded={subtasksExpanded}
   {bottomDecoration}
   {completed}
 >
@@ -270,7 +275,7 @@
         })}
       ></div>
     {/if}
-    {#if $settingsStore.showSubtasksInTaskBlocks && nestedListItems}
+    {#if ($settingsStore.showSubtasksInTaskBlocks || subtasksExpanded) && nestedListItems}
       <div
         class={[
           "markdown-wrapper",
@@ -294,18 +299,20 @@
     {#if canRevealSubtasks}
       <button
         class="subtask-count"
+        class:is-expanded={subtasksExpanded}
         type="button"
-        aria-label={`View all ${nestedItemCount} subtasks`}
-        title={`View all ${nestedItemCount} subtasks`}
+        aria-expanded={subtasksExpanded}
+        aria-label={subtasksExpanded
+          ? "Collapse subtasks"
+          : `View all ${nestedItemCount} subtasks`}
+        title={subtasksExpanded
+          ? "Collapse subtasks"
+          : `View all ${nestedItemCount} subtasks`}
         onpointerdown={(event) => event.stopPropagation()}
         onpointerup={(event) => event.stopPropagation()}
         onclick={(event) => {
           event.stopPropagation();
-          if (
-            timeBlock.source === "dailyNoteDate" ||
-            timeBlock.source === "tasksPluginProp"
-          )
-            openNestedItemsEditModal?.(timeBlock);
+          subtasksExpanded = !subtasksExpanded;
         }}><ListTree size={12} aria-hidden="true" />{nestedItemCount}</button
       >
     {/if}
@@ -337,6 +344,11 @@
     border: 0;
     border-radius: 3px;
     box-shadow: none;
+  }
+
+  .subtask-count.is-expanded {
+    color: var(--text-normal);
+    background: var(--background-modifier-hover);
   }
 
   .markdown-wrapper {
