@@ -17,6 +17,7 @@ TODO.md
 data.json
 gcal-state.json
 task-cache.json
+ai-planning.json
 task-state.json
 task-state-*.backup.json
 .env
