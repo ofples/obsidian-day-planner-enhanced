@@ -51,7 +51,7 @@ import {
 import type { TaskService } from "./service";
 import type { TaskSource } from "./source";
 import { TaskReadError, type ProviderTask } from "./types";
-import { formatTaskLink } from "./weak-links";
+import { formatTaskLink, stripTaskLink } from "./weak-links";
 
 export class TaskProjectionConflict extends TaskReadError {}
 
@@ -185,7 +185,13 @@ export class TaskScheduler {
     });
     let raw = withoutTaskCaptureTag(
       newTaskMarkdown(
-        task,
+        {
+          ...task,
+          title: stripTaskLink(
+            task.title.replace(/[\r\n]+/g, " "),
+            `https://app.todoist.com/app/task/${task.id}`,
+          ),
+        },
         taskSubtree(snapshot, task),
         snapshot,
         this.host.settings(),

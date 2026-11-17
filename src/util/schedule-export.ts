@@ -91,7 +91,7 @@ export function exportPlainText(markdown: string) {
   const source = markdown
     .replace(/\s\^[\w-]+\s*$/u, "")
     .split(/\r?\n/)
-    .map(stripTaskLink)
+    .map((line) => stripTaskLink(line))
     .join("\n");
   return restoreWikilinks(nodeText(fromMarkdown(source)))
     .replace(

@@ -267,7 +267,7 @@ export function renderBlock(
   }
   // Google event titles are plain text: prevent Markdown/HTML injection into a note.
   const title =
-    snapshot.title
+    stripTaskLink(snapshot.title)
       .replace(/[\r\n]+/g, " ")
       .replace(/<!--.*?-->/g, "")
       .trim() +
@@ -275,7 +275,8 @@ export function renderBlock(
       ? ` ${snapshot.tags.map((tag) => `#${tag}`).join(" ")}`
       : "");
   const range = `${start.format(settings.timestampFormat)} - ${end.format(settings.timestampFormat)}`;
-  const previousLink = taskLinkIdentity(first);
+  const previousLink =
+    taskLinkIdentity(first) ?? taskLinkIdentity(snapshot.title);
   const selectedUrl =
     snapshot.taskUrl === undefined ? previousLink?.url : snapshot.taskUrl;
   const link = selectedUrl

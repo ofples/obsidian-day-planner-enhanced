@@ -2,7 +2,11 @@ import { getTimeRangeMatch } from "../parser/parser";
 
 import { captureTitle, type CaptureCandidate } from "./capture-parser";
 import type { ProviderTask } from "./types";
-import { taskLinkIdentity } from "./weak-links";
+import {
+  deduplicateTaskLinks,
+  stripTaskLink,
+  taskLinkIdentity,
+} from "./weak-links";
 
 export interface WeakSyncHost {
   candidates(): CaptureCandidate[];
@@ -149,10 +153,15 @@ export class WeakTaskSync {
       }
       if (!task) continue;
       const title = titleOf(candidate, line);
+      const providerTitle = stripTaskLink(
+        task.title.replace(/[\r\n]+/g, " "),
+        identity.url,
+      );
+      const duplicateLinks = deduplicateTaskLinks(line) !== line;
       const current = {
         title,
         completed: candidate.completed,
-        remoteTitle: task.title,
+        remoteTitle: providerTitle,
         remoteCompleted: task.completed,
         remoteOccurrence: occurrenceOf(task),
       };
@@ -160,7 +169,7 @@ export class WeakTaskSync {
       this.baseline.set(key, current);
       if (!previous) continue;
       const localTitle = title !== previous.title;
-      const remoteTitle = task.title !== previous.remoteTitle;
+      const remoteTitle = providerTitle !== previous.remoteTitle;
       const localCompletion = candidate.completed !== previous.completed;
       const remoteCompletion = task.completed !== previous.remoteCompleted;
       const actionKey = `${identity.url}\0${identity.occurrence ?? ""}`;
@@ -205,7 +214,7 @@ export class WeakTaskSync {
           (advanced ||
             (remoteCompletion && (!task.due?.recurring || occurrenceMatches)));
         const completed = advanced || task.completed;
-        if (pullTitle || pullCompletion) {
+        if (pullTitle || pullCompletion || duplicateLinks) {
           const before = await this.host.read(candidate.path);
           if (
             before === null ||
@@ -214,13 +223,14 @@ export class WeakTaskSync {
             continue;
           let afterLine = line;
           if (pullTitle) {
-            afterLine = replaceTitle(candidate, line, task.title);
+            afterLine = replaceTitle(candidate, line, providerTitle);
           }
           if (pullCompletion)
             afterLine = afterLine.replace(
               /^(\s*(?:[-*+]|\d+[.)])\s+\[)[^\]](\])/,
               `$1${completed ? "x" : " "}$2`,
             );
+          afterLine = deduplicateTaskLinks(afterLine);
           const after =
             before.slice(0, candidate.from) +
             afterLine +
@@ -228,7 +238,7 @@ export class WeakTaskSync {
           if (await this.host.write(candidate.path, before, after))
             this.baseline.set(key, {
               ...current,
-              title: pullTitle ? task.title : title,
+              title: pullTitle ? providerTitle : title,
               completed: pullCompletion ? completed : candidate.completed,
             });
         }

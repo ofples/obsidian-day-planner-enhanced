@@ -2342,6 +2342,23 @@ describe("linked task scheduling", () => {
     h.service.stop();
   });
 
+  test("plain placement removes an embedded self-link before appending the task identity", async () => {
+    const h = await harness();
+    h.tasks.set(root.id, {
+      ...root,
+      title: "Work [🔗](https://app.todoist.com/app/task/root)",
+    });
+    await h.service.refresh();
+    h.setLinkedSync(false);
+    await h.scheduler.place(root.id, interval);
+    const text = h.texts.get("Daily/2026-11-11.md")!;
+    expect(
+      text.match(/https:\/\/app.todoist.com\/app\/task\/root/g),
+    ).toHaveLength(1);
+    expect(text).toContain("[🔗](https://app.todoist.com/app/task/root)");
+    expect(h.apply).not.toHaveBeenCalled();
+  });
+
   test("weak imports retain a single root link and description while adjacent insertion assigns the supplied time", async () => {
     const h = await harness();
     h.setLinkedSync(false);

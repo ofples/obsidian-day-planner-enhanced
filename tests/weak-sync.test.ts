@@ -46,6 +46,25 @@ function fixture(initial: string, remote = task) {
   };
 }
 describe("weak task sync", () => {
+  it("pulls a provider rename containing its own link as a single linked title", async () => {
+    const f = fixture(`- [ ] Remote ${link}`);
+    await f.sync.scan();
+    f.setTask({ ...task, title: `Renamed ${link}` });
+    await f.sync.scan();
+    expect(f.text()).toBe(`- [ ] Renamed ${link}`);
+    await f.sync.scan();
+    expect(f.text()).toBe(`- [ ] Renamed ${link}`);
+    expect(f.change).not.toHaveBeenCalled();
+  });
+  it("repairs existing repeated links locally during a normal scan", async () => {
+    const f = fixture(`- [ ] Remote ${link} ${link}\n  - [ ] Child`);
+    await f.sync.scan();
+    await f.sync.scan();
+    expect(f.text()).toBe(`- [ ] Remote ${link}\n  - [ ] Child`);
+    await f.sync.scan();
+    expect(f.text()).toBe(`- [ ] Remote ${link}\n  - [ ] Child`);
+    expect(f.change).not.toHaveBeenCalled();
+  });
   it("seeds a checked historical task without closing it", async () => {
     const f = fixture(`- [x] Remote ${link}`);
     await f.sync.scan();

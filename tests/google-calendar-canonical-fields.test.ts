@@ -19,6 +19,24 @@ const times = {
   start: "2026-11-14T09:00:00Z",
   end: "2026-11-14T10:00:00Z",
 };
+
+test("rendering a linked Google title repeatedly retains one Markdown link", () => {
+  const link =
+    '[🔗](https://app.todoist.com/app/task/abc "Todoist occurrence=1")';
+  const snapshot = {
+    ...times,
+    title: `Plan ${link}`,
+    taskUrl: "https://app.todoist.com/app/task/abc",
+  };
+  const first = renderBlock("uid", snapshot, defaultSettings);
+  const again = renderBlock("uid", snapshot, defaultSettings, first);
+  expect(first.match(/https:\/\/app.todoist.com/g)).toHaveLength(1);
+  expect(again).toBe(first);
+  expect(again).toContain('"Todoist occurrence=1"');
+  expect(
+    renderBlock("uid", { ...snapshot, taskUrl: null }, defaultSettings, again),
+  ).not.toContain("todoist.com");
+});
 const event = (description: string, tags: string[]): GoogleEvent => ({
   id: "id",
   etag: "etag",

@@ -69,11 +69,29 @@ export function taskLinkIdentity(raw: string) {
   };
 }
 
-export function stripTaskLink(text: string) {
+export function stripTaskLink(text: string, taskUrl?: string) {
   let result = text;
   for (const link of taskLinks(text).reverse())
-    result = result.slice(0, link.from) + result.slice(link.to);
+    if (!taskUrl || link.url === taskUrl)
+      result = result.slice(0, link.from) + result.slice(link.to);
   return result.replace(/[ \t]+/g, " ").trim();
+}
+
+export function deduplicateTaskLinks(text: string) {
+  const seen = new Set<string>();
+  const duplicates = taskLinks(text).filter((link) => {
+    const key = JSON.stringify([link.url, link.title]);
+    if (seen.has(key)) return true;
+    seen.add(key);
+    return false;
+  });
+  let result = text;
+  for (const link of duplicates.reverse()) {
+    let from = link.from;
+    while (from > 0 && /[ \t]/.test(result[from - 1]!)) from--;
+    result = result.slice(0, from) + result.slice(link.to);
+  }
+  return result;
 }
 
 export function formatTaskLink(idOrUrl: string, occurrence?: string | number) {
