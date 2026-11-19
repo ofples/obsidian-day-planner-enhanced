@@ -25,7 +25,9 @@ export function serializeSourceTask(
     throw new TaskReadError(
       "This cached task is unavailable. Refresh its source.",
     );
-  const children = taskSubtree(snapshot, task);
+  const children = snapshot.tasks.some((item) => item.parentId === task.id)
+    ? taskSubtree(snapshot, task)
+    : [];
   const ref = taskSourceReference(snapshot, task);
   const todoist = snapshot.provider === "todoist";
   const accountKey = taskAccountKey(snapshot);

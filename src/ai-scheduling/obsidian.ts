@@ -10,6 +10,14 @@ import type { DayPlannerSettings } from "../settings";
 import { parseCaptureCandidates } from "../tasks/capture-parser";
 import type { TaskScheduler } from "../tasks/schedule";
 import type { TaskService } from "../tasks/service";
+import type { TaskSourceCollection } from "../tasks/source-collection";
+import { sourceTaskFromLink } from "../tasks/source-links";
+import {
+  taskSourceKey,
+  taskSourceReference,
+  resolveSourceTask,
+} from "../tasks/source-references";
+import type { TaskSnapshot } from "../tasks/types";
 import { taskLinkIdentity } from "../tasks/weak-links";
 import type { RemoteTimeBlock, WithDuration } from "../time-block-types";
 
@@ -35,6 +43,7 @@ interface PlanningHostOptions {
   daily: PeriodicNotes;
   calendar: GoogleCalendarSync;
   tasks: TaskService;
+  sources?(): TaskSourceCollection | undefined;
   scheduler(): TaskScheduler | undefined;
   settings(): DayPlannerSettings;
   range(): { startDate: string; dayCount: number };
@@ -147,42 +156,75 @@ export class ObsidianPlanningHost implements PlanningHost {
       }));
   }
 
+  private snapshots(): TaskSnapshot[] {
+    const sources = this.options.sources?.();
+    if (sources) return get(sources.snapshots);
+    const snapshot = get(this.options.tasks.state).snapshot;
+    return snapshot ? [snapshot] : [];
+  }
+
   private providerTasks(
     excluded: Set<string>,
   ): Array<Omit<PlanningTask, "ref">> {
-    const snapshot = get(this.options.tasks.state).snapshot;
+    const snapshots = this.snapshots();
     const scheduler = this.options.scheduler();
-    if (!snapshot || !scheduler) return [];
-    return snapshot.tasks
-      .filter((task) => !task.completed && !excluded.has(task.id))
-      .slice(0, 500)
-      .map((task) => {
-        const serialized = scheduler.plainCachedTask(task.id);
-        return {
-          kind: "todoist",
-          title: task.title,
-          raw: serialized.raw,
-          provider: snapshot.provider,
-          accountId: snapshot.account.id,
-          taskId: task.id,
-          taskIds: serialized.taskIds,
-          priority: task.priority,
-          due: task.due?.date ?? null,
-          ...(task.duration
-            ? {
-                durationMinutes:
-                  task.duration.unit === "minute"
-                    ? task.duration.amount
-                    : task.duration.amount * 1440,
-              }
-            : {}),
-          project:
-            snapshot.projects.find((project) => project.id === task.projectId)
-              ?.name ?? "",
-          labels: task.labels,
-          fingerprint: JSON.stringify(task),
-        };
-      });
+    if (!scheduler) return [];
+    const queues = snapshots.map((snapshot) =>
+      snapshot.tasks.filter(
+        (task) =>
+          !task.completed &&
+          !excluded.has(taskSourceKey(taskSourceReference(snapshot, task))),
+      ),
+    );
+    const selected: Array<{
+      snapshot: TaskSnapshot;
+      task: TaskSnapshot["tasks"][number];
+    }> = [];
+    // Take turns across connected sources so a large backlog cannot hide another source.
+    for (let index = 0; selected.length < 500; index++) {
+      let found = false;
+      for (const [sourceIndex, snapshot] of snapshots.entries()) {
+        const task = queues[sourceIndex]?.[index];
+        if (!task) continue;
+        selected.push({ snapshot, task });
+        found = true;
+        if (selected.length === 500) break;
+      }
+      if (!found) break;
+    }
+    return selected.map(({ snapshot, task }) => {
+      const serialized = scheduler.plainCachedTask(
+        snapshot.provider === "todoist"
+          ? task.id
+          : taskSourceReference(snapshot, task),
+      );
+      return {
+        kind: snapshot.provider === "todoist" ? "todoist" : "source",
+        title: task.title,
+        raw: serialized.raw,
+        provider: snapshot.provider,
+        accountId: snapshot.account.id,
+        taskId: task.id,
+        taskIds: serialized.taskIds,
+        priority: task.priority,
+        due: task.due?.date ?? null,
+        ...(task.duration
+          ? {
+              durationMinutes:
+                task.duration.unit === "minute"
+                  ? task.duration.amount
+                  : task.duration.amount * 1440,
+            }
+          : {}),
+        project:
+          snapshot.projects.find((project) => project.id === task.projectId)
+            ?.name ?? "",
+        labels: task.labels,
+        fingerprint: JSON.stringify(task),
+        dateMeaning: task.source?.dateMeaning,
+        sourceDetails: task.source ? JSON.stringify(task.source) : undefined,
+      };
+    });
   }
 
   async context(request: PlanningRequest): Promise<PlanningContext> {
@@ -217,15 +259,25 @@ export class ObsidianPlanningHost implements PlanningHost {
         { date: byPath[path] ?? null, text: current[path] ?? null },
       ]),
     );
+    const snapshots = this.snapshots();
     const linked = new Set(
       Object.entries(documents).flatMap(([path, document]) =>
         parseCaptureCandidates(path, document.text ?? "").flatMap((task) => {
-          const link = taskLinkIdentity(task.raw);
-          return link ? [link.taskId] : [];
+          return snapshots.flatMap((snapshot) => {
+            const link =
+              snapshot.provider === "todoist"
+                ? taskLinkIdentity(task.raw)
+                : null;
+            const source = link
+              ? snapshot.tasks.find((item) => item.id === link.taskId)
+              : sourceTaskFromLink(snapshot, task.raw);
+            return source
+              ? [taskSourceKey(taskSourceReference(snapshot, source))]
+              : [];
+          });
         }),
       ),
     );
-    const snapshot = get(this.options.tasks.state).snapshot;
     return buildPlanningContext({
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
@@ -236,38 +288,55 @@ export class ObsidianPlanningHost implements PlanningHost {
       preferences,
       documents,
       providerTasks: this.providerTasks(linked),
+      providerTaskCount: snapshots.reduce(
+        (count, snapshot) =>
+          count +
+          snapshot.tasks.filter(
+            (task) =>
+              !task.completed &&
+              !linked.has(taskSourceKey(taskSourceReference(snapshot, task))),
+          ).length,
+        0,
+      ),
       commitments: await this.calendarCommitments(startDate, dayCount),
       identities: this.options.calendar.identitySnapshot(),
       settings: this.options.settings(),
-      tasksUpdatedAt: snapshot?.fetchedAt,
+      tasksUpdatedAt: snapshots.map((snapshot) => snapshot.fetchedAt).sort()[0],
     });
   }
 
   private validateProviderSources(draft: PlanningDraft, selectedIds: string[]) {
     const selected = new Set(selectedIds);
-    const snapshot = get(this.options.tasks.state).snapshot;
+    const snapshots = this.snapshots();
     for (const action of draft.proposal.actions.filter((item) =>
       selected.has(item.id),
     )) {
       const source = draft.context.tasks.find(
         (task) => task.ref === action.sourceRef,
       );
-      if (source?.kind !== "todoist") continue;
-      const task = snapshot?.tasks.find((item) => item.id === source.taskId);
+      if (!source || source.kind === "note") continue;
+      const reference = {
+        provider: source.provider ?? "",
+        accountId: source.accountId ?? "",
+        itemId: source.taskId ?? "",
+      };
+      const current = resolveSourceTask(snapshots, reference);
+      const task = current?.task;
       if (
         !task ||
         task.completed ||
-        snapshot?.account.id !== source.accountId ||
-        snapshot?.provider !== source.provider ||
         JSON.stringify(task) !== source.fingerprint ||
-        this.options.scheduler()?.plainCachedTask(task.id).raw !== source.raw
+        this.options
+          .scheduler()
+          ?.plainCachedTask(source.kind === "todoist" ? task.id : reference)
+          .raw !== source.raw
       )
         throw new PlanningValidationError([
           {
             actionId: action.id,
             code: "stale",
             message:
-              "This Todoist task changed or completed. Refresh the planning context.",
+              "This source task changed, completed or disconnected. Refresh the planning context.",
           },
         ]);
     }

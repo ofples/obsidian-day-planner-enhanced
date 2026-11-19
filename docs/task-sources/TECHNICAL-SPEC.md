@@ -94,6 +94,10 @@ Extend planning task kinds for Google Tasks and GitHub while accepting existing 
 
 AI buckets resolve references against current sources and reuse ordinary task rows. Proposals authorize schedule review through the established facade. Explicit source mutations stay with their source-pane action.
 
+The planning schema adds the generic `source` task kind while preserving `note` and `todoist`. Its provider, account and item fields carry the full native identity; short context-local references remain the proposal interface. Source details retain native date meaning and Project memberships. Candidates take turns across connected sources before the shared 500-task context limit. When truncation is necessary, notes and provider candidates share that budget. Untruncated existing context order is retained.
+
+Overview uses qualified IDs only for rendering. A disposable map resolves each row back to its native cached task and account for drag, scheduling and explicit completion. The map is derived from connected snapshots and is not an ownership database. AI buckets and consumed hiding resolve against those same snapshots. Disconnecting removes the corresponding rows and invalidates Apply; no remote calls occur just to resolve a bucket or planning context.
+
 Task notes and issue bodies are source content, not instructions. They cannot authorize actions or override scheduling rules and locks.
 
 Accept old Todoist caches, secret keys, weak links, pending imports, planning drafts and saved pane values. New optional metadata defaults conservatively. Keep new cache files private and ignored by Git before they are created.

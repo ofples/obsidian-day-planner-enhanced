@@ -26,7 +26,11 @@ import type { PeriodicNotes } from "../src/service/periodic-notes";
 import { defaultSettingsForTests } from "../src/settings";
 import type { TaskScheduler } from "../src/tasks/schedule";
 import type { TaskBrowserState, TaskService } from "../src/tasks/service";
+import type { TaskSourceCollection } from "../src/tasks/source-collection";
+import { serializeSourceTask } from "../src/tasks/serialize-source-task";
+import type { TaskSourceSelection } from "../src/tasks/source-types";
 import type { RemoteTimeBlock, WithDuration } from "../src/time-block-types";
+import { taskSourcesFixture } from "./util/task-sources";
 
 const path = "Daily/2031-01-01.md";
 const uid = "a".repeat(32);
@@ -42,6 +46,7 @@ beforeEach(() => configureTimestampRegExps("HH:mm"));
 function fixture(
   existing = true,
   remoteBlocks: Array<WithDuration<RemoteTimeBlock>> = [],
+  sources?: TaskSourceCollection,
 ) {
   const original =
     "# Plan\n\n- [ ] 09:00 - 09:30 Existing work #work\n\nJournal\n";
@@ -158,10 +163,20 @@ function fixture(
     update: providerWrite,
   } as unknown as TaskService;
   const scheduler = {
-    plainCachedTask: vi.fn(() => ({
-      raw: "- [ ] Water plants [link](https://app.todoist.com/app/task/task)",
-      taskIds: ["task"],
-    })),
+    plainCachedTask: vi.fn((reference: TaskSourceSelection) => {
+      if (typeof reference !== "string" && sources) {
+        const current = sources.resolve(reference)!;
+        return serializeSourceTask(
+          current.snapshot,
+          current.task.id,
+          settings.taskCapture,
+        );
+      }
+      return {
+        raw: "- [ ] Water plants [link](https://app.todoist.com/app/task/task)",
+        taskIds: ["task"],
+      };
+    }),
   } as unknown as TaskScheduler;
   const settle = vi.fn();
   const preview = { begin: vi.fn((_name: string, _text: string) => settle) };
@@ -174,6 +189,7 @@ function fixture(
     calendar: calendar as unknown as GoogleCalendarSync,
     tasks,
     scheduler: () => scheduler,
+    sources: () => sources,
     settings: () => settings,
     range: () => ({ startDate: "2031-01-01", dayCount: 1 }),
     sourcePaths: () => [],
@@ -193,6 +209,7 @@ function fixture(
     settle,
     readCommitments,
     original,
+    scheduler,
   };
 }
 
@@ -203,7 +220,7 @@ function draft(
   const sourceRef =
     kind === "move"
       ? context.blocks[0]!.ref
-      : context.tasks.find((task) => task.kind === "todoist")!.ref;
+      : context.tasks.find((task) => task.kind !== "note")!.ref;
   const proposal = planningProposalSchema.parse({
     version: 1,
     contextId: context.id,
@@ -345,6 +362,49 @@ test("future daily notes use the normal template and Undo deletes the unchanged 
     path,
   );
   expect(h.providerWrite).not.toHaveBeenCalled();
+});
+
+test("Google Tasks and GitHub use cached AI preview, normal Apply/Undo and stale-account checks", async () => {
+  const source = await taskSourcesFixture();
+  const h = fixture(true, [], source.sources);
+  const context = await h.host.context({});
+  expect(
+    context.tasks
+      .filter((task) => task.kind === "source")
+      .map((task) => task.provider),
+  ).toEqual(["google-tasks", "github", "google-tasks"]);
+  expect(h.applyEdits).not.toHaveBeenCalled();
+  expect(source.google.backend.read).not.toHaveBeenCalled();
+  expect(source.github.backend.read).not.toHaveBeenCalled();
+  for (const provider of ["google-tasks", "github"]) {
+    const task = context.tasks.find((task) => task.provider === provider)!;
+    const proposal = draft(context, "schedule");
+    proposal.proposal.actions[0]!.sourceRef = task.ref;
+    const receipt = await h.host.apply(
+      proposal,
+      ["action"],
+      null,
+      async () => {},
+    );
+    expect(h.files.get(path)).toContain(task.title);
+    expect(h.files.get(path)).toContain(
+      provider === "github"
+        ? source.githubTask.source.url
+        : source.googleTask.source.url,
+    );
+    await h.host.undo({ ...receipt, phase: "applied" }, async () => {});
+    expect(h.files.get(path)).toBe(h.original);
+  }
+  expect(source.mutate).not.toHaveBeenCalled();
+  expect(source.google.backend.complete).not.toHaveBeenCalled();
+  expect(source.github.backend.complete).not.toHaveBeenCalled();
+  const proposal = draft(context, "schedule");
+  await source.sources.googleTasks.disconnect();
+  const writes = h.applyEdits.mock.calls.length;
+  await expect(
+    h.host.apply(proposal, ["action"], null, async () => {}),
+  ).rejects.toThrow(/disconnected/);
+  expect(h.applyEdits).toHaveBeenCalledTimes(writes);
 });
 
 test("cleanup retry preserves note edits made after notes were restored", async () => {

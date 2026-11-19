@@ -33,19 +33,19 @@ The baseline has an inherited inclusive-last-day ICS timeout. Re-run required ch
 
 ## Delivery gates
 
-| Gate                          | Status                 | Evidence to record                                                                             |
-| ----------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------- |
-| Baseline preserved            | Complete               | Feature checkout starts at f4050c7272fc36145140cc5a6b4ffbf92ed8bcc0; stable checkout retained. |
-| API/source audit              | Complete               | Official links and design decisions in PLAN and TECHNICAL-SPEC.                                |
-| Shared source contracts       | Complete               | Qualified identity, read bridge, serialization and shared import routing pass focused checks.  |
-| Google Tasks adapter          | Code/fixtures complete | Lists, read/auth/completion and pane routes pass; live authorization is a separate gate.       |
-| GitHub adapter                | Code/fixtures complete | Issues/Projects/device auth and pane routes pass; owned-app/live checks remain pending.        |
-| Pane/import/AI integration    | In progress            | Pane/import routes pass fixtures; Overview aggregation and new-source AI wiring remain.        |
-| Owned app configuration       | Pending                | Tasks API/scopes and GitHub OAuth device-flow registration; no secrets.                        |
-| Live authorization/read       | Pending                | Provider/account, granted capabilities and successful bounded read; no personal content.       |
-| Installed UI                  | Pending                | Candidate commit, scenarios and observed results, distinct from fixtures.                      |
-| Required source checks/build  | In progress            | TypeScript, Svelte, style, strict lint and build pass; final full test/lint remains pending.   |
-| Preview installation/readback | Pending                | Backup, artifact match and preserved state.                                                    |
+| Gate                          | Status                 | Evidence to record                                                                                      |
+| ----------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| Baseline preserved            | Complete               | Feature checkout starts at f4050c7272fc36145140cc5a6b4ffbf92ed8bcc0; stable checkout retained.          |
+| API/source audit              | Complete               | Official links and design decisions in PLAN and TECHNICAL-SPEC.                                         |
+| Shared source contracts       | Complete               | Qualified identity, read bridge, serialization and shared import routing pass focused checks.           |
+| Google Tasks adapter          | Code/fixtures complete | Lists, read/auth/completion and pane routes pass; live authorization is a separate gate.                |
+| GitHub adapter                | Code/fixtures complete | Issues/Projects/device auth and pane routes pass; owned-app/live checks remain pending.                 |
+| Pane/import/AI integration    | Code/fixtures complete | Qualified Overview and AI context/buckets, Apply/Undo and stale-source rejection pass.                  |
+| Owned app configuration       | Prepared               | Tasks API/scopes enabled; Google Production but unverified. GitHub public device client bundled.        |
+| Live authorization/read       | Pending                | Provider/account, granted capabilities and successful bounded read; no personal content.                |
+| Installed UI                  | Pending                | Candidate commit, scenarios and observed results, distinct from fixtures.                               |
+| Required source checks/build  | Known baseline failure | 1,693 tests pass; one inclusive-day ICS timeout also fails on stable baseline. Other checks/build pass. |
+| Preview installation/readback | Pending                | Backup, artifact match and preserved state.                                                             |
 
 Update this table as work progresses. If authentication requires user participation, finish independent code and fixture work first, state the exact remaining step and retain the corresponding gate as pending. A registered client ID alone is not successful authentication.
 
@@ -100,3 +100,17 @@ Evidence: 439 tests passed across 27 Calendar/scheduling/import/browser/optimist
 TypeScript, Svelte checks, formatting, changed-component style checks, full source strict lint and production build passed. Existing build warnings about the output directory and browser-external fs remain. GitHub registration is not bundled yet; the preview's sign-in gate accurately reports missing setup. The current candidate has not been installed.
 
 Next: aggregate all selected sources in Overview and AI context/buckets, then perform final checks, owned-app setup, live authorization and installed acceptance. The goal remains active.
+
+### Overview, AI and owned app setup
+
+Overview now derives a combined snapshot with provider/account-qualified render IDs. A disposable origin map routes each action to the native source row; it adds no persistent ownership state. Completion capability remains per source, so GitHub rows stay read-only. Consumed hiding and curated AI buckets resolve against current connected snapshots, and source disconnection removes the affected rows.
+
+Planning contexts accept the new generic source kind alongside existing note/Todoist records. Provider candidates take turns across sources before the context limit; large note backlogs share the bounded budget. Context freshness reports the full eligible count and truncation. Native date meaning, selected Project memberships/status/date and source identity stay available as metadata. Preview performs no task refresh or mutation. Apply checks the current account, task fingerprint and serialized subtree. Existing proposal validation, locks, frames, note editing and Undo remain the implementation path.
+
+A realistic host check prepares a context from both new sources without reads/writes, applies each through the normal note queue, restores the note through Undo and rejects Apply after disconnection. The pane check exercises qualified Overview/AI bucket rows, hierarchy, native action routing, a colliding provider item ID and read-only GitHub state. The focused AI/pane/context run passed 13 tests. The earlier broader AI/pane run passed 31 tests; runs overlap.
+
+The owned GitHub OAuth app was registered through its normal settings UI with device flow enabled and token expiration selected. Its public client ID is bundled. No client secret was generated. Registration readback showed zero authorized users, so this is not live sign-in acceptance.
+
+The existing owned Google project now has Google Tasks API enabled. OpenID/email and Tasks read-only/edit scopes are declared in Data Access; existing Calendar scopes remain. The UI confirmed the saved declarations. Audience remains External/In production, with unverified sensitive scopes and a 100-user lifetime cap (two users at inspection). No verification submission or new account grant was completed. Google verification, real source authorization and API readback are separate remaining gates. Private screenshots are excluded from Git.
+
+Required full lint reached TypeScript, formatting, ESLint, stylelint and Svelte successfully (zero Svelte errors/warnings). Its full test stage reported 168 passing files and 1,693 passing tests, with one failed inclusive-last-day ICS test, nine skipped and 17 todo. The identical test fails with the same waitUntil timeout in the unchanged stable checkout; it is a baseline failure. Strict source lint was run separately and passed. The production build with the existing Google registration and new GitHub public client passed. Native preview/readback and live source grants remain pending.

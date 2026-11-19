@@ -1,6 +1,7 @@
 import type { PlanningTask } from "../ai-scheduling/types";
 
 import type { CaptureCandidate } from "./capture-parser";
+import { taskSourceKey } from "./source-references";
 import type { TaskSnapshot } from "./types";
 
 /** Resolve a saved assistant view against current sources using their identities. */
@@ -8,43 +9,61 @@ export function planningTaskSelection(
   tasks: PlanningTask[],
   refs: ReadonlySet<string>,
   candidates: CaptureCandidate[],
-  snapshot: TaskSnapshot | null,
+  snapshot: TaskSnapshot | readonly TaskSnapshot[] | null,
 ) {
+  const snapshots: readonly TaskSnapshot[] = snapshot
+    ? Array.isArray(snapshot)
+      ? snapshot
+      : [snapshot as TaskSnapshot]
+    : [];
   const selected = tasks.filter((task) => refs.has(task.ref));
   const activeRefs = new Set<string>();
   const providerIds = new Set<string>();
-  for (const task of selected) {
-    if (
-      task.kind === "todoist" &&
-      snapshot &&
-      task.provider === snapshot.provider &&
-      task.accountId === snapshot.account.id &&
-      task.taskId
-    ) {
-      providerIds.add(task.taskId);
+  const providerKeys = new Set<string>();
+  for (const currentSnapshot of snapshots) {
+    const selectedIds = new Set<string>();
+    for (const task of selected) {
       if (
-        snapshot.tasks.some(
-          (current) => current.id === task.taskId && !current.completed,
+        task.kind !== "note" &&
+        task.provider === currentSnapshot.provider &&
+        task.accountId === currentSnapshot.account.id &&
+        task.taskId
+      ) {
+        providerIds.add(task.taskId);
+        selectedIds.add(task.taskId);
+        if (
+          currentSnapshot.tasks.some(
+            (current) => current.id === task.taskId && !current.completed,
+          )
         )
-      )
-        activeRefs.add(task.ref);
+          activeRefs.add(task.ref);
+      }
     }
-  }
-  // Include current descendants. taskGroups supplies the necessary ancestors.
-  const children = new Map<string, string[]>();
-  for (const task of snapshot?.tasks ?? []) {
-    if (!task.parentId) continue;
-    const siblings = children.get(task.parentId) ?? [];
-    siblings.push(task.id);
-    children.set(task.parentId, siblings);
-  }
-  const pendingIds = [...providerIds];
-  for (let index = 0; index < pendingIds.length; index++) {
-    for (const id of children.get(pendingIds[index]!) ?? []) {
-      if (providerIds.has(id)) continue;
-      providerIds.add(id);
-      pendingIds.push(id);
+    // Include current descendants. taskGroups supplies the necessary ancestors.
+    const children = new Map<string, string[]>();
+    for (const task of currentSnapshot.tasks) {
+      if (!task.parentId) continue;
+      const siblings = children.get(task.parentId) ?? [];
+      siblings.push(task.id);
+      children.set(task.parentId, siblings);
     }
+    const pendingIds = [...selectedIds];
+    for (let index = 0; index < pendingIds.length; index++) {
+      for (const id of children.get(pendingIds[index]!) ?? []) {
+        if (selectedIds.has(id)) continue;
+        providerIds.add(id);
+        selectedIds.add(id);
+        pendingIds.push(id);
+      }
+    }
+    for (const itemId of selectedIds)
+      providerKeys.add(
+        taskSourceKey({
+          provider: currentSnapshot.provider,
+          accountId: currentSnapshot.account.id,
+          itemId,
+        }),
+      );
   }
 
   const selectedNotes = new Set<CaptureCandidate>();
@@ -103,6 +122,7 @@ export function planningTaskSelection(
       ),
     ),
     providerIds,
+    providerKeys,
     notes: candidates.filter((candidate) => selectedNotes.has(candidate)),
   };
 }

@@ -294,8 +294,8 @@ export function advancePlanningContext(
       batch.consumedRefs.includes(task.ref) ||
       consumedTasks.some(
         (source) =>
-          source.kind === "todoist" &&
-          task.kind === "todoist" &&
+          source.kind !== "note" &&
+          task.kind !== "note" &&
           source.provider === task.provider &&
           source.accountId === task.accountId &&
           task.taskId &&

@@ -4,6 +4,7 @@ import type { DayPlannerSettings } from "../settings";
 
 import type { GitHubBackend } from "./github-backend";
 import type { TaskBrowserState, TaskService } from "./service";
+import { taskSourceOverview } from "./source-overview";
 import { resolveSourceTask } from "./source-references";
 import type { TaskSourceSession } from "./source-session";
 import type { TaskSourceReference } from "./source-types";
@@ -14,6 +15,7 @@ export class TaskSourceCollection {
   readonly snapshots: Readable<TaskSnapshot[]>;
   readonly googleBrowser: Readable<TaskBrowserState>;
   readonly githubBrowser: Readable<TaskBrowserState>;
+  readonly overviewBrowser: Readable<TaskBrowserState>;
 
   constructor(
     readonly todoist: TaskService,
@@ -75,6 +77,27 @@ export class TaskSourceCollection {
           state.connected && state.snapshot ? [state.snapshot] : [],
         ),
     );
+    this.overviewBrowser = derived(
+      [todoist.state, this.googleBrowser, this.githubBrowser],
+      (states) => ({
+        snapshot: taskSourceOverview(
+          states.flatMap((state) =>
+            state.connected && state.snapshot ? [state.snapshot] : [],
+          ),
+        ).snapshot,
+        connected: states.some((state) => state.connected),
+        loading: states.some((state) => state.loading),
+        error: states
+          .filter((state) => state.connected && state.error)
+          .map((state) => state.error)
+          .join(" "),
+        readOnly: true,
+        writable: false,
+        operations: [],
+        completed: [],
+        aliases: {},
+      }),
+    );
   }
 
   browser(provider: string): Readable<TaskBrowserState> {
@@ -82,7 +105,9 @@ export class TaskSourceCollection {
       ? this.googleBrowser
       : provider === "github"
         ? this.githubBrowser
-        : this.todoist.state;
+        : provider === "overview"
+          ? this.overviewBrowser
+          : this.todoist.state;
   }
 
   session(provider: string) {

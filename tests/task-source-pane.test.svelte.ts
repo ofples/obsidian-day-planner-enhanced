@@ -1,6 +1,11 @@
 import { flushSync, mount, unmount } from "svelte";
 import { get, writable } from "svelte/store";
 import { expect, test, vi } from "vitest";
+import type {
+  AiPlanningService,
+  PlanningState,
+} from "../src/ai-scheduling/service";
+import { taskSourceOverview } from "../src/tasks/source-overview";
 
 import { taskViewStateSchema } from "../src/tasks/browser";
 import { TaskDrag } from "../src/tasks/drag";
@@ -151,6 +156,103 @@ test("connection cards select Google lists and GitHub repositories without chang
     "example/new",
   ]);
   expect(h.service.refresh).not.toHaveBeenCalled();
+  await unmount(component);
+  target.remove();
+});
+
+test("Overview and AI buckets keep native actions and colliding source IDs separate", async () => {
+  const h = await taskSourcesFixture();
+  const collision = taskSourceOverview([
+    h.googleSnapshot,
+    { ...h.githubSnapshot, tasks: [{ ...h.githubTask, id: h.googleTask.id }] },
+  ]);
+  expect(new Set(collision.snapshot!.tasks.map((task) => task.id)).size).toBe(
+    3,
+  );
+  expect(collision.snapshot!.tasks[1]!.parentId).toBe(
+    collision.snapshot!.tasks[0]!.id,
+  );
+  const state = writable<PlanningState>({
+    version: 1,
+    ready: true,
+    recoveryRequired: false,
+    preferences: null,
+    busy: false,
+    error: "",
+    context: null,
+    draft: null,
+    lastBatch: null,
+    issues: [],
+    taskView: {
+      contextId: "context",
+      tasks: [h.googleSnapshot, h.githubSnapshot].map((snapshot, index) => ({
+        ref: `source-${index}`,
+        kind: "source",
+        title: snapshot.tasks[0]!.title,
+        raw: `- [ ] ${snapshot.tasks[0]!.title}`,
+        provider: snapshot.provider,
+        accountId: snapshot.account.id,
+        taskId: snapshot.tasks[0]!.id,
+      })),
+      buckets: [
+        {
+          id: "work",
+          title: "Across sources",
+          taskRefs: ["source-0", "source-1"],
+        },
+      ],
+    },
+  });
+  const planning = {
+    state,
+    show: vi.fn(),
+    clearTaskView: vi.fn(),
+  } as unknown as AiPlanningService;
+  const schedule = vi.fn();
+  const target = document.createElement("div");
+  document.body.append(target);
+  const component = mount(SimpleTasksPane, {
+    target,
+    props: {
+      service: h.service,
+      sources: h.sources,
+      planning,
+      preferences: writable(taskViewStateSchema.parse({ source: "github" })),
+      schedule,
+      openNote: () => {},
+      scheduler: {
+        drag: new TaskDrag(h.service, h.sources),
+        importer: { imports: writable({}), sources: () => [] },
+      } as unknown as TaskScheduler,
+    },
+  });
+  flushSync();
+  expect(target.textContent).toContain("Across sources");
+  expect(target.textContent).toContain("Google work");
+  expect(target.textContent).toContain("Child work");
+  expect(target.textContent).toContain("GitHub work");
+  target
+    .querySelector<HTMLButtonElement>('[aria-label="Schedule GitHub work"]')!
+    .click();
+  expect(schedule).toHaveBeenCalledWith(
+    h.githubTask,
+    taskSourceReference(h.githubSnapshot, h.githubTask),
+  );
+  expect(
+    target.querySelector<HTMLButtonElement>(
+      '[aria-label="Complete GitHub work"]',
+    )!.disabled,
+  ).toBe(true);
+  expect(h.google.backend.read).not.toHaveBeenCalled();
+  expect(h.github.backend.read).not.toHaveBeenCalled();
+  await h.sources.github.disconnect();
+  flushSync();
+  expect(
+    target.querySelector('[aria-label="Schedule GitHub work"]'),
+  ).toBeNull();
+  expect(
+    target.querySelector('[aria-label="Schedule Google work"]'),
+  ).not.toBeNull();
   await unmount(component);
   target.remove();
 });

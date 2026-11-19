@@ -44,12 +44,17 @@
   import type { TaskSource } from "../../tasks/source";
   import type { TaskSourceCollection } from "../../tasks/source-collection";
   import { canonicalSourceUrl } from "../../tasks/source-links";
-  import { taskSourceReference } from "../../tasks/source-references";
+  import { taskSourceOverview } from "../../tasks/source-overview";
+  import {
+    taskSourceKey,
+    taskSourceReference,
+  } from "../../tasks/source-references";
   import {
     taskSourceChoices,
     type TaskPaneSource,
   } from "../../tasks/source-settings";
   import type { TaskSourceReference } from "../../tasks/source-types";
+  import type { TaskSnapshot } from "../../tasks/types";
   import type { ProviderTask } from "../../tasks/types";
   import { TaskRenderCache } from "../task-render-cache";
   import "../task-panel.css";
@@ -120,6 +125,10 @@
   const sourceSettings = $derived(sources?.settings ?? readable(null));
   const sourceSession = $derived(sources?.session(source));
   const sourceStatus = $derived(sourceSession?.state ?? readable(null));
+  const nativeSnapshots = $derived(
+    sources?.snapshots ?? readable<TaskSnapshot[]>([]),
+  );
+  const overview = $derived(taskSourceOverview($nativeSnapshots));
   const snapshot = $derived(
     source === "github" && $browser.snapshot
       ? githubTaskView($browser.snapshot, {
@@ -131,6 +140,11 @@
   );
   $effect(() => {
     const selected = source;
+    if (selected === "overview")
+      untrack(() => {
+        void sources?.refresh("google-tasks");
+        void sources?.refresh("github");
+      });
     if (selected === "google-tasks" || selected === "github")
       untrack(() => {
         void sources?.refresh(selected);
@@ -145,7 +159,7 @@
               ?.taskRefs ?? [],
           ),
           $noteTasks,
-          $browser.snapshot,
+          sources ? $nativeSnapshots : $browser.snapshot,
         )
       : null,
   );
@@ -161,7 +175,7 @@
           taskView?.tasks ?? [],
           new Set(bucket.taskRefs),
           $noteTasks,
-          snapshot,
+          sources ? $nativeSnapshots : snapshot,
         ).activeRefs.size,
       ]),
     ),
@@ -172,22 +186,38 @@
   const pendingDrops = $derived(scheduler?.dropFeedback?.state ?? readable([]));
   const addedIds = $derived.by(() => {
     void $imports;
-    const added = snapshot
-      ? tasksAddedToNote({
-          snapshot,
-          path: $noteContext.targetPath,
-          candidates: $noteTasks,
-          imports: scheduler?.importer.sources() ?? $imports,
-          resolve: resolveImported,
-        })
-      : new Set<string>();
+    const added = new Set<string>();
+    for (const native of source === "overview" && sources
+      ? $nativeSnapshots
+      : snapshot
+        ? [snapshot]
+        : []) {
+      const ids = tasksAddedToNote({
+        snapshot: native,
+        path: $noteContext.targetPath,
+        candidates: $noteTasks,
+        imports: scheduler?.importer.sources() ?? $imports,
+        resolve: resolveImported,
+      });
+      for (const id of ids)
+        added.add(
+          source === "overview" && sources
+            ? taskSourceKey({
+                provider: native.provider,
+                accountId: native.account.id,
+                itemId: id,
+              })
+            : id,
+        );
+    }
     for (const drop of $pendingDrops) {
       if (
         !snapshot ||
-        (drop.source
-          ? drop.source.provider !== snapshot.provider ||
-            drop.source.accountId !== snapshot.account.id
-          : snapshot.provider !== "todoist")
+        (source !== "overview" &&
+          (drop.source
+            ? drop.source.provider !== snapshot.provider ||
+              drop.source.accountId !== snapshot.account.id
+            : snapshot.provider !== "todoist"))
       )
         continue;
       const path =
@@ -197,7 +227,19 @@
             ? drop.destination.parent.path
             : drop.targetPath;
       if (path === $noteContext.targetPath)
-        for (const id of drop.taskIds) added.add(id);
+        for (const id of drop.taskIds) {
+          const provider = drop.source?.provider ?? "todoist";
+          const accountId =
+            drop.source?.accountId ??
+            $nativeSnapshots.find((item) => item.provider === "todoist")
+              ?.account.id ??
+            snapshot.account.id;
+          added.add(
+            source === "overview" && sources
+              ? taskSourceKey({ provider, accountId, itemId: id })
+              : id,
+          );
+        }
     }
     return added;
   });
@@ -205,7 +247,18 @@
     const excluded = new Set($viewPreferences.showAdded ? [] : addedIds);
     if (selection)
       for (const task of snapshot?.tasks ?? []) {
-        if (!selection.providerIds.has(task.id)) excluded.add(task.id);
+        if (
+          !(source === "overview" && sources
+            ? selection.providerKeys.has(task.id)
+            : selection.providerKeys.has(
+                taskSourceKey({
+                  provider: snapshot!.provider,
+                  accountId: snapshot!.account.id,
+                  itemId: task.id,
+                }),
+              ))
+        )
+          excluded.add(task.id);
       }
     return excluded;
   });
@@ -313,7 +366,11 @@
     try {
       if (!event.dataTransfer || !scheduler)
         throw new Error("Reopen the planner before importing tasks.");
-      scheduler.drag.start(task, event.dataTransfer, externalReference(task));
+      scheduler.drag.start(
+        nativeTask(task),
+        event.dataTransfer,
+        externalReference(task),
+      );
     } catch (error) {
       event.preventDefault();
       new Notice(
@@ -324,15 +381,25 @@
   function choose(task: ProviderTask) {
     $viewPreferences = { ...$viewPreferences, selectedId: task.id };
     const ref = externalReference(task);
-    if (ref) schedule(task, ref);
-    else schedule(task);
+    if (ref) schedule(nativeTask(task), ref);
+    else schedule(nativeTask(task));
   }
   function externalReference(task: ProviderTask) {
+    if (source === "overview" && sources)
+      return overview.origins.get(task.id)?.reference;
     return sources &&
       snapshot &&
       (source === "google-tasks" || source === "github")
       ? taskSourceReference(snapshot, task)
       : undefined;
+  }
+  function nativeTask(task: ProviderTask) {
+    return source === "overview" && sources
+      ? (overview.origins.get(task.id)?.task ?? task)
+      : task;
+  }
+  function taskProvider(task: ProviderTask) {
+    return externalReference(task)?.provider ?? "todoist";
   }
   function chooseSource(next: TaskPaneSource) {
     scheduler?.drag.cancel();
@@ -340,7 +407,7 @@
   }
   function complete(task: ProviderTask) {
     const ref = externalReference(task);
-    if (ref && sources)
+    if (ref && ref.provider !== "todoist" && sources)
       void sources
         .complete(ref)
         .catch(
@@ -351,16 +418,20 @@
                 : "Could not complete this task.",
             ),
         );
-    else completeTask?.(task);
+    else completeTask?.(nativeTask(task));
   }
-  function completionEnabled() {
-    return source === "google-tasks"
-      ? !$browser.loading &&
+  function completionEnabled(task: ProviderTask) {
+    return taskProvider(task) === "google-tasks"
+      ? !get(sources?.googleBrowser ?? browser).loading &&
           Boolean(
-            snapshot?.account.capabilities?.complete &&
+            (source === "overview"
+              ? overview.origins.get(task.id)?.snapshot
+              : snapshot
+            )?.account.capabilities?.complete &&
               $sourceSettings?.taskSources.googleTasks.allowCompletion,
           )
-      : source !== "github" && Boolean(completeTask && weakCompletionEnabled);
+      : taskProvider(task) !== "github" &&
+          Boolean(completeTask && weakCompletionEnabled);
   }
 </script>
 
@@ -649,7 +720,7 @@
       >
     </div>
   </header>
-  {#if providerView && $browser.error}<div
+  {#if (providerView || source === "overview") && $browser.error}<div
       class="task-review task-connection-error"
       role="status"
     >
@@ -795,10 +866,11 @@
                     class="task-import-circle"
                     aria-checked="false"
                     aria-label={`Complete ${row.task.title}`}
-                    disabled={!$browser.connected || !completionEnabled()}
+                    disabled={!$browser.connected ||
+                      !completionEnabled(row.task)}
                     onclick={() => complete(row.task)}
                     role="checkbox"
-                    title={source === "github"
+                    title={taskProvider(row.task) === "github"
                       ? "Open in GitHub to change its state"
                       : "Complete task"}
                   ></button>
@@ -813,6 +885,12 @@
                       ></button
                     >
                     <div class="task-row-meta">
+                      {#if source === "overview" && sources}<span
+                          class="task-label-chip"
+                          >{taskSourceChoices.find(
+                            (choice) => choice.id === taskProvider(row.task),
+                          )?.label ?? taskProvider(row.task)}</span
+                        >{/if}
                       {#if row.task.source?.kind && row.task.source.kind !== "task"}<span
                           class="task-label-chip"
                           >{row.task.source.kind}{row.task.source.number

@@ -364,7 +364,7 @@ export function validateProposal(
     }
   const providerSources = actions.flatMap((action) => {
     const task = context.tasks.find((entry) => entry.ref === action.sourceRef);
-    return task?.kind === "todoist" ? [{ actionId: action.id, task }] : [];
+    return task && task.kind !== "note" ? [{ actionId: action.id, task }] : [];
   });
   for (let index = 0; index < providerSources.length; index++)
     for (const other of providerSources.slice(index + 1)) {

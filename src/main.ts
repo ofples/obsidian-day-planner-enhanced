@@ -463,6 +463,7 @@ export default class DayPlanner extends Plugin {
         calendar: this.googleCalendarSync,
         tasks: this.taskService,
         scheduler: () => this.taskScheduler,
+        sources: () => this.taskSources,
         settings: this.getSettings,
         range: () =>
           this.lastPlanningView?.getPlanningRange() ?? {

@@ -16,7 +16,7 @@ export const planningPreferencesSchema = z.object({
 
 export const planningTaskSchema = z.object({
   ref: reference,
-  kind: z.enum(["note", "todoist"]),
+  kind: z.enum(["note", "todoist", "source"]),
   title: z.string(),
   raw: z.string().min(1),
   path: z.string().optional(),
@@ -34,6 +34,8 @@ export const planningTaskSchema = z.object({
   project: z.string().optional(),
   labels: z.array(z.string()).optional(),
   fingerprint: z.string().optional(),
+  dateMeaning: z.enum(["scheduled", "target"]).optional(),
+  sourceDetails: z.string().optional(),
 });
 
 export const planningBlockSchema = z.object({

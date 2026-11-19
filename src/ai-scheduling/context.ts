@@ -22,6 +22,7 @@ interface ContextInput {
   preferences: PlanningPreferences;
   documents: PlanningContext["documents"];
   providerTasks: Array<Omit<PlanningTask, "ref">>;
+  providerTaskCount?: number;
   commitments: PlanningCommitment[];
   identities: Record<string, LocalIdentity>;
   settings: DayPlannerSettings;
@@ -96,10 +97,19 @@ export function buildPlanningContext(input: ContextInput): PlanningContext {
         ),
       labels: candidate.tags.map((tag) => tag.name),
     }));
-  const available = [
-    ...notes,
-    ...input.providerTasks.filter((task) => !task.completed),
-  ];
+  const providers = input.providerTasks.filter((task) => !task.completed);
+  const available: Array<Omit<PlanningTask, "ref">> = [];
+  // Interleave note and external candidates before applying the shared context limit.
+  for (
+    let index = 0;
+    index < Math.max(notes.length, providers.length);
+    index++
+  ) {
+    if (notes[index]) available.push(notes[index]!);
+    if (providers[index]) available.push(providers[index]!);
+  }
+  if (available.length <= 500)
+    available.splice(0, available.length, ...notes, ...providers);
   const tasks = available
     .slice(0, 500)
     .map((task, index) => ({ ...task, ref: `task-${index + 1}` }));
@@ -119,8 +129,10 @@ export function buildPlanningContext(input: ContextInput): PlanningContext {
     freshness: {
       tasksUpdatedAt: input.tasksUpdatedAt,
       calendarsUpdatedAt: input.calendarsUpdatedAt,
-      taskCount: available.length,
-      truncated: available.length > tasks.length,
+      taskCount: notes.length + (input.providerTaskCount ?? providers.length),
+      truncated:
+        notes.length + (input.providerTaskCount ?? providers.length) >
+        tasks.length,
     },
   });
 }
