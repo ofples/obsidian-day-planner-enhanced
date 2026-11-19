@@ -4,7 +4,21 @@ interface Tokens {
   access_token: string;
   refresh_token?: string;
   expires_in: number;
+  scope?: string;
 }
+
+export interface GoogleConnectOptions {
+  scopes?: readonly string[];
+  validate?: (
+    accessToken: string,
+    grantedScopes: readonly string[],
+  ) => Promise<void>;
+}
+
+const calendarScopes = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+];
 
 export function googleQuotaError(body: unknown) {
   if (!body || typeof body !== "object" || !("error" in body)) return false;
@@ -95,6 +109,7 @@ export class GoogleCalendarAuth {
     private readonly app: App,
     private readonly key: string,
     private readonly appClientSecret?: (clientId: string) => string | undefined,
+    private readonly label = "Google Calendar",
   ) {}
 
   private storage() {
@@ -103,7 +118,7 @@ export class GoogleCalendarAuth {
       | undefined;
     if (!storage)
       throw new Error(
-        "Google Calendar sync requires Obsidian 1.11.4 or later (SecretStorage).",
+        `${this.label} sync requires Obsidian 1.11.4 or later (SecretStorage).`,
       );
     return storage;
   }
@@ -127,6 +142,12 @@ export class GoogleCalendarAuth {
       this.storage().getSecret(`${this.key}-refresh`) &&
         (!bound || !clientId || bound === clientId),
     );
+  }
+
+  grantedScopes(): readonly string[] {
+    return (this.storage().getSecret(`${this.key}-scopes`) ?? "")
+      .split(/\s+/)
+      .filter(Boolean);
   }
 
   private clientSecret(clientId: string) {
@@ -160,7 +181,7 @@ export class GoogleCalendarAuth {
     const revision = this.revision;
     const refreshToken = this.storage().getSecret(`${this.key}-refresh`);
     if (!refreshToken || !this.isConnected(clientId))
-      throw new Error("Connect Google Calendar in Day Planner settings first.");
+      throw new Error(`Connect ${this.label} in Day Planner settings first.`);
     const tokens = await googleTokenRequest({
       client_id: clientId,
       client_secret: this.clientSecret(clientId),
@@ -185,9 +206,11 @@ export class GoogleCalendarAuth {
       this.storage().setSecret(`${this.key}-refresh`, tokens.refresh_token);
       this.storage().setSecret(`${this.key}-app-id`, clientId);
     }
+    if (tokens.scope)
+      this.storage().setSecret(`${this.key}-scopes`, tokens.scope);
   }
 
-  async connect(clientId: string) {
+  async connect(clientId: string, options: GoogleConnectOptions = {}) {
     if (!Platform.isDesktopApp)
       throw new Error(
         "Connect on desktop. Google sign-in via loopback is not available on mobile.",
@@ -250,7 +273,7 @@ export class GoogleCalendarAuth {
         }
         response
           .writeHead(200, { "Content-Type": "text/plain", Connection: "close" })
-          .end("Return to Obsidian to finish connecting Google Calendar.");
+          .end(`Return to Obsidian to finish connecting ${this.label}.`);
         void googleTokenRequest({
           client_id: clientId,
           client_secret: clientSecret,
@@ -259,12 +282,26 @@ export class GoogleCalendarAuth {
           code_verifier: verifier,
           redirect_uri: redirect,
         })
-          .then((tokens) => {
+          .then(async (tokens) => {
             if (settled) return;
             if (!tokens.refresh_token)
               throw new Error(
                 "Google did not grant offline access; reconnect and allow access.",
               );
+            if (
+              !tokens.access_token ||
+              !Number.isFinite(tokens.expires_in) ||
+              tokens.expires_in <= 0
+            )
+              throw new Error("Google returned an invalid token response.");
+            // OAuth permits omitting scope when it is unchanged from the request.
+            const scopes =
+              tokens.scope?.split(/\s+/).filter(Boolean) ??
+              options.scopes ??
+              calendarScopes;
+            await options.validate?.(tokens.access_token, scopes);
+            if (settled) return;
+            tokens.scope = scopes.join(" ");
             this.accept(tokens, clientId);
             finish();
           })
@@ -294,8 +331,7 @@ export class GoogleCalendarAuth {
           client_id: clientId,
           redirect_uri: redirect,
           response_type: "code",
-          scope:
-            "https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.calendarlist.readonly",
+          scope: (options.scopes ?? calendarScopes).join(" "),
           access_type: "offline",
           prompt: "select_account consent",
           state,

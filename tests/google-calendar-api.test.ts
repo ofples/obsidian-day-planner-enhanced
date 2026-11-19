@@ -862,6 +862,61 @@ describe("Google OAuth", () => {
       auth.stop();
     }
   });
+
+  test.each([true, false])(
+    "custom Google source validates before saving credentials: %s",
+    async (valid) => {
+      const { app, secrets } = setup();
+      secrets.set("test-key-refresh", "previous-refresh");
+      const auth = new GoogleCalendarAuth(
+        app,
+        "test-key",
+        () => "app-config",
+        "Google Tasks",
+      );
+      const scope = "https://www.googleapis.com/auth/tasks.readonly";
+      vi.mocked(requestUrl).mockResolvedValue(
+        response(200, {
+          access_token: "staged-access",
+          refresh_token: "new-refresh",
+          expires_in: 3600,
+          scope: `openid email ${scope}`,
+        }),
+      );
+      let url: URL | undefined;
+      let callback: Promise<Response> | undefined;
+      const open = vi.spyOn(window, "open").mockImplementation((value) => {
+        url = new URL(String(value));
+        const redirect = url.searchParams.get("redirect_uri")!;
+        callback = fetch(
+          `${redirect}?${new URLSearchParams({ state: url.searchParams.get("state")!, code: "code" })}`,
+        );
+        return null;
+      });
+      try {
+        const pending = auth.connect("test.apps.googleusercontent.com", {
+          scopes: ["openid", "email", scope],
+          validate: async (access, scopes) => {
+            expect(access).toBe("staged-access");
+            expect(scopes).toContain(scope);
+            expect(secrets.get("test-key-refresh")).toBe("previous-refresh");
+            if (!valid) throw new Error("Account validation failed");
+          },
+        });
+        if (valid) await pending;
+        else await expect(pending).rejects.toThrow("Account validation failed");
+        await callback;
+        expect(url?.searchParams.get("scope")).toBe(`openid email ${scope}`);
+        expect(secrets.get("test-key-refresh")).toBe(
+          valid ? "new-refresh" : "previous-refresh",
+        );
+        if (valid) expect(auth.grantedScopes()).toContain(scope);
+      } finally {
+        auth.stop();
+        open.mockRestore();
+      }
+    },
+  );
 });
 
 // Adapter contracts exercise HTTP shape; timing is covered by request-gate tests.

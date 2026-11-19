@@ -58,3 +58,13 @@ Provider/account/item tuple keys distinguish source and account collisions. Goog
 The shared source session, pane, adapters and sign-in are still pending. This foundation does not establish a connected integration.
 
 Checks: 19 tests passed across task-source-references, task-browser and optimistic-interactions. TypeScript and targeted ESLint passed. Full source validation and installed acceptance remain pending for the integrated implementation.
+
+### Read sessions and Google Tasks backend
+
+Added a small read session with single-flight refresh, five-minute cache freshness, account-generation guards, partial-container cache retention and explicit completion. Optimistic completion appears before cache persistence; commands wait for persistence. Uncertain delivery is verified by a later explicit action, with no replay on refresh or restart. Confirmed rejection restores the row without adding an unnecessary verification step.
+
+The Google Tasks adapter reads selected lists with a shared 20-page/2,000-item budget, native hierarchy/order, notes and date-only scheduling. A bounded Load more read skips completed streams. Repeated cursors stop. Explicit completion checks the current task before PATCH and requires an editing grant.
+
+Google authorization now accepts source-specific scopes, a display label and a validation callback. The new backend uses independent credentials and checks identity/list access before saving replacement tokens. Existing Calendar defaults remain covered. The shared HTTP wrapper uses RequestGate, cancellation and scoped authorization errors. GitHub rate-limit classification also handles GraphQL errors carried in HTTP 200.
+
+Checks: 87 tests passed across source references, source session, Google Tasks provider, source HTTP, existing Google Calendar API and request-gate suites. TypeScript, targeted ESLint with zero warnings and formatting checks passed. These are code/fixture results; provider registration, live authorization, pane/import/AI wiring and installed UI are still pending.

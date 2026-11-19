@@ -47,6 +47,7 @@ export const taskSnapshotSchema = z.object({
         duration: z.boolean().optional(),
         delete: z.boolean().optional(),
         recurringUndo: z.boolean().optional(),
+        complete: z.boolean().optional(),
       })
       .optional(),
   }),

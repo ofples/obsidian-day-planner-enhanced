@@ -22,6 +22,7 @@ export const taskSourceMetadataSchema = z.object({
   nativeContainerId: z.string().optional(),
   url: z.string().optional(),
   updatedAt: z.string().optional(),
+  orderKey: z.string().optional(),
   dateMeaning: z.enum(["scheduled", "target"]).optional(),
   memberships: z.array(taskMembershipSchema).optional(),
   state: z.enum(["open", "closed"]).optional(),
