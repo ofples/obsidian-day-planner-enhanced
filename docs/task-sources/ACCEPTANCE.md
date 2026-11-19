@@ -48,3 +48,13 @@ The baseline has an inherited inclusive-last-day ICS timeout. Re-run required ch
 | Preview installation/readback | Pending  | Backup, artifact match and preserved state.                                                    |
 
 Update this table as work progresses. If authentication requires user participation, finish independent code and fixture work first, state the exact remaining step and retain the corresponding gate as pending. A registered client ID alone is not successful authentication.
+
+## Implementation log
+
+### Shared identity foundation
+
+Provider/account/item tuple keys distinguish source and account collisions. Google task keys also include the list. Optional task/container metadata retains GitHub memberships, status and date fields without changing existing cache requirements. A current GitHub Project-item reference can resolve a converted draft's issue; no persistent alias registry is created.
+
+The shared source session, pane, adapters and sign-in are still pending. This foundation does not establish a connected integration.
+
+Checks: 19 tests passed across task-source-references, task-browser and optimistic-interactions. TypeScript and targeted ESLint passed. Full source validation and installed acceptance remain pending for the integrated implementation.

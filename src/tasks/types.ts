@@ -1,6 +1,10 @@
 import { z } from "zod";
 
 import type { TaskOperation } from "./operations";
+import {
+  taskContainerMetadataSchema,
+  taskSourceMetadataSchema,
+} from "./source-types";
 
 export const taskDurationSchema = z.object({
   amount: z.number().int().positive(),
@@ -19,6 +23,7 @@ export const taskSchema = z.object({
   completionCount: z.number().int().nonnegative().optional(),
   order: z.number(),
   createdAt: z.string().optional(),
+  source: taskSourceMetadataSchema.optional(),
   duration: taskDurationSchema.nullable().optional(),
   due: z
     .object({
@@ -51,6 +56,7 @@ export const taskSnapshotSchema = z.object({
       name: z.string(),
       order: z.number(),
       inbox: z.boolean().optional(),
+      source: taskContainerMetadataSchema.optional(),
     }),
   ),
   tasks: z.array(taskSchema),
