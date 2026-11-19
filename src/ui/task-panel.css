@@ -520,7 +520,7 @@
   position: relative;
 
   display: grid;
-  grid-template-columns: 17px minmax(0, 1fr) 23px;
+  grid-template-columns: 17px minmax(0, 1fr) auto;
   column-gap: 8px;
   align-items: start;
 
@@ -626,6 +626,12 @@
   width: 23px;
   height: 24px;
   padding: 3px;
+}
+
+.dp-task-panel .task-row-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
 }
 
 .dp-task-panel .note-open {

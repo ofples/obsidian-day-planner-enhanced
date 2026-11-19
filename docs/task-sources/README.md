@@ -1,6 +1,6 @@
 # Task sources preview
 
-This feature branch adds Google Tasks and GitHub work to the existing Tasks pane. App registration is prepared; live sign-in and installed acceptance remain separate checks. This is not an installation-ready release. See [ACCEPTANCE](ACCEPTANCE.md) for current evidence.
+This feature branch adds Google Tasks and GitHub work to the existing Tasks pane. The installed preview passed local app/DOM workflow checks. App registration is prepared; live account authorization/readback and a desktop pointer/visual pass remain separate checks. This is a preview, not a generally validated release. See [ACCEPTANCE](ACCEPTANCE.md) for current evidence.
 
 ## Connect and browse
 
@@ -39,6 +39,8 @@ The owned Google project has Tasks API enabled and Tasks read/edit scopes declar
 GitHub needs an owned OAuth app with device flow enabled. Bundle its public client ID through `github-oauth-client.public.json` (`{"clientId":"PUBLIC_CLIENT_ID"}`) or the build environment variable `DAY_PLANNER_GITHUB_CLIENT_ID`. No GitHub client secret is needed for device flow. An optional custom public client ID is under Advanced in Connections.
 
 This branch bundles the owned OAuth application's public client ID. Device flow is enabled; no client secret was generated. User authorization and successful API reads still need live acceptance.
+
+The installed Google Tasks sign-in reached Google's account chooser and then its unverified-app screen. The GitHub sign-in control received a real device code at the official verification URL. Both test flows were canceled before granting new account access; neither remains polling. When resuming live checks, start fresh sign-in from Connections. Google Tasks initially asks for account identity/email and read-only task access. GitHub initially asks for Project read access and expiring-token access, with private repository access left off.
 
 Default GitHub access requests `read:project` and expiring-token access. Including private repositories is an explicit choice: GitHub's `repo` grant includes write permissions, although this integration only reads GitHub work. Organization approval and SSO may impose additional access requirements.
 

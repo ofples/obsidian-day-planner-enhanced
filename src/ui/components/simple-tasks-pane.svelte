@@ -917,21 +917,24 @@
                         >{/if}
                     </div>
                   </div>
-                  {#if canonicalSourceUrl(row.task.source?.url ?? "")}<a
-                      class="task-icon-button"
-                      aria-label={`Open ${row.task.title} in ${sourceLabel}`}
-                      href={canonicalSourceUrl(row.task.source?.url ?? "")}
-                      rel="noopener noreferrer"
-                      target="_blank"
-                      title={`Open in ${sourceLabel}`}
-                      ><ExternalLink size={14} /></a
-                    >{/if}
-                  <button
-                    class="task-icon-button task-row-schedule"
-                    aria-label={`Schedule ${row.task.title}`}
-                    onclick={() => choose(row.task)}
-                    title="Add to schedule"><CalendarClock size={16} /></button
-                  >
+                  <div class="task-row-actions">
+                    {#if canonicalSourceUrl(row.task.source?.url ?? "")}<a
+                        class="task-icon-button"
+                        aria-label={`Open ${row.task.title} in ${sourceLabel}`}
+                        href={canonicalSourceUrl(row.task.source?.url ?? "")}
+                        rel="noopener noreferrer"
+                        target="_blank"
+                        title={`Open in ${sourceLabel}`}
+                        ><ExternalLink size={14} /></a
+                      >{/if}
+                    <button
+                      class="task-icon-button task-row-schedule"
+                      aria-label={`Schedule ${row.task.title}`}
+                      onclick={() => choose(row.task)}
+                      title="Add to schedule"
+                      ><CalendarClock size={16} /></button
+                    >
+                  </div>
                 </div>
               {/each}
             </section>

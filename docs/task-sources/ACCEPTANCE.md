@@ -33,19 +33,19 @@ The baseline has an inherited inclusive-last-day ICS timeout. Re-run required ch
 
 ## Delivery gates
 
-| Gate                          | Status                 | Evidence to record                                                                                      |
-| ----------------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------- |
-| Baseline preserved            | Complete               | Feature checkout starts at f4050c7272fc36145140cc5a6b4ffbf92ed8bcc0; stable checkout retained.          |
-| API/source audit              | Complete               | Official links and design decisions in PLAN and TECHNICAL-SPEC.                                         |
-| Shared source contracts       | Complete               | Qualified identity, read bridge, serialization and shared import routing pass focused checks.           |
-| Google Tasks adapter          | Code/fixtures complete | Lists, read/auth/completion and pane routes pass; live authorization is a separate gate.                |
-| GitHub adapter                | Code/fixtures complete | Issues/Projects/device auth and pane routes pass; owned-app/live checks remain pending.                 |
-| Pane/import/AI integration    | Code/fixtures complete | Qualified Overview and AI context/buckets, Apply/Undo and stale-source rejection pass.                  |
-| Owned app configuration       | Prepared               | Tasks API/scopes enabled; Google Production but unverified. GitHub public device client bundled.        |
-| Live authorization/read       | Pending                | Provider/account, granted capabilities and successful bounded read; no personal content.                |
-| Installed UI                  | Pending                | Candidate commit, scenarios and observed results, distinct from fixtures.                               |
-| Required source checks/build  | Known baseline failure | 1,693 tests pass; one inclusive-day ICS timeout also fails on stable baseline. Other checks/build pass. |
-| Preview installation/readback | Pending                | Backup, artifact match and preserved state.                                                             |
+| Gate                          | Status                 | Evidence to record                                                                                              |
+| ----------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Baseline preserved            | Complete               | Feature checkout starts at f4050c7272fc36145140cc5a6b4ffbf92ed8bcc0; stable checkout retained.                  |
+| API/source audit              | Complete               | Official links and design decisions in PLAN and TECHNICAL-SPEC.                                                 |
+| Shared source contracts       | Complete               | Qualified identity, read bridge, serialization and shared import routing pass focused checks.                   |
+| Google Tasks adapter          | Code/fixtures complete | Lists, read/auth/completion and pane routes pass; live authorization is a separate gate.                        |
+| GitHub adapter                | Code/fixtures complete | Issues/Projects/device auth and pane routes pass; owned-app/live checks remain pending.                         |
+| Pane/import/AI integration    | Code/fixtures complete | Qualified Overview and AI context/buckets, Apply/Undo and stale-source rejection pass.                          |
+| Owned app configuration       | Prepared               | Tasks API/scopes enabled; Google Production but unverified. GitHub public device client bundled.                |
+| Live authorization/read       | Pending                | Provider/account, granted capabilities and successful bounded read; no personal content.                        |
+| Installed UI                  | App/DOM fixtures pass  | Normal pane/editor/AI handlers pass; installed DOM renders inspected. Windows capture/pointer pass pending.     |
+| Required source checks/build  | Known baseline failure | 1,693 tests pass; one inclusive-day ICS timeout also fails on stable baseline. Other checks/build pass.         |
+| Preview installation/readback | Complete               | Built assets match; settings, credentials, notes, namespaces, exact Calendar event IDs and workspace preserved. |
 
 Update this table as work progresses. If authentication requires user participation, finish independent code and fixture work first, state the exact remaining step and retain the corresponding gate as pending. A registered client ID alone is not successful authentication.
 
@@ -114,3 +114,19 @@ The owned GitHub OAuth app was registered through its normal settings UI with de
 The existing owned Google project now has Google Tasks API enabled. OpenID/email and Tasks read-only/edit scopes are declared in Data Access; existing Calendar scopes remain. The UI confirmed the saved declarations. Audience remains External/In production, with unverified sensitive scopes and a 100-user lifetime cap (two users at inspection). No verification submission or new account grant was completed. Google verification, real source authorization and API readback are separate remaining gates. Private screenshots are excluded from Git.
 
 Required full lint reached TypeScript, formatting, ESLint, stylelint and Svelte successfully (zero Svelte errors/warnings). Its full test stage reported 168 passing files and 1,693 passing tests, with one failed inclusive-last-day ICS test, nine skipped and 17 todo. The identical test fails with the same waitUntil timeout in the unchanged stable checkout; it is a baseline failure. Strict source lint was run separately and passed. The production build with the existing Google registration and new GitHub public client passed. Native preview/readback and live source grants remain pending.
+
+### Installed preview and remaining live prerequisite
+
+The built preview is installed after a plugin-specific backup and idle check. Only this plugin's generated assets were replaced. Readback confirms matching assets and preservation of all pre-existing settings, loaded plugins, stored secret values, task/Calendar namespaces, exact Calendar event IDs and daily-note contents. No fixture Calendar identities remain. Temporary test sources, importer storage and AI state were isolated in memory, and the disposable note was removed through recoverable trash. The user's workspace was restored and its root/readiness verified. Background rendering settings used for testing were restored.
+
+The normal installed Tasks entry point was exercised with temporary source snapshots. Google list hierarchy and notes rendered, GitHub work opened the existing scheduling form with completion disabled, and the real editor-drop handler inserted one ordinary Markdown task with description, child and one source link. The untimed drop stayed untimed. The native AI service prepared a cache-only context from both providers, showed review and a curated bucket, applied the GitHub suggestion through the normal note queue and restored the note through Undo. These fixture flows sent zero task-provider requests and writes. This does not establish live API acceptance.
+
+Installed DOM/CSS was rendered at standard and narrow sidebar widths for visual inspection without taking over the mouse. That inspection found the added source-link icon occupying the schedule icon's grid position. Grouping the row actions fixes the extra row. Source-row and existing-pane tests passed (11 tests) after the fix. The final full lint again passes formatting, ESLint, style, TypeScript and Svelte (zero errors/warnings), then encounters only the same baseline ICS timeout: 1,693 tests pass across 168 passing files. Strict lint passes separately. The final source build passes.
+
+A real installed timeline optimistic preview changed its visible time range while retaining all five sampled block nodes over six timed DOM samples. Fonts stayed equal, no empty text or child-list mutations appeared, and rollback restored the range with the note unchanged. This is app/DOM regression evidence, not a physical screen-flash measurement. Windows capture returned black and the app's main-window capture was stale, so desktop pointer/visual acceptance remains pending. The supplemental renders use the actual installed DOM/CSS in a hidden renderer and are not represented as desktop screenshots.
+
+The installed Google Tasks sign-in control starts the bundled Desktop OAuth flow with PKCE, loopback redirect, OpenID/email and Tasks read-only scope. Google accepts the route and account selection, then shows its unverified-app screen. The installed GitHub sign-in control receives a real device code and official verification URL from the registered client. Neither flow was authorized. Both were canceled; source loading/pending state and device codes cleared. Existing Calendar/Todoist connections and every previously saved secret remained intact. No new source cache was saved.
+
+The published privacy notice now describes Google Tasks, GitHub and explicit AI-context sharing. Google's homepage/privacy metadata points at the current feature branch and its UI confirmed the saved change. No verification submission was made. Production status, Google verification and user grants are distinct.
+
+All independent implementation and fixture work is complete. Remaining live readiness requires the user to start fresh Google Tasks and GitHub sign-in in Connections and approve the new account permissions. Then verify bounded real list/issue/Project reads and account/capability readback. Optional live completion additionally needs an editing grant and a disposable task; existing tasks must not be changed for testing. Finish a normal desktop visual/pointer pass when capture is available. The goal is not complete and the branch is not a generally validated release.
