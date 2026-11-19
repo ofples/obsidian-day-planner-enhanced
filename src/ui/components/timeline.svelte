@@ -588,7 +588,7 @@
             placings={plannerLayout.previewPlacings}
           />
         {/if}
-        {#each plannerLayout.realBlocks as timeBlock (getRenderKey(timeBlock))}
+        {#each plannerLayout.realBlocks as timeBlock (timeBlock.source === "ical" ? getRenderKey(timeBlock) : timeBlock.id)}
           {@const separatorVisibility = plannerSeparatorVisibility.get(
             getRenderKey(timeBlock),
           )}

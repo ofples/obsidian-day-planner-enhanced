@@ -161,7 +161,8 @@ test("note previews use normal parsing for timestamps, descriptions and nested t
   const blocks = feedback.blocks(store.getState(), get(feedback.state));
   expect(blocks[0]?.startTime.format("HH:mm")).toBe("09:00");
   expect(blocks[0]?.task).toBe("x");
-  expect(blocks[0]?.text).toContain("Description");
+  expect(blocks[0]?.text).toBe("09:00 - 09:30 Frame #locked\nDescription");
+  expect(blocks[0]?.position.end.line).toBe(1);
   expect(blocks[0]?.children?.[0]?.text).toBe("Child");
   settle(false);
   expect(feedback.blocks(store.getState(), get(feedback.state))).toEqual([]);

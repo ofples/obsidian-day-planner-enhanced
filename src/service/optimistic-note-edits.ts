@@ -33,6 +33,24 @@ function previewMetadata(text: string): CachedMetadata {
     let childParent = parent;
     if (node.type === "listItem") {
       const position = positionOf(node);
+      // Obsidian indexes the item's own content separately from its child list.
+      const nestedList = node.children.findIndex(
+        (child) => child.type === "list",
+      );
+      if (nestedList >= 0) {
+        const ownContent = node.children[nestedList - 1];
+        if (ownContent) position.end = positionOf(ownContent).end;
+        else {
+          const newline = text.indexOf("\n", position.start.offset);
+          let end = newline < 0 ? text.length : newline;
+          if (text[end - 1] === "\r") end--;
+          position.end = {
+            line: position.start.line,
+            col: position.start.col + end - position.start.offset,
+            offset: end,
+          };
+        }
+      }
       const task = text
         .slice(position.start.offset, position.end.offset)
         .match(/^(?:[-*+]|\d+[.)])\s+\[([^\]])\]/)?.[1];
