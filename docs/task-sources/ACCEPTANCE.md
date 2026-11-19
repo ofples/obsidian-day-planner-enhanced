@@ -33,19 +33,19 @@ The baseline has an inherited inclusive-last-day ICS timeout. Re-run required ch
 
 ## Delivery gates
 
-| Gate                          | Status   | Evidence to record                                                                             |
-| ----------------------------- | -------- | ---------------------------------------------------------------------------------------------- |
-| Baseline preserved            | Complete | Feature checkout starts at f4050c7272fc36145140cc5a6b4ffbf92ed8bcc0; stable checkout retained. |
-| API/source audit              | Complete | Official links and design decisions in PLAN and TECHNICAL-SPEC.                                |
-| Shared source contracts       | Pending  | Qualified identity, compatibility and import tests.                                            |
-| Google Tasks adapter          | Pending  | Fixtures, selected lists, cached browser, optional completion.                                 |
-| GitHub adapter                | Pending  | Issues/Projects fixtures, permissions, memberships, mappings.                                  |
-| Pane/import/AI integration    | Pending  | A5/A6/A8 through ordinary application entry points.                                            |
-| Owned app configuration       | Pending  | Tasks API/scopes and GitHub OAuth device-flow registration; no secrets.                        |
-| Live authorization/read       | Pending  | Provider/account, granted capabilities and successful bounded read; no personal content.       |
-| Installed UI                  | Pending  | Candidate commit, scenarios and observed results, distinct from fixtures.                      |
-| Required source checks/build  | Pending  | Exact commands/results and inherited failures.                                                 |
-| Preview installation/readback | Pending  | Backup, artifact match and preserved state.                                                    |
+| Gate                          | Status      | Evidence to record                                                                             |
+| ----------------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
+| Baseline preserved            | Complete    | Feature checkout starts at f4050c7272fc36145140cc5a6b4ffbf92ed8bcc0; stable checkout retained. |
+| API/source audit              | Complete    | Official links and design decisions in PLAN and TECHNICAL-SPEC.                                |
+| Shared source contracts       | In progress | Qualified identity/read sessions pass; shared importer and pane routing remain pending.        |
+| Google Tasks adapter          | In progress | Read/auth/completion backend passes fixtures; pane and live authorization remain pending.      |
+| GitHub adapter                | In progress | Issues/Projects/device auth pass fixtures; pane and owned app/live checks remain pending.      |
+| Pane/import/AI integration    | Pending     | A5/A6/A8 through ordinary application entry points.                                            |
+| Owned app configuration       | Pending     | Tasks API/scopes and GitHub OAuth device-flow registration; no secrets.                        |
+| Live authorization/read       | Pending     | Provider/account, granted capabilities and successful bounded read; no personal content.       |
+| Installed UI                  | Pending     | Candidate commit, scenarios and observed results, distinct from fixtures.                      |
+| Required source checks/build  | Pending     | Exact commands/results and inherited failures.                                                 |
+| Preview installation/readback | Pending     | Backup, artifact match and preserved state.                                                    |
 
 Update this table as work progresses. If authentication requires user participation, finish independent code and fixture work first, state the exact remaining step and retain the corresponding gate as pending. A registered client ID alone is not successful authentication.
 
@@ -68,3 +68,17 @@ The Google Tasks adapter reads selected lists with a shared 20-page/2,000-item b
 Google authorization now accepts source-specific scopes, a display label and a validation callback. The new backend uses independent credentials and checks identity/list access before saving replacement tokens. Existing Calendar defaults remain covered. The shared HTTP wrapper uses RequestGate, cancellation and scoped authorization errors. GitHub rate-limit classification also handles GraphQL errors carried in HTTP 200.
 
 Checks: 87 tests passed across source references, source session, Google Tasks provider, source HTTP, existing Google Calendar API and request-gate suites. TypeScript, targeted ESLint with zero warnings and formatting checks passed. These are code/fixture results; provider registration, live authorization, pane/import/AI wiring and installed UI are still pending.
+
+### GitHub backend and device authorization
+
+The read adapter covers assigned issues, selected repositories and user/organization Projects v2. Issue node identity is shared across these views. Memberships retain independent Project item IDs, order, status and optional date fields. The view projection changes grouping/order/date without mutating the canonical issue. Drafts, pull requests, redacted items and draft conversion are represented explicitly. Labels remain literal, priority stays neutral, and descriptions have a bounded cache size.
+
+Reads share the page/item budget. REST pagination keeps a fixed page size when continuing. Missing/repeated GraphQL cursors and partial permissions cannot claim complete coverage. Field discovery uses GitHub's common field interface and keeps single-select/date mappings by ID. Private work is excluded from the cached source unless enabled; repository metadata and Project content provide its privacy flag.
+
+Device authorization shows a code and official verification URL, coalesces sign-in, respects pending/slow-down intervals, and stops on cancel/expiry. Account/source reads validate before token replacement. Expiring tokens refresh in one flight and rotate through one SecretStorage value. Canceling sign-in preserves the existing credential. Private repository scope is requested only after explicit opt-in. A missing owned app registration is a setup prerequisite, with no network attempt or false connected state.
+
+Startup now checks the credential's account identity before publishing cached rows. Google Tasks keeps an account marker that is invalidated during account replacement, so a restart during sign-in cannot attach old cached rows to the new grant. Incomplete multi-container reads can retain their previously cached memberships.
+
+Checks: 117 tests passed across ten focused suites, including the existing task browser, optimistic interactions, Calendar API and request gate. TypeScript, formatting and targeted lint passed. Strict source lint also passed after using the common generation guard. The exact Project query was extracted from source and submitted through the existing CLI connection with a deliberately nonexistent node ID. GitHub returned only NOT_FOUND for that ID, confirming schema/query validation. This is distinct from owned-app sign-in and live Project data acceptance.
+
+Owned app registration, real authorization/readback, source-pane/import/AI wiring and installed acceptance remain pending. The installed plugin has not changed.

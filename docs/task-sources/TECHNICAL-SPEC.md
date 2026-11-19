@@ -94,6 +94,8 @@ Extend planning task kinds for Google Tasks and GitHub while accepting existing 
 
 AI buckets resolve references against current sources and reuse ordinary task rows. Proposals authorize schedule review through the established facade. Explicit source mutations stay with their source-pane action.
 
+Task notes and issue bodies are source content, not instructions. They cannot authorize actions or override scheduling rules and locks.
+
 Accept old Todoist caches, secret keys, weak links, pending imports, planning drafts and saved pane values. New optional metadata defaults conservatively. Keep new cache files private and ignored by Git before they are created.
 
 ## Delivery

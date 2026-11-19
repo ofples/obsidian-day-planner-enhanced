@@ -13,6 +13,7 @@ export interface SourceReadResult {
 
 export interface TaskSourceBackend {
   connected(): boolean;
+  accountId?(): string | undefined;
   connect(): Promise<SourceReadResult>;
   read(previous?: SourceReadResult): Promise<SourceReadResult>;
   disconnect(): void;
@@ -70,18 +71,29 @@ export class TaskSourceSession {
     private readonly storage: TaskSourceCacheStorage,
   ) {}
 
+  private isCurrent(generation: number) {
+    return !this.closed && generation === this.generation;
+  }
+
   async initialize() {
     const generation = this.generation;
-    const cached = await this.storage.read();
-    if (this.closed || generation !== this.generation) return;
-    const connected = this.backend.connected();
-    this.state.update((value) => ({
-      ...value,
-      ...(connected && cached?.snapshot.provider === this.provider
-        ? cached
-        : {}),
-      connected,
-    }));
+    try {
+      const cached = await this.storage.read();
+      if (!this.isCurrent(generation)) return;
+      const connected = this.backend.connected();
+      const accountId = this.backend.accountId?.();
+      this.state.update((value) => ({
+        ...value,
+        ...(connected &&
+        cached?.snapshot.provider === this.provider &&
+        (!this.backend.accountId || accountId === cached.snapshot.account.id)
+          ? cached
+          : {}),
+        connected,
+      }));
+    } catch (error) {
+      if (this.isCurrent(generation)) this.fail(error);
+    }
   }
 
   connect() {
@@ -111,7 +123,7 @@ export class TaskSourceSession {
     const pending = (async () => {
       try {
         await this.mutation;
-        if (this.closed || generation !== this.generation) return;
+        if (!this.isCurrent(generation)) return;
         const current = get(this.state);
         const previous =
           more && current.snapshot && current.coverage
@@ -120,7 +132,7 @@ export class TaskSourceSession {
         const result = connect
           ? await this.backend.connect()
           : await this.backend.read(previous);
-        if (this.closed || generation !== this.generation) return;
+        if (!this.isCurrent(generation)) return;
         if (result.snapshot.provider !== this.provider)
           throw new TaskReadError("The source returned a different provider.");
         if (
@@ -156,10 +168,26 @@ export class TaskSourceSession {
             result.snapshot.projects.map((project) => [project.id, project]),
           );
           for (const task of current.snapshot.tasks)
-            if (incomplete.has(task.projectId) && !tasks.has(task.id))
+            if (
+              !(
+                task.source?.private &&
+                result.snapshot.account.capabilities?.privateAccess === false
+              ) &&
+              (incomplete.has(task.projectId) ||
+                task.source?.memberships?.some((member) =>
+                  incomplete.has(member.containerId),
+                )) &&
+              !tasks.has(task.id)
+            )
               tasks.set(task.id, task);
+          const usedProjects = new Set(
+            [...tasks.values()].map((task) => task.projectId),
+          );
           for (const project of current.snapshot.projects)
-            if (incomplete.has(project.id) && !projects.has(project.id))
+            if (
+              (incomplete.has(project.id) || usedProjects.has(project.id)) &&
+              !projects.has(project.id)
+            )
               projects.set(project.id, project);
           result.snapshot = {
             ...result.snapshot,
@@ -181,7 +209,7 @@ export class TaskSourceSession {
         }));
         await this.save();
       } catch (error) {
-        if (!this.closed && generation === this.generation) this.fail(error);
+        if (this.isCurrent(generation)) this.fail(error);
       } finally {
         if (generation === this.generation)
           this.state.update((value) => ({ ...value, loading: false }));
@@ -258,11 +286,11 @@ export class TaskSourceSession {
       try {
         // Persist uncertainty before sending. A restart may verify, never replay, this action.
         await this.save();
-        if (this.closed || generation !== this.generation) return;
+        if (!this.isCurrent(generation)) return;
         prepared = true;
         current = await this.backend.complete!(task);
       } catch (error) {
-        if (this.closed || generation !== this.generation) return;
+        if (!this.isCurrent(generation)) return;
         this.replace(task);
         if (
           !prepared ||
@@ -276,14 +304,14 @@ export class TaskSourceSession {
         await this.save();
         return;
       }
-      if (this.closed || generation !== this.generation) return;
+      if (!this.isCurrent(generation)) return;
       this.replace(current);
       this.clearVerification(task.id);
       // A cache failure after confirmation must not undo the source's confirmed result.
       await this.save();
     })()
       .catch((error: unknown) => {
-        if (!this.closed && generation === this.generation) this.fail(error);
+        if (this.isCurrent(generation)) this.fail(error);
       })
       .finally(() => {
         if (this.mutation === pending) this.mutation = undefined;
@@ -304,13 +332,13 @@ export class TaskSourceSession {
     const pending = (async () => {
       try {
         const current = await this.backend.get!(resolved.task);
-        if (this.closed || generation !== this.generation) return;
+        if (!this.isCurrent(generation)) return;
         if (current) this.replace(current);
         else this.replace({ ...resolved.task, completed: true });
         this.clearVerification(resolved.task.id);
         await this.save();
       } catch (error) {
-        if (!this.closed && generation === this.generation) this.fail(error);
+        if (this.isCurrent(generation)) this.fail(error);
       }
     })().finally(() => {
       if (this.mutation === pending) this.mutation = undefined;

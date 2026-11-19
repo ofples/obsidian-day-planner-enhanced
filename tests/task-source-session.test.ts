@@ -64,6 +64,17 @@ function fixture() {
 }
 
 describe("task source sessions", () => {
+  test("a cached snapshot from another credential account is not published on startup", async () => {
+    const { backend, storage, session } = fixture();
+    backend.accountId = () => "new-account";
+    storage.read = async () => ({
+      ...result("old-account"),
+      verificationRequired: [],
+    });
+    await session.initialize();
+    expect(get(session.state).connected).toBe(true);
+    expect(get(session.state).snapshot).toBeNull();
+  });
   test("refresh is single flight, fresh opening reads cache, and failed reads keep last good data", async () => {
     const { backend, session } = fixture();
     await session.connect();

@@ -35,8 +35,8 @@ export class GoogleTasksBackend implements TaskSourceBackend {
   private generation = 0;
 
   constructor(
-    app: App,
-    key: string,
+    private readonly app: App,
+    private readonly key: string,
     private readonly registration: () => GoogleAppConfig | null,
     private readonly selection: () => GoogleTasksSelection,
     private readonly timezone: () => string,
@@ -56,7 +56,11 @@ export class GoogleTasksBackend implements TaskSourceBackend {
     return this.auth.isConnected(this.registration()?.clientId);
   }
 
-  private app() {
+  accountId() {
+    return this.app.secretStorage.getSecret(`${this.key}-account`) ?? undefined;
+  }
+
+  private appConfig() {
     const config = this.registration();
     if (!config?.clientId)
       throw new TaskReadError(
@@ -67,7 +71,7 @@ export class GoogleTasksBackend implements TaskSourceBackend {
 
   private async provider(access?: string, granted?: readonly string[]) {
     const generation = this.generation;
-    const config = this.app();
+    const config = this.appConfig();
     const canStart = () => generation === this.generation;
     const token = async () => {
       if (access) return access;
@@ -94,6 +98,8 @@ export class GoogleTasksBackend implements TaskSourceBackend {
       await profileHttp.request("/v1/userinfo"),
     );
     if (!canStart()) throw new RequestCancelledError();
+    if (!access)
+      this.app.secretStorage.setSecret(`${this.key}-account`, profile.sub);
     const http = new TaskSourceHttp(
       "https://tasks.googleapis.com",
       "Google Tasks",
@@ -122,7 +128,9 @@ export class GoogleTasksBackend implements TaskSourceBackend {
   }
 
   async connect(): Promise<SourceReadResult> {
-    const config = this.app();
+    const config = this.appConfig();
+    this.generation++;
+    this.app.secretStorage.setSecret(`${this.key}-account`, "");
     this.gate.resetForUserRetry();
     const scope = this.selection().allowCompletion
       ? googleTasksEditScope
@@ -141,6 +149,10 @@ export class GoogleTasksBackend implements TaskSourceBackend {
     });
     if (!staged)
       throw new TaskReadError("Google Tasks sign-in did not finish.");
+    this.app.secretStorage.setSecret(
+      `${this.key}-account`,
+      staged.snapshot.account.id,
+    );
     return staged;
   }
 
@@ -162,6 +174,7 @@ export class GoogleTasksBackend implements TaskSourceBackend {
   disconnect() {
     this.generation++;
     this.auth.disconnect();
+    this.app.secretStorage.setSecret(`${this.key}-account`, "");
   }
 
   cancel() {

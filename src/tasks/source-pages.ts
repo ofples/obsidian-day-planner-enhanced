@@ -50,13 +50,14 @@ export async function readSourcePages<T>(
     cursor?: string,
   ) => Promise<{ items: T[]; next?: string }>,
   start?: SourcePageState,
+  minimumPageSize = 1,
 ): Promise<{ items: T[]; state: SourcePageState }> {
   if (start?.complete || start?.error) return { items: [], state: start };
   let cursor = start?.cursor;
   const seen = new Set<string>();
   if (cursor) seen.add(cursor);
   const items: T[] = [];
-  while (budget.available) {
+  while (budget.available && budget.pageSize >= minimumPageSize) {
     const limit = budget.reserve();
     const page = await fetch(limit, cursor);
     if (page.items.length > limit)

@@ -28,6 +28,8 @@ export const taskSourceMetadataSchema = z.object({
   state: z.enum(["open", "closed"]).optional(),
   number: z.number().int().positive().optional(),
   assignees: z.array(z.string()).optional(),
+  assignedToMe: z.boolean().optional(),
+  private: z.boolean().optional(),
   milestoneDate: z.iso.date().optional(),
   descriptionTruncated: z.boolean().optional(),
 });
@@ -36,6 +38,19 @@ export const taskContainerMetadataSchema = z.object({
   kind: z.enum(["list", "repository", "project"]),
   nativeId: z.string().min(1),
   url: z.string().optional(),
+  fields: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        name: z.string(),
+        type: z.enum(["single-select", "date"]),
+        options: z
+          .array(z.object({ id: z.string(), name: z.string() }))
+          .optional(),
+      }),
+    )
+    .optional(),
+  fieldsComplete: z.boolean().optional(),
 });
 
 export type TaskSourceReference = z.infer<typeof taskSourceReferenceSchema>;
