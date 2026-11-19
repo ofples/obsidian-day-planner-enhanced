@@ -22,6 +22,8 @@ import type { NoteTaskDrag } from "../tasks/note-drag";
 import type { TaskReconciler } from "../tasks/reconcile";
 import type { TaskScheduler } from "../tasks/schedule";
 import type { TaskService } from "../tasks/service";
+import type { TaskSourceCollection } from "../tasks/source-collection";
+import type { TaskSourceReference } from "../tasks/source-types";
 import { TaskReadError, type ProviderTask } from "../tasks/types";
 
 import TasksPane from "./components/task-pane-root.svelte";
@@ -54,6 +56,7 @@ export class TasksView extends ItemView {
     private readonly store?: Pick<AppStore, "subscribe">,
     private readonly daily?: Pick<PeriodicNotes, "createDailyNotePath">,
     private readonly planning?: AiPlanningService,
+    private readonly sources?: TaskSourceCollection,
   ) {
     super(leaf);
   }
@@ -161,13 +164,19 @@ export class TasksView extends ItemView {
         resolveImported: (uid: string) => this.calendar?.importedSource?.(uid),
         openConnections: this.openConnections,
         planning: this.planning,
-        scheduleImported: (task: ProviderTask) => {
+        sources: this.sources,
+        scheduleImported: (
+          task: ProviderTask,
+          reference?: TaskSourceReference,
+        ) => {
           if (this.scheduler)
             new TaskScheduleModal(
               this.app,
               this.scheduler,
               task,
               this.defaultDuration(),
+              undefined,
+              reference,
             ).open();
         },
         openNote: (path: string, line: number) =>

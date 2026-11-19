@@ -300,6 +300,7 @@ export class GoogleCalendarAuth {
               options.scopes ??
               calendarScopes;
             await options.validate?.(tokens.access_token, scopes);
+            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Cancellation can settle sign-in while source validation is pending.
             if (settled) return;
             tokens.scope = scopes.join(" ");
             this.accept(tokens, clientId);

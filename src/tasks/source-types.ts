@@ -54,5 +54,6 @@ export const taskContainerMetadataSchema = z.object({
 });
 
 export type TaskSourceReference = z.infer<typeof taskSourceReferenceSchema>;
+export type TaskSourceSelection = string | TaskSourceReference;
 export type TaskSourceMetadata = z.infer<typeof taskSourceMetadataSchema>;
 export type TaskMembership = z.infer<typeof taskMembershipSchema>;

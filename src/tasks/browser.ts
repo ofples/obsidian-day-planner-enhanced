@@ -1,20 +1,45 @@
 import { DateTime } from "luxon";
 import { z } from "zod";
 
+import type { TaskPaneSource } from "./source-settings";
 import type { ProviderTask, TaskSnapshot } from "./types";
 
-export const taskViewStateSchema = z.object({
+const sourceViewStateSchema = z.object({
   groupBy: z.enum(["date", "project"]).default("date"),
   query: z.string().default(""),
   projectId: z.string().default(""),
   selectedId: z.string().nullable().default(null),
   collapsed: z.array(z.string()).default([]),
-  source: z.enum(["todoist", "notes", "overview"]).optional(),
   sortBy: z.enum(["defined", "priority", "due", "created"]).optional(),
   showAdded: z.boolean().optional(),
+  githubView: z.enum(["assigned", "repository", "project"]).optional(),
+  githubContainerId: z.string().optional(),
+  githubStatusIds: z.array(z.string()).optional(),
+});
+export const taskViewStateSchema = sourceViewStateSchema.extend({
+  source: z
+    .enum(["todoist", "notes", "overview", "google-tasks", "github"])
+    .optional(),
   scannedNotePaths: z.array(z.string()).optional(),
+  sourceViews: z.record(z.string(), sourceViewStateSchema).optional(),
 });
 export type TaskViewState = z.infer<typeof taskViewStateSchema>;
+
+export function switchTaskSource(
+  current: TaskViewState,
+  source: TaskPaneSource,
+): TaskViewState {
+  const sourceViews = {
+    ...current.sourceViews,
+    [current.source ?? "todoist"]: sourceViewStateSchema.parse(current),
+  };
+  return {
+    ...current,
+    ...sourceViewStateSchema.parse(sourceViews[source] ?? {}),
+    source,
+    sourceViews,
+  };
+}
 
 /** Shared iterative task forest for pane details and schedule export. */
 export function taskSubtree(snapshot: TaskSnapshot, task: ProviderTask) {
@@ -96,6 +121,9 @@ export function taskGroups(
             task.title,
             task.description,
             projects.get(task.projectId)?.name ?? "",
+            task.source?.nativeContainerId ?? "",
+            task.source?.number ? `#${task.source.number}` : "",
+            ...(task.source?.assignees ?? []),
             ...task.labels,
           ]
             .join(" ")

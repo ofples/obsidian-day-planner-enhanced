@@ -64,6 +64,22 @@ function fixture() {
 }
 
 describe("task source sessions", () => {
+  test("confirmed completion refreshes once for child state or a following instance", async () => {
+    const { backend, session } = fixture();
+    Object.assign(backend, { refreshAfterCompletion: true });
+    await session.connect();
+    const snapshot = get(session.state).snapshot!;
+    backend.read = vi.fn(async () => ({
+      ...result(),
+      snapshot: { ...result().snapshot, tasks: [task("next-instance")] },
+    }));
+    await session.complete(taskSourceReference(snapshot, snapshot.tasks[0]!));
+    expect(backend.complete).toHaveBeenCalledTimes(1);
+    expect(backend.read).toHaveBeenCalledTimes(1);
+    expect(get(session.state).snapshot?.tasks[0]?.id).toBe("next-instance");
+    await session.refresh();
+    expect(backend.read).toHaveBeenCalledTimes(1);
+  });
   test("a cached snapshot from another credential account is not published on startup", async () => {
     const { backend, storage, session } = fixture();
     backend.accountId = () => "new-account";

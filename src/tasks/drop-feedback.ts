@@ -16,6 +16,7 @@ export type DropDestination =
   | { path: string; offset: number; before: string; timePrefix?: string };
 
 export interface PendingDrop {
+  source?: { provider: string; accountId: string };
   id: string;
   raw: string;
   destination: DropDestination;

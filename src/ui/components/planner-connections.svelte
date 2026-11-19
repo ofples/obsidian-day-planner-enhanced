@@ -4,14 +4,22 @@
 
   import type { GoogleCalendarSync } from "../../google-calendar/service";
   import type { TaskService } from "../../tasks/service";
+  import type { TaskSourceCollection } from "../../tasks/source-collection";
+
+  import TaskSourceConnections from "./task-source-connections.svelte";
 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Svelte validates annotated component props.
   const {
     service,
     calendar,
     close,
-  }: { service: TaskService; calendar: GoogleCalendarSync; close: () => void } =
-    $props();
+    sources,
+  }: {
+    service: TaskService;
+    calendar: GoogleCalendarSync;
+    close: () => void;
+    sources?: TaskSourceCollection;
+  } = $props();
   const taskState = untrack(() => service.state);
   let googleConnected = $state(untrack(() => calendar.isConnected()));
   let googleBusy = $state(false);
@@ -137,6 +145,7 @@
         {todoistError}
       </p>{/if}
   </div>
+  {#if sources}<TaskSourceConnections {sources} />{/if}
 </section>
 
 <style>

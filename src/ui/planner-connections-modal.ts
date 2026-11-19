@@ -3,6 +3,7 @@ import { mount, unmount } from "svelte";
 
 import type { GoogleCalendarSync } from "../google-calendar/service";
 import type { TaskService } from "../tasks/service";
+import type { TaskSourceCollection } from "../tasks/source-collection";
 
 import PlannerConnections from "./components/planner-connections.svelte";
 
@@ -12,6 +13,7 @@ export class PlannerConnectionsModal extends Modal {
     app: App,
     private readonly service: TaskService,
     private readonly calendar: GoogleCalendarSync,
+    private readonly sources?: TaskSourceCollection,
   ) {
     super(app);
   }
@@ -22,6 +24,7 @@ export class PlannerConnectionsModal extends Modal {
       props: {
         service: this.service,
         calendar: this.calendar,
+        sources: this.sources,
         close: () => this.close(),
       },
     });

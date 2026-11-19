@@ -5,11 +5,11 @@ import { getTimeFromLine, getTimeRangeMatch } from "../parser/parser";
 import type { DayPlannerSettings } from "../settings";
 import { captureTitle, parseCaptureCandidates } from "../tasks/capture-parser";
 import {
-  formatTaskLink,
-  stripTaskLink,
-  taskLinkIdentity,
-  taskLinkUrl,
-} from "../tasks/weak-links";
+  formatSourceUrl as formatTaskLink,
+  stripSourceLinks as stripTaskLink,
+  sourceLinkIdentity as taskLinkIdentity,
+  sourceLinkUrl as taskLinkUrl,
+} from "../tasks/source-links";
 import { detectIndentation, translateIndentation } from "../util/markdown";
 
 import {
@@ -283,6 +283,7 @@ export function renderBlock(
     ? formatTaskLink(
         selectedUrl,
         previousLink?.url === selectedUrl ? previousLink.occurrence : undefined,
+        previousLink?.url === selectedUrl ? previousLink.reference : undefined,
       )
     : "";
   let remaining = lines.slice(1);

@@ -44,7 +44,7 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
     const definitions: SettingDefinitionItem[] = [
       {
         name: "Connections",
-        desc: "Manage Google Calendar and Todoist sign-in.",
+        desc: "Manage Google Calendar, Todoist, Google Tasks and GitHub sign-in and source selection.",
         render: (setting) => {
           setting.addButton((button) =>
             button
@@ -747,7 +747,7 @@ export class DayPlannerSettingsTab extends PluginSettingTab {
       .setHeading("Connections")
       .addSetting((setting) =>
         setting
-          .setName("Google Calendar and Todoist")
+          .setName("Calendars and task sources")
           .setDesc("Sign in, sign out or switch accounts.")
           .addButton((button) =>
             button

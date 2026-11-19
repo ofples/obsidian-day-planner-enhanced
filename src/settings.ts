@@ -6,6 +6,10 @@ import {
   taskCaptureSettingsSchema,
   type TaskCaptureSettings,
 } from "./tasks/capture-settings";
+import {
+  taskSourcesSettingsSchema,
+  type TaskSourcesSettings,
+} from "./tasks/source-settings";
 
 export interface IcalConfig {
   name: string;
@@ -59,6 +63,7 @@ export type TimelineColumnType = "timeTracker" | "planner";
 export type TimelineColumns = Record<TimelineColumnType, boolean>;
 
 export interface DayPlannerSettings {
+  taskSources: TaskSourcesSettings;
   experimentalTodoistSync: boolean;
   weakTodoistSync: boolean;
   taskCapture: TaskCaptureSettings;
@@ -109,6 +114,7 @@ export interface DayPlannerSettings {
 }
 
 export const defaultSettings: DayPlannerSettings = {
+  taskSources: taskSourcesSettingsSchema.parse({}),
   scheduleExportFolder: "Schedule Exports",
   experimentalTodoistSync: false,
   weakTodoistSync: true,
@@ -194,6 +200,9 @@ export function mergeStoredSettings(
   return {
     ...defaultSettings,
     ...currentSettings,
+    taskSources: taskSourcesSettingsSchema.parse(
+      currentSettings.taskSources ?? {},
+    ),
     scheduleExportFolder:
       typeof currentSettings.scheduleExportFolder === "string"
         ? currentSettings.scheduleExportFolder

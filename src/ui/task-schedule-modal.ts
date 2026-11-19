@@ -3,6 +3,7 @@ import { mount, unmount } from "svelte";
 
 import type { TaskScheduler } from "../tasks/schedule";
 import type { ScheduleInterval } from "../tasks/schedule-types";
+import type { TaskSourceReference } from "../tasks/source-types";
 import type { ProviderTask } from "../tasks/types";
 
 import TaskPanelSchedule from "./components/task-panel-schedule.svelte";
@@ -17,6 +18,7 @@ export class TaskScheduleModal extends Modal {
     private readonly task: ProviderTask,
     private readonly defaultDuration: number,
     private readonly initial?: ScheduleInterval,
+    private readonly reference?: TaskSourceReference,
   ) {
     super(app);
   }
@@ -31,6 +33,7 @@ export class TaskScheduleModal extends Modal {
         task: this.task,
         defaultDuration: this.defaultDuration,
         initial: this.initial,
+        reference: this.reference,
         saved: () => this.close(),
         cancel: () => this.close(),
       },

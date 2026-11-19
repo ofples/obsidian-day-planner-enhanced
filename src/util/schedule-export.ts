@@ -7,7 +7,7 @@ import type { ListItemEntryWithChildren } from "../redux/index/index-slice";
 import type { DayPlannerSettings } from "../settings";
 import { parseCaptureCandidates } from "../tasks/capture-parser";
 import { frameHeading, singleFrameChild } from "../tasks/frame";
-import { stripTaskLink } from "../tasks/weak-links";
+import { stripSourceLinks as stripTaskLink } from "../tasks/source-links";
 import { isRemote, type TimelineTimeBlock } from "../time-block-types";
 
 import type { Moment } from "./obsidian-moment";

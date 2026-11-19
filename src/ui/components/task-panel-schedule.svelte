@@ -8,6 +8,7 @@
     resolveScheduleInput,
     type ScheduleInterval,
   } from "../../tasks/schedule-types";
+  import type { TaskSourceReference } from "../../tasks/source-types";
   import type { ProviderTask } from "../../tasks/types";
 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Svelte validates annotated component props.
@@ -16,6 +17,7 @@
     task,
     defaultDuration,
     initial,
+    reference,
     saved,
     cancel,
   }: {
@@ -23,14 +25,23 @@
     task: ProviderTask;
     defaultDuration: number;
     initial?: ScheduleInterval;
+    reference?: TaskSourceReference;
     saved: () => void;
     cancel: () => void;
   } = $props();
   const finish = untrack(() => saved);
   const opened = untrack(() => ({
     task,
-    projection: scheduler.projection(task.id),
-    interval: initial ?? scheduler.projection(task.id)?.interval,
+    reference,
+    projection:
+      reference && reference.provider !== "todoist"
+        ? undefined
+        : scheduler.projection(task.id),
+    interval:
+      initial ??
+      (reference && reference.provider !== "todoist"
+        ? undefined
+        : scheduler.projection(task.id)?.interval),
   }));
   const zone = DateTime.local().zoneName;
   const start = opened.interval
@@ -44,7 +55,7 @@
         ? (Date.parse(opened.interval.end) -
             Date.parse(opened.interval.start)) /
           60_000
-        : scheduler.duration(task, defaultDuration),
+        : scheduler.duration(task, defaultDuration, reference),
     ),
   );
   let offset = $state<string>(opened.interval ? String(start.offset) : "");
@@ -63,7 +74,7 @@
     error = "";
     try {
       await scheduler.place(
-        opened.task.id,
+        opened.reference ?? opened.task.id,
         resolveScheduleInput(
           date,
           time,

@@ -2,6 +2,8 @@ import { get, writable } from "svelte/store";
 import { z } from "zod";
 
 import type { TaskService } from "./service";
+import type { TaskSourceCollection } from "./source-collection";
+import type { TaskSourceReference } from "./source-types";
 import { TaskReadError, type ProviderTask } from "./types";
 
 export const taskDragMime = "application/x-day-planner-task+json";
@@ -19,16 +21,32 @@ export class TaskDrag {
     provider: string;
     accountId: string;
     expires: number;
+    reference?: TaskSourceReference;
   };
-  constructor(private readonly service: TaskService) {}
+  constructor(
+    private readonly service: TaskService,
+    private readonly sources?: TaskSourceCollection,
+  ) {}
 
-  start(task: ProviderTask, transfer: DataTransfer) {
+  start(
+    task: ProviderTask,
+    transfer: DataTransfer,
+    reference?: TaskSourceReference,
+  ) {
+    const resolved = reference ? this.sources?.resolve(reference) : undefined;
     const browser = get(this.service.state);
+    const snapshot = resolved?.snapshot ?? browser.snapshot;
+    const legacyReady =
+      browser.writable || (browser.readOnly && browser.connected);
     if (
-      !(browser.writable || (browser.readOnly && browser.connected)) ||
-      !browser.snapshot ||
-      task.completed ||
-      task.id.startsWith("local-")
+      (reference?.provider === "todoist" && !legacyReady) ||
+      !snapshot ||
+      (reference
+        ? !resolved || resolved.task.completed || resolved.task.id !== task.id
+        : !(browser.writable || (browser.readOnly && browser.connected)) ||
+          !browser.snapshot ||
+          task.completed ||
+          task.id.startsWith("local-"))
     )
       throw new TaskReadError(
         "Wait for this task to finish syncing before dragging it.",
@@ -36,9 +54,10 @@ export class TaskDrag {
     this.active = {
       nonce: crypto.randomUUID(),
       taskId: task.id,
-      provider: browser.snapshot.provider,
-      accountId: browser.snapshot.account.id,
+      provider: snapshot.provider,
+      accountId: snapshot.account.id,
       expires: Date.now() + 120_000,
+      ...(reference ? { reference } : {}),
     };
     transfer.setData(
       taskDragMime,
@@ -54,6 +73,17 @@ export class TaskDrag {
   }
 
   current() {
+    if (this.active?.reference) {
+      if (this.active.expires < Date.now()) return null;
+      const browser = get(this.service.state);
+      if (
+        this.active.reference.provider === "todoist" &&
+        !(browser.writable || (browser.readOnly && browser.connected))
+      )
+        return null;
+      const resolved = this.sources?.resolve(this.active.reference);
+      return resolved && !resolved.task.completed ? resolved.task : null;
+    }
     const snapshot = get(this.service.state).snapshot,
       active = this.active;
     if (
@@ -94,7 +124,11 @@ export class TaskDrag {
       throw new TaskReadError(
         "This task drag belongs to another vault, account or session. Start a fresh drag.",
       );
-    return { task, id: payload.data.nonce };
+    return {
+      task,
+      id: payload.data.nonce,
+      ...(this.active.reference ? { reference: this.active.reference } : {}),
+    };
   }
 
   cancel() {

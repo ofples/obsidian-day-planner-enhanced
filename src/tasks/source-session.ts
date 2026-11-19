@@ -12,6 +12,7 @@ export interface SourceReadResult {
 }
 
 export interface TaskSourceBackend {
+  readonly refreshAfterCompletion?: boolean;
   connected(): boolean;
   accountId?(): string | undefined;
   connect(): Promise<SourceReadResult>;
@@ -92,12 +93,34 @@ export class TaskSourceSession {
         connected,
       }));
     } catch (error) {
-      if (this.isCurrent(generation)) this.fail(error);
+      if (this.isCurrent(generation)) {
+        this.state.update((value) => ({
+          ...value,
+          connected: this.isConnected(),
+        }));
+        this.fail(error);
+      }
     }
   }
 
   connect() {
     return this.runRead(true);
+  }
+
+  isConnected() {
+    try {
+      return this.backend.connected();
+    } catch {
+      return false;
+    }
+  }
+
+  accountId() {
+    try {
+      return this.backend.accountId?.();
+    } catch {
+      return undefined;
+    }
   }
 
   refresh(manual = false, more = false) {
@@ -275,6 +298,7 @@ export class TaskSourceSession {
       return this.verify(ref);
     const generation = this.generation;
     const task = resolved.task;
+    let confirmed = false;
     const pending = (async () => {
       this.state.update((value) => ({
         ...value,
@@ -305,6 +329,7 @@ export class TaskSourceSession {
         return;
       }
       if (!this.isCurrent(generation)) return;
+      confirmed = true;
       this.replace(current);
       this.clearVerification(task.id);
       // A cache failure after confirmation must not undo the source's confirmed result.
@@ -317,7 +342,13 @@ export class TaskSourceSession {
         if (this.mutation === pending) this.mutation = undefined;
       });
     this.mutation = pending;
-    return pending;
+    return pending.then(() =>
+      confirmed &&
+      this.backend.refreshAfterCompletion &&
+      this.isCurrent(generation)
+        ? this.refresh(true)
+        : undefined,
+    );
   }
 
   verify(ref: TaskSourceReference) {
@@ -329,12 +360,14 @@ export class TaskSourceSession {
     );
     if (!resolved || !this.backend.get) return Promise.resolve();
     const generation = this.generation;
+    let confirmed = false;
     const pending = (async () => {
       try {
         const current = await this.backend.get!(resolved.task);
         if (!this.isCurrent(generation)) return;
         if (current) this.replace(current);
         else this.replace({ ...resolved.task, completed: true });
+        confirmed = !current || current.completed;
         this.clearVerification(resolved.task.id);
         await this.save();
       } catch (error) {
@@ -344,7 +377,13 @@ export class TaskSourceSession {
       if (this.mutation === pending) this.mutation = undefined;
     });
     this.mutation = pending;
-    return pending;
+    return pending.then(() =>
+      confirmed &&
+      this.backend.refreshAfterCompletion &&
+      this.isCurrent(generation)
+        ? this.refresh(true)
+        : undefined,
+    );
   }
 
   private replace(task: ProviderTask) {
@@ -384,16 +423,24 @@ export class TaskSourceSession {
       error: "",
       verificationRequired: [],
     });
-    return this.save();
+    return this.save().catch((error: unknown) => this.fail(error));
   }
 
   cancel() {
+    this.generation++;
+    this.pending = undefined;
     this.backend.cancel();
+    this.state.update((value) => ({ ...value, loading: false, error: "" }));
   }
 
   stop() {
     this.closed = true;
     this.generation++;
     this.backend.cancel();
+    this.state.update((value) => ({
+      ...value,
+      connected: false,
+      loading: false,
+    }));
   }
 }

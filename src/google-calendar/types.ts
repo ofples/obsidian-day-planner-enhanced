@@ -1,5 +1,8 @@
 import { calendarFrameChild, renameCalendarFrameChild } from "../tasks/frame";
-import { stripTaskLink, taskLinkUrl } from "../tasks/weak-links";
+import {
+  stripSourceLinks as stripTaskLink,
+  sourceLinkUrl as taskLinkUrl,
+} from "../tasks/source-links";
 import { normalizeListIndentation } from "../util/markdown";
 
 import {

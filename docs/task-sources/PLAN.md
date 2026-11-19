@@ -8,6 +8,8 @@ The baseline is f4050c7272fc36145140cc5a6b4ffbf92ed8bcc0, containing the 0.10.0 
 
 Read the [technical specification](TECHNICAL-SPEC.md), [acceptance cases](ACCEPTANCE.md) and [implementation goal](GOAL-PROMPT.md) alongside this plan.
 
+The [preview usage and setup guide](README.md) describes the implemented source controls and remaining live setup gates.
+
 ## First delivery
 
 | Area              | Included behavior                                                                                                                         |

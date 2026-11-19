@@ -10,7 +10,10 @@ import {
 } from "../service/request-gate";
 import type { DayPlannerSettings } from "../settings";
 import { calendarFrameChild } from "../tasks/frame";
-import { stripTaskLink, taskLinkUrl } from "../tasks/weak-links";
+import {
+  stripSourceLinks as stripTaskLink,
+  sourceLinkUrl as taskLinkUrl,
+} from "../tasks/source-links";
 
 import {
   googleQuotaError,

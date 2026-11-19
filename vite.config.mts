@@ -6,6 +6,24 @@ import { isNotVoid } from "typed-assert";
 import replace from "vite-plugin-filter-replace";
 import fs from "node:fs";
 
+function bundledGitHubClient() {
+  if (process.env.VITEST) return null;
+  const direct = process.env.DAY_PLANNER_GITHUB_CLIENT_ID?.trim();
+  const value =
+    direct ||
+    (fs.existsSync("github-oauth-client.public.json")
+      ? (
+          JSON.parse(
+            fs.readFileSync("github-oauth-client.public.json", "utf8"),
+          ) as { clientId?: unknown }
+        ).clientId
+      : null);
+  if (!value) return null;
+  if (typeof value !== "string" || !/^[\w.-]{1,200}$/.test(value))
+    throw new Error("GitHub app configuration needs a public OAuth client ID.");
+  return value;
+}
+
 function bundledGoogleApp() {
   if (process.env.VITEST) return null;
   const path =
@@ -55,6 +73,7 @@ function replaceReduxRandomActionSeparator() {
 
 export default defineConfig((env) => ({
   define: {
+    registeredGitHubClientId: JSON.stringify(bundledGitHubClient()),
     registeredGoogleAppConfig: JSON.stringify(bundledGoogleApp()),
     "process.env.NODE_ENV": JSON.stringify(
       process.env.NODE_ENV || "development",

@@ -30,6 +30,7 @@ const profileSchema = z.object({
 
 /** Shares Google's loopback flow, but owns independent credentials and consent. */
 export class GoogleTasksBackend implements TaskSourceBackend {
+  readonly refreshAfterCompletion = true;
   readonly auth: GoogleCalendarAuth;
   readonly gate = new RequestGate();
   private generation = 0;

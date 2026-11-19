@@ -241,6 +241,18 @@ export class GoogleCalendarSync {
     return googleClientId(this.getSettings().googleCalendar);
   }
 
+  appRegistration() {
+    const clientId = this.clientId();
+    const clientSecret =
+      !this.getSettings().googleCalendar.useCustomClient &&
+      bundledGoogleApp?.clientId === clientId
+        ? bundledGoogleApp.clientSecret
+        : this.app.secretStorage.getSecret(
+            `day-planner-google-${this.state.namespace}-client`,
+          );
+    return clientId && clientSecret ? { clientId, clientSecret } : null;
+  }
+
   private statePath() {
     return `${this.plugin.manifest.dir ?? `${this.app.vault.configDir}/plugins/${this.plugin.manifest.id}`}/gcal-state.json`;
   }

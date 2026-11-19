@@ -1,7 +1,7 @@
 import type { List, ListItem } from "mdast";
 
 import { fromMarkdown } from "../mdast/mdast";
-import { canonicalTaskUrl } from "../tasks/weak-links";
+import { canonicalSourceUrl as canonicalTaskUrl } from "../tasks/source-links";
 import { exportPlainText } from "../util/schedule-export";
 
 export const subtasksStart = "<!-- day-planner-subtasks:start -->";

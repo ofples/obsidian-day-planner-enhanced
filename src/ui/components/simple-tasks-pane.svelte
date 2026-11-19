@@ -11,10 +11,12 @@
     RefreshCw,
     Search,
     Settings,
+    ExternalLink,
     X,
   } from "lucide-svelte";
   import { DateTime } from "luxon";
   import { Notice } from "obsidian";
+  import { untrack } from "svelte";
   import {
     get,
     readable,
@@ -26,14 +28,28 @@
   import type { AiPlanningService } from "../../ai-scheduling/service";
   import { tasksAddedToNote } from "../../tasks/added-to-note";
   import { planningTaskSelection } from "../../tasks/ai-task-view";
-  import { taskDay, taskGroups, type TaskViewState } from "../../tasks/browser";
+  import {
+    taskDay,
+    taskGroups,
+    switchTaskSource,
+    type TaskViewState,
+  } from "../../tasks/browser";
   import type { CaptureCandidate } from "../../tasks/capture-parser";
+  import { githubTaskView } from "../../tasks/github-view";
   import type { NoteTaskDrag } from "../../tasks/note-drag";
   import { noteTaskRows } from "../../tasks/note-list";
   import type { ImportedTaskSource } from "../../tasks/plain-import";
   import type { TaskScheduler } from "../../tasks/schedule";
   import type { TaskService } from "../../tasks/service";
   import type { TaskSource } from "../../tasks/source";
+  import type { TaskSourceCollection } from "../../tasks/source-collection";
+  import { canonicalSourceUrl } from "../../tasks/source-links";
+  import { taskSourceReference } from "../../tasks/source-references";
+  import {
+    taskSourceChoices,
+    type TaskPaneSource,
+  } from "../../tasks/source-settings";
+  import type { TaskSourceReference } from "../../tasks/source-types";
   import type { ProviderTask } from "../../tasks/types";
   import { TaskRenderCache } from "../task-render-cache";
   import "../task-panel.css";
@@ -55,6 +71,7 @@
     weakCompletionEnabled = true,
     openNote,
     planning,
+    sources,
   }: {
     service: TaskService;
     scheduler?: TaskScheduler;
@@ -64,11 +81,12 @@
     noteContext?: Readable<{ currentPath: string; targetPath: string }>;
     resolveImported?: (uid: string) => TaskSource | undefined;
     connections?: () => void;
-    schedule: (task: ProviderTask) => void;
+    schedule: (task: ProviderTask, reference?: TaskSourceReference) => void;
     completeTask?: (task: ProviderTask) => void;
     weakCompletionEnabled?: boolean;
     openNote: (path: string, line: number) => void;
     planning?: AiPlanningService;
+    sources?: TaskSourceCollection;
   } = $props();
   const planningState = $derived(planning?.state ?? readable(null));
   const taskView = $derived($planningState?.taskView ?? null);
@@ -93,8 +111,31 @@
       });
     }
   });
-  const browser = $derived(service.state);
-  const snapshot = $derived($browser.snapshot);
+  const source = $derived($viewPreferences.source ?? "todoist");
+  const providerView = $derived(!["notes", "overview"].includes(source));
+  const sourceLabel = $derived(
+    taskSourceChoices.find((choice) => choice.id === source)?.label ?? "tasks",
+  );
+  const browser = $derived(sources?.browser(source) ?? service.state);
+  const sourceSettings = $derived(sources?.settings ?? readable(null));
+  const sourceSession = $derived(sources?.session(source));
+  const sourceStatus = $derived(sourceSession?.state ?? readable(null));
+  const snapshot = $derived(
+    source === "github" && $browser.snapshot
+      ? githubTaskView($browser.snapshot, {
+          kind: $viewPreferences.githubView ?? "assigned",
+          id: $viewPreferences.githubContainerId,
+          statusOptionIds: $viewPreferences.githubStatusIds,
+        })
+      : $browser.snapshot,
+  );
+  $effect(() => {
+    const selected = source;
+    if (selected === "google-tasks" || selected === "github")
+      untrack(() => {
+        void sources?.refresh(selected);
+      });
+  });
   const selection = $derived(
     taskView
       ? planningTaskSelection(
@@ -125,7 +166,6 @@
       ]),
     ),
   );
-  const source = $derived($viewPreferences.source ?? "todoist");
   const emptyImports = readable<Record<string, ImportedTaskSource>>({});
   const imports = $derived(scheduler?.importer.imports ?? emptyImports);
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Older pane hosts can omit drop feedback.
@@ -142,6 +182,14 @@
         })
       : new Set<string>();
     for (const drop of $pendingDrops) {
+      if (
+        !snapshot ||
+        (drop.source
+          ? drop.source.provider !== snapshot.provider ||
+            drop.source.accountId !== snapshot.account.id
+          : snapshot.provider !== "todoist")
+      )
+        continue;
       const path =
         "path" in drop.destination
           ? drop.destination.path
@@ -265,7 +313,7 @@
     try {
       if (!event.dataTransfer || !scheduler)
         throw new Error("Reopen the planner before importing tasks.");
-      scheduler.drag.start(task, event.dataTransfer);
+      scheduler.drag.start(task, event.dataTransfer, externalReference(task));
     } catch (error) {
       event.preventDefault();
       new Notice(
@@ -275,7 +323,44 @@
   }
   function choose(task: ProviderTask) {
     $viewPreferences = { ...$viewPreferences, selectedId: task.id };
-    schedule(task);
+    const ref = externalReference(task);
+    if (ref) schedule(task, ref);
+    else schedule(task);
+  }
+  function externalReference(task: ProviderTask) {
+    return sources &&
+      snapshot &&
+      (source === "google-tasks" || source === "github")
+      ? taskSourceReference(snapshot, task)
+      : undefined;
+  }
+  function chooseSource(next: TaskPaneSource) {
+    scheduler?.drag.cancel();
+    $viewPreferences = switchTaskSource($viewPreferences, next);
+  }
+  function complete(task: ProviderTask) {
+    const ref = externalReference(task);
+    if (ref && sources)
+      void sources
+        .complete(ref)
+        .catch(
+          (error: unknown) =>
+            new Notice(
+              error instanceof Error
+                ? error.message
+                : "Could not complete this task.",
+            ),
+        );
+    else completeTask?.(task);
+  }
+  function completionEnabled() {
+    return source === "google-tasks"
+      ? !$browser.loading &&
+          Boolean(
+            snapshot?.account.capabilities?.complete &&
+              $sourceSettings?.taskSources.googleTasks.allowCompletion,
+          )
+      : source !== "github" && Boolean(completeTask && weakCompletionEnabled);
   }
 </script>
 
@@ -288,14 +373,15 @@
             class="task-text-button"
             onclick={() => planning.show()}>Plan</button
           >{/if}
-        {#if source === "todoist"}
+        {#if providerView}
           <button
             class="task-icon-button"
             aria-label="Refresh tasks"
             disabled={$browser.loading ||
               !$browser.connected ||
               ($browser.retryAt ?? 0) > Date.now()}
-            onclick={() => service.refresh(true)}
+            onclick={() =>
+              sources?.refresh(source, true) ?? service.refresh(true)}
             title="Refresh tasks"
           >
             <RefreshCw
@@ -331,35 +417,138 @@
         {/each}
       </div>
     {/if}
-    <div class="task-source-tabs" aria-label="Task sources" role="tablist">
-      <button
-        aria-selected={source === "overview"}
-        onclick={() =>
-          ($viewPreferences = { ...$viewPreferences, source: "overview" })}
-        role="tab">{taskView ? "All sources" : "Overview"}</button
+    {#if sources}<label class="source-picker"
+        >Source<select
+          aria-label="Task source"
+          onchange={(event: Event & { currentTarget: HTMLSelectElement }) =>
+            chooseSource(event.currentTarget.value as TaskPaneSource)}
+          value={source}
+        >
+          {#each taskSourceChoices as choice}<option value={choice.id}
+              >{choice.label}</option
+            >{/each}
+        </select></label
+      >{:else}<div
+        class="task-source-tabs"
+        aria-label="Task sources"
+        role="tablist"
       >
-      <button
-        aria-selected={source === "todoist"}
-        onclick={() =>
-          ($viewPreferences = { ...$viewPreferences, source: "todoist" })}
-        role="tab"
-        ><span class="task-source-mark"><ListChecks size={15} /></span>Todoist
-        <span
-          class="task-connection-dot"
-          class:connected={$browser.connected}
-          aria-label={$browser.connected
-            ? "Todoist connected"
-            : "Todoist disconnected"}
-          role="img"
-        ></span>
-      </button>
-      <button
-        aria-selected={source === "notes"}
-        onclick={() =>
-          ($viewPreferences = { ...$viewPreferences, source: "notes" })}
-        role="tab"><FileText size={15} />Notes</button
-      >
-    </div>
+        <button
+          aria-selected={source === "overview"}
+          onclick={() =>
+            ($viewPreferences = { ...$viewPreferences, source: "overview" })}
+          role="tab">{taskView ? "All sources" : "Overview"}</button
+        >
+        <button
+          aria-selected={source === "todoist"}
+          onclick={() =>
+            ($viewPreferences = { ...$viewPreferences, source: "todoist" })}
+          role="tab"
+          ><span class="task-source-mark"><ListChecks size={15} /></span>Todoist
+          <span
+            class="task-connection-dot"
+            class:connected={$browser.connected}
+            aria-label={$browser.connected
+              ? "Todoist connected"
+              : "Todoist disconnected"}
+            role="img"
+          ></span>
+        </button>
+        <button
+          aria-selected={source === "notes"}
+          onclick={() =>
+            ($viewPreferences = { ...$viewPreferences, source: "notes" })}
+          role="tab"><FileText size={15} />Notes</button
+        >
+      </div>{/if}
+    {#if source === "github"}
+      <div class="task-filter-row">
+        <label
+          >View<select
+            aria-label="GitHub view"
+            onchange={(event: Event & { currentTarget: HTMLSelectElement }) => {
+              $viewPreferences = {
+                ...$viewPreferences,
+                githubView: event.currentTarget.value as
+                  | "assigned"
+                  | "repository"
+                  | "project",
+                githubContainerId: "",
+                projectId: "",
+                githubStatusIds: [],
+              };
+            }}
+            value={$viewPreferences.githubView ?? "assigned"}
+            ><option value="assigned">Assigned to me</option><option
+              value="repository">Repositories</option
+            ><option value="project">Projects</option></select
+          ></label
+        >
+        {#if $viewPreferences.githubView === "repository"}<label
+            >Repository<select
+              aria-label="GitHub repository"
+              onchange={(event) => {
+                $viewPreferences = {
+                  ...$viewPreferences,
+                  githubContainerId: event.currentTarget.value,
+                  projectId: "",
+                };
+              }}
+              value={$viewPreferences.githubContainerId ?? ""}
+              ><option value="">Choose repository</option
+              >{#each $sourceSettings?.taskSources.github.repositories ?? [] as repo}<option
+                  value={repo}>{repo}</option
+                >{/each}</select
+            ></label
+          >
+        {:else if $viewPreferences.githubView === "project"}<label
+            >Project<select
+              aria-label="GitHub Project"
+              onchange={(event) => {
+                $viewPreferences = {
+                  ...$viewPreferences,
+                  githubContainerId: event.currentTarget.value,
+                  projectId: "",
+                  githubStatusIds: [],
+                };
+              }}
+              value={$viewPreferences.githubContainerId ?? ""}
+              ><option value="">Choose Project</option
+              >{#each $sourceSettings?.taskSources.github.projects ?? [] as project}<option
+                  value={project.id}>{project.title}</option
+                >{/each}</select
+            ></label
+          >{/if}
+      </div>
+      {#if $viewPreferences.githubView === "project" && $viewPreferences.githubContainerId}
+        {@const project = $sourceSettings?.taskSources.github.projects.find(
+          (item) => item.id === $viewPreferences.githubContainerId,
+        )}
+        {@const status = snapshot?.projects
+          .find((item) => item.id === project?.id)
+          ?.source?.fields?.find(
+            (field) => field.id === project?.statusFieldId,
+          )}
+        {#if status}<label
+            >Status<select
+              aria-label="GitHub Project status"
+              onchange={(event) => {
+                $viewPreferences = {
+                  ...$viewPreferences,
+                  githubStatusIds: event.currentTarget.value
+                    ? [event.currentTarget.value]
+                    : [],
+                };
+              }}
+              value={$viewPreferences.githubStatusIds?.[0] ?? ""}
+              ><option value="">All statuses</option
+              >{#each status.options ?? [] as option}<option value={option.id}
+                  >{option.name}</option
+                >{/each}</select
+            ></label
+          >{/if}
+      {/if}
+    {/if}
     <label class="task-search"
       ><Search size={16} />
       <input
@@ -376,7 +565,7 @@
           }}><X size={14} /></button
         >{/if}
     </label>
-    {#if source === "todoist"}<div class="task-filter-row">
+    {#if providerView}<div class="task-filter-row">
         <div class="task-grouping" aria-label="Group tasks">
           <button
             aria-pressed={$viewPreferences.groupBy === "date"}
@@ -391,19 +580,23 @@
             }}>Project</button
           >
         </div>
-        <label class="task-project-filter"
-          ><select
-            aria-label="Filter by project"
-            bind:value={$viewPreferences.projectId}
-          >
-            <option value="">All projects</option>
-            {#each snapshot?.projects ?? [] as project (project.id)}<option
-                value={project.id}>{project.name}</option
-              >{/each}
-          </select><ChevronDown size={13} /></label
-        >
+        {#if source !== "github"}<label class="task-project-filter"
+            ><select
+              aria-label="Filter by project"
+              bind:value={$viewPreferences.projectId}
+            >
+              <option value=""
+                >{source === "google-tasks"
+                  ? "All lists"
+                  : "All projects"}</option
+              >
+              {#each snapshot?.projects ?? [] as project (project.id)}<option
+                  value={project.id}>{project.name}</option
+                >{/each}
+            </select><ChevronDown size={13} /></label
+          >{/if}
       </div>{/if}
-    {#if source === "todoist" && $viewPreferences.groupBy === "project"}<label
+    {#if providerView && $viewPreferences.groupBy === "project"}<label
         >Sort
         <select
           aria-label="Sort project tasks"
@@ -414,11 +607,17 @@
             })}
           value={$viewPreferences.sortBy ?? "defined"}
         >
-          <option value="defined">Defined order</option><option value="priority"
-            >Priority</option
-          ><option value="due">Due date</option><option value="created"
-            >Date added</option
-          >
+          <option value="defined">Defined order</option
+          >{#if source === "todoist"}<option value="priority">Priority</option
+            >{/if}<option value="due"
+            >{source === "google-tasks"
+              ? "Scheduled date"
+              : source === "github"
+                ? "Target date"
+                : "Due date"}</option
+          >{#if source !== "google-tasks"}<option value="created"
+              >Date added</option
+            >{/if}
         </select></label
       >{/if}
     <div class="task-note-filter">
@@ -450,7 +649,7 @@
       >
     </div>
   </header>
-  {#if source === "todoist" && $browser.error}<div
+  {#if providerView && $browser.error}<div
       class="task-review task-connection-error"
       role="status"
     >
@@ -458,6 +657,38 @@
       <p>{$browser.error}</p>
       <button class="task-text-button" onclick={connections}>Connections</button
       >
+    </div>{/if}
+  {#if providerView && $sourceStatus?.coverage && (!$sourceStatus.coverage.complete || $sourceStatus.coverage.unavailableItems)}<div
+      class="task-review"
+      role="status"
+    >
+      <p>
+        {#if !$sourceStatus.coverage.complete}Showing cached and available
+          tasks. {$sourceStatus.coverage.streams.find((stream) => stream.error)
+            ?.error ?? "More tasks are available."}{/if}
+        {#if $sourceStatus.coverage.unavailableItems}{$sourceStatus.coverage
+            .unavailableItems} items are unavailable or excluded by your access settings.{/if}
+      </p>
+      {#if $sourceStatus.coverage.streams.some((stream) => !stream.complete && !stream.error)}<button
+          disabled={$browser.loading}
+          onclick={() => sources?.refresh(source, true, true)}>Load more</button
+        >{/if}
+    </div>{/if}
+  {#if $sourceStatus?.verificationRequired.length}<div
+      class="task-review"
+      role="status"
+    >
+      <p>Check task completion</p>
+      {#each $sourceStatus.verificationRequired as itemId}<button
+          onclick={() =>
+            sourceSession?.verify({
+              provider: source,
+              accountId: $sourceStatus.snapshot?.account.id ?? "",
+              itemId,
+            })}
+          >Verify {snapshot?.tasks.find((item) => item.id === itemId)?.title ??
+            "task"}</button
+        >{/each}
     </div>{/if}
   <div class="task-body">
     <div class="task-list-area">
@@ -497,7 +728,9 @@
             <ListChecks size={28} />
             <h3>Bring your tasks here</h3>
             <button class="task-primary" onclick={connections}
-              >Sign in with Todoist</button
+              >{sources
+                ? `Connect ${sourceLabel}`
+                : "Sign in with Todoist"}</button
             >
           </div>{/if}
         {#if snapshot && !groups.length}<div class="task-empty">
@@ -506,8 +739,8 @@
               {!$viewPreferences.showAdded && addedIds.size
                 ? "All matching tasks have been added to this note"
                 : $viewPreferences.query || $viewPreferences.projectId
-                  ? "No matching Todoist tasks"
-                  : "No active Todoist tasks"}
+                  ? `No matching ${sourceLabel} tasks`
+                  : `No active ${sourceLabel} tasks`}
             </p>
           </div>{/if}
         <div class="task-groups">
@@ -562,12 +795,12 @@
                     class="task-import-circle"
                     aria-checked="false"
                     aria-label={`Complete ${row.task.title}`}
-                    disabled={!$browser.connected ||
-                      !completeTask ||
-                      !weakCompletionEnabled}
-                    onclick={() => completeTask?.(row.task)}
+                    disabled={!$browser.connected || !completionEnabled()}
+                    onclick={() => complete(row.task)}
                     role="checkbox"
-                    title="Complete task"
+                    title={source === "github"
+                      ? "Open in GitHub to change its state"
+                      : "Complete task"}
                   ></button>
                   <div class="task-row-content">
                     <button
@@ -580,6 +813,12 @@
                       ></button
                     >
                     <div class="task-row-meta">
+                      {#if row.task.source?.kind && row.task.source.kind !== "task"}<span
+                          class="task-label-chip"
+                          >{row.task.source.kind}{row.task.source.number
+                            ? ` #${row.task.source.number}`
+                            : ""}</span
+                        >{/if}
                       {#if addedIds.has(row.task.id)}<span
                           class="task-added-chip">Added</span
                         >{/if}
@@ -600,6 +839,15 @@
                         >{/if}
                     </div>
                   </div>
+                  {#if canonicalSourceUrl(row.task.source?.url ?? "")}<a
+                      class="task-icon-button"
+                      aria-label={`Open ${row.task.title} in ${sourceLabel}`}
+                      href={canonicalSourceUrl(row.task.source?.url ?? "")}
+                      rel="noopener noreferrer"
+                      target="_blank"
+                      title={`Open in ${sourceLabel}`}
+                      ><ExternalLink size={14} /></a
+                    >{/if}
                   <button
                     class="task-icon-button task-row-schedule"
                     aria-label={`Schedule ${row.task.title}`}

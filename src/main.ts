@@ -117,6 +117,8 @@ import {
 import { createTaskScheduler } from "./tasks/schedule-obsidian";
 import { taskOccurrenceKey } from "./tasks/schedule-types";
 import type { TaskService } from "./tasks/service";
+import type { TaskSourceCollection } from "./tasks/source-collection";
+import { createTaskSources } from "./tasks/source-obsidian";
 import { createWeakTaskCapture } from "./tasks/weak-capture-obsidian";
 import { createWeakTaskSync } from "./tasks/weak-sync-obsidian";
 import { createGetTasksApi } from "./tasks-plugin";
@@ -176,6 +178,7 @@ export default class DayPlanner extends Plugin {
   taskCapture!: TaskCapture;
   private weakTaskCapture?: ReturnType<typeof createWeakTaskCapture>;
   taskScheduler?: TaskScheduler;
+  taskSources?: TaskSourceCollection;
   taskReconciler?: TaskReconciler;
   taskDeleter?: TaskDeletionController;
   private noteTaskDrag?: NoteTaskDrag;
@@ -548,6 +551,13 @@ export default class DayPlanner extends Plugin {
       );
     }
     if (calendarReady && tasksReady) {
+      this.taskSources = createTaskSources(
+        this,
+        this.taskService,
+        this.settingsStore,
+        () => this.googleCalendarSync.appRegistration(),
+      );
+      await this.taskSources.initialize();
       this.taskScheduler = createTaskScheduler(
         this,
         this.taskService,
@@ -555,6 +565,7 @@ export default class DayPlanner extends Plugin {
         this.settingsStore,
         this.workspaceFacade,
         this.periodicNotes,
+        this.taskSources,
       );
       registerPendingTaskDrops(this, this.taskScheduler.dropFeedback);
       createWeakTaskSync(
@@ -600,6 +611,7 @@ export default class DayPlanner extends Plugin {
             store,
             this.periodicNotes,
             this.aiPlanning,
+            this.taskSources,
           ),
       );
     this.addCommand({
@@ -628,7 +640,9 @@ export default class DayPlanner extends Plugin {
         event.stopPropagation();
         const scheduler = this.taskScheduler;
         void (async () => {
-          const { task, id } = scheduler.drag.accept(event.dataTransfer!);
+          const { task, id, reference } = scheduler.drag.accept(
+            event.dataTransfer!,
+          );
           const before = editor.getValue(),
             offset = taskDropOffset(editor, event);
           if (
@@ -650,10 +664,14 @@ export default class DayPlanner extends Plugin {
             boundary,
             date,
             this.getSettings(),
-            scheduler.duration(task, this.getSettings().defaultDurationMinutes),
+            scheduler.duration(
+              task,
+              this.getSettings().defaultDurationMinutes,
+              reference,
+            ),
           );
           await scheduler.insertFromPane(
-            task.id,
+            reference ?? task.id,
             {
               path: view.file.path,
               offset: boundary,
@@ -765,6 +783,7 @@ export default class DayPlanner extends Plugin {
       this.app,
       this.taskService,
       this.googleCalendarSync,
+      this.taskSources,
     ).open();
   }
 

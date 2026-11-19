@@ -9,6 +9,7 @@ import type { DayPlannerSettings } from "../settings";
 
 import { TaskScheduler } from "./schedule";
 import type { TaskService } from "./service";
+import type { TaskSourceCollection } from "./source-collection";
 
 export function createTaskScheduler(
   plugin: Plugin,
@@ -17,52 +18,58 @@ export function createTaskScheduler(
   settings: Writable<DayPlannerSettings>,
   workspaceFacade: WorkspaceFacade,
   daily: PeriodicNotes,
+  sources?: TaskSourceCollection,
 ) {
   const { app } = plugin;
-  const scheduler = new TaskScheduler(service, calendar, {
-    dailyPath: (date) => daily.createDailyNotePath(window.moment(date)),
-    read: async (path) => {
-      const file = app.vault.getFileByPath(path);
-      return file ? app.vault.read(file) : null;
+  const scheduler = new TaskScheduler(
+    service,
+    calendar,
+    {
+      dailyPath: (date) => daily.createDailyNotePath(window.moment(date)),
+      read: async (path) => {
+        const file = app.vault.getFileByPath(path);
+        return file ? app.vault.read(file) : null;
+      },
+      flush: async (paths) => {
+        for (const leaf of app.workspace.getLeavesOfType("markdown")) {
+          const view = leaf.view as MarkdownView;
+          if (view.file && paths.includes(view.file.path)) await view.save();
+        }
+      },
+      settings: () => get(settings).taskCapture,
+      warn: (message) => {
+        new Notice(message);
+      },
+      linkedSync: () => get(settings).experimentalTodoistSync === true,
+      readImports: async () => {
+        const path = `${plugin.manifest.dir}/task-imports.json`;
+        return (await app.vault.adapter.exists(path))
+          ? app.vault.adapter.read(path)
+          : null;
+      },
+      writeImports: (value) =>
+        app.vault.adapter.write(
+          `${plugin.manifest.dir}/task-imports.json`,
+          value,
+        ),
+      reveal: async (source) => {
+        const file = app.vault.getFileByPath(source.path);
+        const text = file ? await app.vault.read(file) : null;
+        const offset = text === null ? -1 : locateSource(text, source);
+        if (text === null || offset < 0)
+          throw new Error(
+            "The linked note task moved. Refresh its source link before opening the schedule.",
+          );
+        const line = text.slice(0, offset).split("\n").length - 1;
+        const point = { line, col: 0, offset };
+        await workspaceFacade.revealLocation({
+          path: source.path,
+          position: { start: point, end: point },
+        });
+      },
     },
-    flush: async (paths) => {
-      for (const leaf of app.workspace.getLeavesOfType("markdown")) {
-        const view = leaf.view as MarkdownView;
-        if (view.file && paths.includes(view.file.path)) await view.save();
-      }
-    },
-    settings: () => get(settings).taskCapture,
-    warn: (message) => {
-      new Notice(message);
-    },
-    linkedSync: () => get(settings).experimentalTodoistSync === true,
-    readImports: async () => {
-      const path = `${plugin.manifest.dir}/task-imports.json`;
-      return (await app.vault.adapter.exists(path))
-        ? app.vault.adapter.read(path)
-        : null;
-    },
-    writeImports: (value) =>
-      app.vault.adapter.write(
-        `${plugin.manifest.dir}/task-imports.json`,
-        value,
-      ),
-    reveal: async (source) => {
-      const file = app.vault.getFileByPath(source.path);
-      const text = file ? await app.vault.read(file) : null;
-      const offset = text === null ? -1 : locateSource(text, source);
-      if (text === null || offset < 0)
-        throw new Error(
-          "The linked note task moved. Refresh its source link before opening the schedule.",
-        );
-      const line = text.slice(0, offset).split("\n").length - 1;
-      const point = { line, col: 0, offset };
-      await workspaceFacade.revealLocation({
-        path: source.path,
-        position: { start: point, end: point },
-      });
-    },
-  });
+    sources,
+  );
   let ready = false;
   app.workspace.onLayoutReady(() => {
     ready = true;

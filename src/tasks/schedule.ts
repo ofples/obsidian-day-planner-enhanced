@@ -30,7 +30,7 @@ import {
   type TaskMutation,
 } from "./operations";
 import { PlainTaskImporter } from "./plain-import";
-import { rewriteTaskNote, withoutTaskCaptureTag } from "./reconcile-markdown";
+import { rewriteTaskNote } from "./reconcile-markdown";
 import type { TaskLink, TaskRegistryState } from "./registry";
 import {
   indentTaskSubtree,
@@ -49,10 +49,12 @@ import {
   type ScheduleOperation,
   type TaskProjection,
 } from "./schedule-types";
+import { serializeSourceTask } from "./serialize-source-task";
 import type { TaskService } from "./service";
 import type { TaskSource } from "./source";
+import type { TaskSourceCollection } from "./source-collection";
+import type { TaskSourceReference, TaskSourceSelection } from "./source-types";
 import { TaskReadError, type ProviderTask } from "./types";
-import { formatTaskLink, stripTaskLink } from "./weak-links";
 
 export class TaskProjectionConflict extends TaskReadError {}
 
@@ -87,8 +89,9 @@ export class TaskScheduler {
       warn?(message: string): void;
       dailyPath?(date: string): string;
     },
+    readonly sources?: TaskSourceCollection,
   ) {
-    this.drag = new TaskDrag(service);
+    this.drag = new TaskDrag(service, sources);
     this.importer = new PlainTaskImporter(calendar, host);
     this.publish();
   }
@@ -103,8 +106,15 @@ export class TaskScheduler {
     await this.host.reveal?.(source);
   }
 
-  duration(task: ProviderTask, fallback: number) {
-    const projection = this.projection(task.id);
+  duration(
+    task: ProviderTask,
+    fallback: number,
+    reference?: TaskSourceReference,
+  ) {
+    const projection =
+      !reference || reference.provider === "todoist"
+        ? this.projection(task.id)
+        : undefined;
     return projection?.interval
       ? (Date.parse(projection.interval.end) -
           Date.parse(projection.interval.start)) /
@@ -176,68 +186,53 @@ export class TaskScheduler {
     );
   }
 
-  plainTask(taskId: string) {
+  plainTask(taskId: TaskSourceSelection) {
+    if (this.stopped)
+      throw new TaskReadError("Reopen the planner before importing a task.");
+    if (typeof taskId !== "string" && taskId.provider !== "todoist")
+      return this.plainCachedTask(taskId);
+    const legacyId = this.legacyId(taskId)!;
     const snapshot = get(this.service.state).snapshot;
     if (!snapshot)
       throw new TaskReadError("Connect Todoist before importing a task.");
     this.previewTask({
       provider: snapshot.provider,
       accountId: snapshot.account.id,
-      taskId,
+      taskId: legacyId,
     });
     return this.plainCachedTask(taskId);
   }
 
-  plainCachedTask(taskId: string) {
-    const snapshot = get(this.service.state).snapshot;
-    const task = snapshot?.tasks.find(
-      (item) => item.id === taskId && !item.completed,
-    );
-    if (!snapshot || !task)
+  plainCachedTask(taskId: TaskSourceSelection) {
+    const resolved =
+      typeof taskId === "string" ? undefined : this.sources?.resolve(taskId);
+    const snapshot =
+      typeof taskId === "string"
+        ? get(this.service.state).snapshot
+        : resolved?.snapshot;
+    if (!snapshot)
       throw new TaskReadError(
-        "This cached task is unavailable. Refresh the task account.",
+        "This cached task is unavailable. Refresh its source account.",
       );
-    let raw = withoutTaskCaptureTag(
-      newTaskMarkdown(
-        {
-          ...task,
-          title: stripTaskLink(
-            task.title.replace(/[\r\n]+/g, " "),
-            `https://app.todoist.com/app/task/${task.id}`,
-          ),
-        },
-        taskSubtree(snapshot, task),
-        snapshot,
-        this.host.settings(),
-      ),
+    return serializeSourceTask(
+      snapshot,
+      typeof taskId === "string" ? taskId : resolved!.task.id,
+      this.host.settings(),
     );
-    const lines = raw.split("\n");
-    lines[0] += ` ${formatTaskLink(task.id, task.due?.recurring ? (task.completionCount ?? task.due.date) : undefined)}`;
-    if (task.description.trim())
-      lines.splice(
-        1,
-        0,
-        ...task.description.split(/\r?\n/).map((line) => `  ${line}`),
+  }
+
+  private legacyId(selection: TaskSourceSelection) {
+    if (typeof selection === "string") return selection;
+    if (selection.provider !== "todoist") return;
+    if (get(this.service.state).snapshot?.account.id !== selection.accountId)
+      throw new TaskReadError(
+        "This Todoist account changed. Refresh its source.",
       );
-    raw = lines.join("\n");
-    return {
-      task,
-      raw,
-      key: JSON.stringify([
-        snapshot.provider,
-        snapshot.account.id,
-        task.id,
-        taskOccurrenceKey(task),
-      ]),
-      taskIds: [
-        task.id,
-        ...taskSubtree(snapshot, task).map((row) => row.task.id),
-      ],
-    };
+    return selection.itemId;
   }
 
   private previewDrop<T>(
-    taskId: string,
+    taskId: TaskSourceSelection,
     destination: DropDestination,
     id: string,
     persist: () => Promise<T>,
@@ -248,13 +243,27 @@ export class TaskScheduler {
         ? this.host.dailyPath?.(destination.interval.start)
         : undefined;
     return this.dropFeedback.run(
-      { id, raw, taskIds, destination, targetPath },
+      {
+        id,
+        raw,
+        taskIds,
+        destination,
+        targetPath,
+        ...(typeof taskId !== "string"
+          ? {
+              source: {
+                provider: taskId.provider,
+                accountId: taskId.accountId,
+              },
+            }
+          : {}),
+      },
       persist,
     );
   }
 
   place(
-    taskId: string,
+    taskId: TaskSourceSelection,
     interval: ScheduleInterval,
     id: string = crypto.randomUUID(),
   ) {
@@ -264,7 +273,7 @@ export class TaskScheduler {
   }
 
   insertFromPane(
-    taskId: string,
+    taskId: TaskSourceSelection,
     target: {
       path: string;
       offset: number;
@@ -279,7 +288,7 @@ export class TaskScheduler {
   }
 
   nestFromPane(
-    taskId: string,
+    taskId: TaskSourceSelection,
     parent: NoteTaskReference,
     id: string = crypto.randomUUID(),
   ) {
@@ -289,12 +298,13 @@ export class TaskScheduler {
   }
 
   private async placeSaved(
-    taskId: string,
+    taskId: TaskSourceSelection,
     interval: ScheduleInterval,
     id: string = crypto.randomUUID(),
   ) {
-    if (this.host.linkedSync?.() !== false)
-      return this.schedule(taskId, interval, id);
+    const legacyId = this.legacyId(taskId);
+    if (legacyId !== undefined && this.host.linkedSync?.() !== false)
+      return this.schedule(legacyId, interval, id);
     const { raw, key, taskIds } = this.plainTask(taskId);
     const target = scheduleIntervalSchema.parse(interval);
     return this.importer.runPane(
@@ -315,7 +325,7 @@ export class TaskScheduler {
   }
 
   private async insertSaved(
-    taskId: string,
+    taskId: TaskSourceSelection,
     target: {
       path: string;
       offset: number;
@@ -324,8 +334,9 @@ export class TaskScheduler {
     },
     id: string = crypto.randomUUID(),
   ) {
-    if (this.host.linkedSync?.() !== false)
-      return this.insert(taskId, target, id);
+    const legacyId = this.legacyId(taskId);
+    if (legacyId !== undefined && this.host.linkedSync?.() !== false)
+      return this.insert(legacyId, target, id);
     const { raw, key, taskIds } = this.plainTask(taskId);
     return this.importer.runPane(
       key,
@@ -351,12 +362,13 @@ export class TaskScheduler {
   }
 
   private async nestSaved(
-    taskId: string,
+    taskId: TaskSourceSelection,
     parent: { path: string; line: number; text: string },
     id: string = crypto.randomUUID(),
   ) {
-    if (this.host.linkedSync?.() !== false)
-      return this.nest(taskId, parent, id);
+    const legacyId = this.legacyId(taskId);
+    if (legacyId !== undefined && this.host.linkedSync?.() !== false)
+      return this.nest(legacyId, parent, id);
     const { raw, key, taskIds } = this.plainTask(taskId);
     return this.importer.runPane(
       key,

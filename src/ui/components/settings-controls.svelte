@@ -53,7 +53,7 @@
       setting
         .setName("Capture #todoist tasks")
         .setDesc(
-          "Project, label and task-calendar feed settings are available in the full Day Planner settings.",
+          "Manage Todoist, Google Tasks and GitHub in Connections. Project, label and task-calendar feed settings are available in the full Day Planner settings.",
         )
         .addToggle((toggle) =>
           toggle.setValue($settings.taskCapture.enabled).onChange((enabled) => {

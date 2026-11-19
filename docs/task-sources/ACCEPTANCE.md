@@ -33,19 +33,19 @@ The baseline has an inherited inclusive-last-day ICS timeout. Re-run required ch
 
 ## Delivery gates
 
-| Gate                          | Status      | Evidence to record                                                                             |
-| ----------------------------- | ----------- | ---------------------------------------------------------------------------------------------- |
-| Baseline preserved            | Complete    | Feature checkout starts at f4050c7272fc36145140cc5a6b4ffbf92ed8bcc0; stable checkout retained. |
-| API/source audit              | Complete    | Official links and design decisions in PLAN and TECHNICAL-SPEC.                                |
-| Shared source contracts       | In progress | Qualified identity/read sessions pass; shared importer and pane routing remain pending.        |
-| Google Tasks adapter          | In progress | Read/auth/completion backend passes fixtures; pane and live authorization remain pending.      |
-| GitHub adapter                | In progress | Issues/Projects/device auth pass fixtures; pane and owned app/live checks remain pending.      |
-| Pane/import/AI integration    | Pending     | A5/A6/A8 through ordinary application entry points.                                            |
-| Owned app configuration       | Pending     | Tasks API/scopes and GitHub OAuth device-flow registration; no secrets.                        |
-| Live authorization/read       | Pending     | Provider/account, granted capabilities and successful bounded read; no personal content.       |
-| Installed UI                  | Pending     | Candidate commit, scenarios and observed results, distinct from fixtures.                      |
-| Required source checks/build  | Pending     | Exact commands/results and inherited failures.                                                 |
-| Preview installation/readback | Pending     | Backup, artifact match and preserved state.                                                    |
+| Gate                          | Status                 | Evidence to record                                                                             |
+| ----------------------------- | ---------------------- | ---------------------------------------------------------------------------------------------- |
+| Baseline preserved            | Complete               | Feature checkout starts at f4050c7272fc36145140cc5a6b4ffbf92ed8bcc0; stable checkout retained. |
+| API/source audit              | Complete               | Official links and design decisions in PLAN and TECHNICAL-SPEC.                                |
+| Shared source contracts       | Complete               | Qualified identity, read bridge, serialization and shared import routing pass focused checks.  |
+| Google Tasks adapter          | Code/fixtures complete | Lists, read/auth/completion and pane routes pass; live authorization is a separate gate.       |
+| GitHub adapter                | Code/fixtures complete | Issues/Projects/device auth and pane routes pass; owned-app/live checks remain pending.        |
+| Pane/import/AI integration    | In progress            | Pane/import routes pass fixtures; Overview aggregation and new-source AI wiring remain.        |
+| Owned app configuration       | Pending                | Tasks API/scopes and GitHub OAuth device-flow registration; no secrets.                        |
+| Live authorization/read       | Pending                | Provider/account, granted capabilities and successful bounded read; no personal content.       |
+| Installed UI                  | Pending                | Candidate commit, scenarios and observed results, distinct from fixtures.                      |
+| Required source checks/build  | In progress            | TypeScript, Svelte, style, strict lint and build pass; final full test/lint remains pending.   |
+| Preview installation/readback | Pending                | Backup, artifact match and preserved state.                                                    |
 
 Update this table as work progresses. If authentication requires user participation, finish independent code and fixture work first, state the exact remaining step and retain the corresponding gate as pending. A registered client ID alone is not successful authentication.
 
@@ -82,3 +82,21 @@ Startup now checks the credential's account identity before publishing cached ro
 Checks: 117 tests passed across ten focused suites, including the existing task browser, optimistic interactions, Calendar API and request gate. TypeScript, formatting and targeted lint passed. Strict source lint also passed after using the common generation guard. The exact Project query was extracted from source and submitted through the existing CLI connection with a deliberately nonexistent node ID. GitHub returned only NOT_FOUND for that ID, confirming schema/query validation. This is distinct from owned-app sign-in and live Project data acceptance.
 
 Owned app registration, real authorization/readback, source-pane/import/AI wiring and installed acceptance remain pending. The installed plugin has not changed.
+
+### Task pane, source links and ordinary imports
+
+The normal Tasks view now receives the source collection and offers a compact source picker. Existing rows, grouping, search, sorting, Show added and schedule forms serve both new providers. Source-specific filters are saved independently. GitHub adds assignment/repository/Project views and status filtering. Native issue numbers, repositories and assignees participate in cached search. Connection cards select Google lists, optionally include assigned tasks, configure GitHub repositories/Projects and map actual fields. Editing and private-access grants remain explicit, with retry actions when a grant is missing.
+
+Editor drops, timeline drops, frame nesting and the schedule form pass provider/account/item references into the same PlainTaskImporter. These imports bypass Todoist ownership even if its experimental mode is enabled. Drag nonces keep their vault/session protection; source/account changes reject stale references. Optimistic drop state is provider-qualified. Existing rendering keys remain unchanged.
+
+The shared serializer preserves descriptions and plain children. New sources do not infer hashtags from repository/list names. External checklist text containing a Todoist creation directive is preserved as inline code, so importing source content cannot opt in to another provider's mutation. Native source URLs remain readable links. Draft/fallback references use a small validated link-title hint. Removing a link remains best effort.
+
+Calendar normalization, description parsing, note rendering and exports recognize the new source links. Event titles stay human readable; descriptions retain provenance. A current account's links and verified import receipts hide work already copied into the selected note. The existing Todoist weak-link helpers still recognize only Todoist.
+
+Google completion performs one bounded follow-up refresh after confirmation to update child state or a following instance. Unknown delivery still requires explicit verification; refresh never replays the command. Unload/cancel stops active reads, and cache/account validation prevents stale rows from becoming a new account's active data. The cache writer installs its ignore pattern in the plugin folder before writing task data, preserving existing ignore rules.
+
+Evidence: 439 tests passed across 27 Calendar/scheduling/import/browser/optimistic suites. A later focused run passed 74 export/settings/import/session checks. The pane/import/settings run passed 44 checks, including the normal source picker, source-qualified schedule/drag handlers, cache-only search, completion controls and configuration actions. The latest cache/import/session run passed 17 checks. These runs overlap and are not a cumulative total.
+
+TypeScript, Svelte checks, formatting, changed-component style checks, full source strict lint and production build passed. Existing build warnings about the output directory and browser-external fs remain. GitHub registration is not bundled yet; the preview's sign-in gate accurately reports missing setup. The current candidate has not been installed.
+
+Next: aggregate all selected sources in Overview and AI context/buckets, then perform final checks, owned-app setup, live authorization and installed acceptance. The goal remains active.

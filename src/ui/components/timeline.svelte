@@ -227,9 +227,12 @@
         } else {
           const drop = taskScheduler.drag.accept(transfer);
           return (
-            taskScheduler.nestFromPane?.bind(taskScheduler) ??
-            taskScheduler.nest.bind(taskScheduler)
-          )(drop.task.id, parent, drop.id);
+            taskScheduler.nestFromPane?.(
+              drop.reference ?? drop.task.id,
+              parent,
+              drop.id,
+            ) ?? taskScheduler.nest(drop.task.id, parent, drop.id)
+          );
         }
       });
     } catch (error) {
@@ -259,9 +262,12 @@
           } else {
             const drop = taskScheduler.drag.accept(transfer);
             return (
-              taskScheduler.place?.bind(taskScheduler) ??
-              taskScheduler.schedule.bind(taskScheduler)
-            )(drop.task.id, target, drop.id);
+              taskScheduler.place?.(
+                drop.reference ?? drop.task.id,
+                target,
+                drop.id,
+              ) ?? taskScheduler.schedule(drop.task.id, target, drop.id)
+            );
           }
         }
         return Promise.resolve();

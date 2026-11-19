@@ -9,6 +9,7 @@ import {
 import type { ImportedTaskSource } from "./plain-import";
 import { taskOccurrenceKey } from "./schedule-types";
 import type { TaskSource } from "./source";
+import { sourceTaskFromLink } from "./source-links";
 import type { TaskSnapshot } from "./types";
 import { taskLinkIdentity } from "./weak-links";
 
@@ -32,6 +33,11 @@ export function tasksAddedToNote({
   const byId = new Map(snapshot.tasks.map((task) => [task.id, task]));
   const inNote = candidates.filter((candidate) => candidate.path === path);
   for (const candidate of inNote) {
+    if (snapshot.provider !== "todoist") {
+      const task = sourceTaskFromLink(snapshot, candidate.raw);
+      if (task) added.add(task.id);
+      continue;
+    }
     const link = taskLinkIdentity(candidate.raw);
     const task = link && byId.get(link.taskId);
     if (
