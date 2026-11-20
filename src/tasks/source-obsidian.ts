@@ -42,6 +42,7 @@ export function createTaskSources(
   googleRegistration: () => GoogleAppConfig | null,
 ) {
   const namespace = todoist.registry.snapshot().namespace;
+  const timezone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
   const directory =
     plugin.manifest.dir ??
     `${plugin.app.vault.configDir}/plugins/${plugin.manifest.id}`;
@@ -84,7 +85,7 @@ export function createTaskSources(
     `dp-gtasks-${namespace}`,
     googleRegistration,
     () => get(settings).taskSources.googleTasks,
-    () => window.moment.tz.guess(),
+    timezone,
   );
   const githubBackend = new GitHubBackend(
     plugin.app,
@@ -94,7 +95,7 @@ export function createTaskSources(
       includePrivate: get(settings).taskSources.github.includePrivate,
     }),
     () => get(settings).taskSources.github,
-    () => window.moment.tz.guess(),
+    timezone,
   );
   const collection = new TaskSourceCollection(
     todoist,
