@@ -168,6 +168,124 @@ test("opening the review prevents automatic sync from replacing choices", async 
   expect(modals[0]!.contentEl.textContent).toContain("2 choices remaining");
 });
 
+test("manual and automatic sync remain held until unresolved choices are handled", async () => {
+  const h = setup();
+  h.run.mockRestore();
+  const reset = vi.spyOn(h.service, "resetForUserRetry");
+  h.service.reviewConflicts();
+  await h.service.run();
+  expect(reset).not.toHaveBeenCalled();
+  modals[0]!.close();
+  await h.service.run(true);
+  expect(reset).not.toHaveBeenCalled();
+  await h.service.run();
+  expect(modals).toHaveLength(2);
+  expect(modals[1]!.contentEl.textContent).toContain("2 choices remaining");
+  expect(reset).not.toHaveBeenCalled();
+  expect(h.validate).not.toHaveBeenCalled();
+});
+
+test("review waits for an in-flight operation before rendering fresh choices", async () => {
+  const h = setup();
+  Reflect.set(h.service, "busy", true);
+  h.service.reviewConflicts();
+  const modal = modals[0]!;
+  expect(modal.contentEl.textContent).toContain(
+    "Finishing the current calendar operation",
+  );
+  expect(modal.contentEl.querySelector("button")).toBeNull();
+  Reflect.set(h.service, "reviewable", []);
+  Reflect.set(h.service, "busy", false);
+  await vi.waitFor(() =>
+    expect(modal.contentEl.textContent).toContain("No event choices remaining"),
+  );
+  expect(h.validate).not.toHaveBeenCalled();
+});
+
+test("closing a review cancels a choice waiting for the note writer", async () => {
+  const h = setup();
+  h.service.reviewConflicts();
+  Reflect.set(h.service, "busy", true);
+  Array.from(modals[0]!.contentEl.querySelectorAll("button"))
+    .find((button) => button.textContent === "Use Obsidian")!
+    .click();
+  modals[0]!.close();
+  Reflect.set(h.service, "busy", false);
+  await vi.waitFor(() =>
+    expect(Reflect.get(h.service, "reviewing")).toBe(false),
+  );
+  expect(resolveCalendarConflict).not.toHaveBeenCalled();
+  expect(h.validate).not.toHaveBeenCalled();
+});
+
+test("the bulk confirmation keeps the review hold without a sync gap", () => {
+  const h = setup();
+  Reflect.set(h.service, "daily", {
+    getAllDailyNotes: () => ({ day: { path: "Daily/2030-01-01.md" } }),
+  });
+  h.service.reviewConflicts();
+  Array.from(modals[0]!.contentEl.querySelectorAll("button"))
+    .find((button) => button.textContent === "Use this note for all changes…")!
+    .click();
+  expect(modals).toHaveLength(2);
+  expect(Reflect.get(h.service, "reviewing")).toBe(true);
+  Array.from(modals[1]!.contentEl.querySelectorAll("button"))
+    .find((button) => button.textContent === "Force sync this note")!
+    .click();
+  expect(h.run).toHaveBeenCalledWith(false, "Daily/2030-01-01.md");
+  expect(Reflect.get(h.service, "reviewing")).toBe(false);
+});
+
+test("closing during an active choice keeps sync held until that choice settles", async () => {
+  const h = setup();
+  let finish!: () => void;
+  vi.mocked(resolveCalendarConflict).mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  h.service.reviewConflicts();
+  Array.from(modals[0]!.contentEl.querySelectorAll("button"))
+    .find((button) => button.textContent === "Use Obsidian")!
+    .click();
+  await vi.waitFor(() =>
+    expect(resolveCalendarConflict).toHaveBeenCalledOnce(),
+  );
+  modals[0]!.close();
+  expect(Reflect.get(h.service, "reviewing")).toBe(true);
+  finish();
+  await vi.waitFor(() =>
+    expect(Reflect.get(h.service, "reviewing")).toBe(false),
+  );
+  expect(Reflect.get(h.service, "busy")).toBe(false);
+});
+
+test("saved conflicts show a refresh action instead of falsely claiming there are no choices", () => {
+  const h = setup();
+  const item = (Reflect.get(h.service, "reviewable") as CalendarConflict[])[0]!;
+  Reflect.set(h.service, "reviewable", []);
+  Reflect.set(h.service, "state", {
+    records: {
+      first: {
+        path: item.local.path,
+        base: item.base,
+        pendingConflict: {
+          mine: item.base,
+          raw: "Saved draft",
+          fields: ["subtasks"],
+        },
+      },
+    },
+  });
+  h.service.reviewConflicts();
+  expect(modals[0]!.contentEl.textContent).toContain("1 choice remaining");
+  expect(modals[0]!.contentEl.textContent).toContain("Refresh conflicts once");
+  expect(modals[0]!.contentEl.textContent).not.toContain(
+    "No event choices remaining",
+  );
+});
+
 test.each(["Restore Obsidian draft", "Accept Google deletion"])(
   "clears a renamed deletion's original summary after %s",
   async (label) => {

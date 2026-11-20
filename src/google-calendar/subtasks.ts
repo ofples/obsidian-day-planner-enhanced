@@ -125,10 +125,13 @@ export function readPlainCalendarDescription(value: string) {
       taskUrl = url;
       continue;
     }
-    const task = line.match(/^(\s*)(⬜|✅)\s+(.*)$/);
+    // Calendar editors trim trailing spaces, including after an empty checkbox.
+    const task = line.match(/^([ \t]*)(⬜|✅)[\uFE0E\uFE0F]?(?:[ \t]+(.*))?$/);
     if (task) {
       inTasks = true;
-      tasks.push(`${task[1]}- [${task[2] === "✅" ? "x" : " "}] ${task[3]}`);
+      tasks.push(
+        `${task[1]}- [${task[2] === "✅" ? "x" : " "}]${task[3] ? ` ${task[3]}` : ""}`,
+      );
       continue;
     }
     if (/^\s*(?:[-*+]|\d+[.)])\s+/.test(line)) {

@@ -1,5 +1,7 @@
 import { webcrypto } from "node:crypto";
+
 import { beforeEach, describe, expect, test, vi } from "vitest";
+
 import {
   resolveCalendarConflict,
   syncCalendar,
@@ -8,7 +10,10 @@ import {
   normalizeLocalSnapshot,
   renderBlock,
 } from "../src/google-calendar/markdown";
-import { structuredDescription } from "../src/google-calendar/subtasks";
+import {
+  structuredDescription,
+  plainCalendarDescription,
+} from "../src/google-calendar/subtasks";
 import type {
   CalendarApi,
   CalendarNotes,
@@ -129,6 +134,28 @@ function harness(local = block(base), remote = event(base)) {
 }
 
 describe("canonical calendar engine", () => {
+  test("Calendar trimming an empty checkbox does not compete with a new local child", async () => {
+    const previous = { ...base, subtasks: "- [ ]\n- [x] Already done" };
+    const mine = {
+      ...previous,
+      subtasks: `${previous.subtasks}\n- [ ] Added locally`,
+    };
+    const remote = event(previous);
+    remote.extendedProperties!.private!.dayPlannerTags = JSON.stringify(
+      previous.tags,
+    );
+    remote.description = plainCalendarDescription("", previous.subtasks)
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .join("\n");
+    const h = harness(block(mine), remote);
+    h.state.records[uid]!.base = previous;
+    const result = await h.run();
+    expect(result.conflicts).toEqual([]);
+    expect(h.state.records[uid]!.base.subtasks).toBe(mine.subtasks);
+    expect(h.state.records[uid]!.base.description).toBe("");
+    expect(h.notes.write).not.toHaveBeenCalled();
+  });
   test("merges disjoint note title and Google child/color edits", async () => {
     const h = harness(
       block({ ...base, title: "Mine" }),

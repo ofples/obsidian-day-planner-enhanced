@@ -1,0 +1,160 @@
+.modal:has(.calendar-conflict-review) {
+  width: min(900px, 94vw);
+}
+
+.calendar-conflict-review {
+  display: grid;
+  gap: 20px;
+}
+
+.calendar-review-heading h3,
+.calendar-conflict-note-heading h3,
+.calendar-conflict-card h4,
+.calendar-conflict-copy h5 {
+  margin: 0;
+}
+
+.calendar-review-heading p,
+.calendar-conflict-help,
+.calendar-conflict-note-action p {
+  margin: 8px 0 0;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.calendar-review-status:empty {
+  display: none;
+}
+
+.calendar-review-status[role="alert"] {
+  color: var(--text-error);
+}
+
+.calendar-conflict-note {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.calendar-conflict-note-heading small {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.calendar-conflict-note-action,
+.calendar-conflict-card {
+  display: grid;
+  gap: 12px;
+
+  min-width: 0;
+  padding: 16px;
+
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+}
+
+.calendar-conflict-note-action {
+  justify-items: start;
+  border-color: var(--interactive-accent);
+}
+
+.calendar-conflict-note-action p {
+  margin: 0;
+}
+
+.calendar-conflict-card > p {
+  margin: 0;
+}
+
+.calendar-conflict-card summary {
+  cursor: pointer;
+  margin-bottom: 12px;
+  font-size: var(--font-ui-small);
+  color: var(--text-muted);
+}
+
+.calendar-conflict-comparison {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.calendar-conflict-copy {
+  min-width: 0;
+  padding: 12px;
+
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 7px;
+}
+
+.calendar-conflict-copy h5 {
+  font-size: var(--font-ui-small);
+}
+
+.calendar-conflict-copy p {
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+}
+
+.calendar-conflict-card pre {
+  overflow: auto;
+
+  max-height: 200px;
+  margin: 0;
+  padding: 0;
+
+  font: inherit;
+  font-size: var(--font-ui-small);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+
+  background: transparent;
+}
+
+.calendar-conflict-actions,
+.calendar-review-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.calendar-conflict-actions > button,
+.calendar-review-footer > button,
+.calendar-conflict-note-action > button {
+  height: auto;
+  min-height: 34px;
+  margin: 0;
+  padding: 7px 13px;
+
+  line-height: 1.4;
+  text-align: start;
+  white-space: normal;
+}
+
+.calendar-review-footer {
+  position: sticky;
+  z-index: 1;
+  bottom: 0;
+
+  justify-content: end;
+
+  padding: 12px 0;
+
+  background: var(--background-primary);
+  border-top: 1px solid var(--background-modifier-border);
+}
+
+.calendar-force-confirmation .calendar-conflict-actions {
+  margin-top: 20px;
+}
+
+@media (width <= 600px) {
+  .calendar-conflict-comparison {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

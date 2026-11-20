@@ -1,18 +1,19 @@
+import moment from "moment";
 import { describe, expect, test } from "vitest";
-import {
-  canonicalSnapshotOf,
-  sameCanonicalSnapshot,
-  type GoogleEvent,
-} from "../src/google-calendar/types";
+
 import { normalizeLocalSnapshot } from "../src/google-calendar/markdown";
+import { renderBlock } from "../src/google-calendar/markdown";
 import {
   plainCalendarDescription,
   readPlainCalendarDescription,
   structuredDescription,
 } from "../src/google-calendar/subtasks";
-import { renderBlock } from "../src/google-calendar/markdown";
+import {
+  canonicalSnapshotOf,
+  sameCanonicalSnapshot,
+  type GoogleEvent,
+} from "../src/google-calendar/types";
 import { defaultSettings } from "../src/settings";
-import moment from "moment";
 
 const times = {
   title: "Plan",
@@ -159,6 +160,42 @@ describe("canonical Calendar fields", () => {
       subtasks: "- [ ] First\n  - [x] Nested",
       taskUrl: "https://app.todoist.com/app/task/abc",
     });
+  });
+  test.each(["⬜", "⬜ ", "⬜️", "✅", "✅️"])(
+    "an empty Calendar checkbox %s stays a task, never description text",
+    (checkbox) => {
+      const done = checkbox.startsWith("✅");
+      expect(
+        readPlainCalendarDescription(
+          `Notes\n\n${checkbox}\n✅ Already done\n⬜ Next task`,
+        ),
+      ).toEqual({
+        description: "Notes",
+        subtasks: `- [${done ? "x" : " "}]\n- [x] Already done\n- [ ] Next task`,
+        taskUrl: null,
+      });
+    },
+  );
+  test("empty subtasks remain stable through export, Calendar whitespace trimming and Markdown rendering", () => {
+    const subtasks =
+      "- [ ]\n- [x] Already done\n  - [ ]\n- [ ] Next task\n- [ ]";
+    const body = plainCalendarDescription("", subtasks)
+      .split("\n")
+      .map((line) => line.trimEnd())
+      .join("\n");
+    const remote = canonicalSnapshotOf(event(body, []))!;
+    expect(remote.description).toBe("");
+    expect(remote.subtasks).toBe(subtasks);
+    const raw = renderBlock("uid", remote, defaultSettings);
+    expect(raw).not.toContain("⬜");
+    expect(
+      normalizeLocalSnapshot({
+        uid: "uid",
+        path: "fixture.md",
+        raw,
+        snapshot: remote,
+      }).subtasks,
+    ).toBe(subtasks);
   });
   test("plain non-checkbox list children survive a Google round trip", () => {
     const body = plainCalendarDescription(
