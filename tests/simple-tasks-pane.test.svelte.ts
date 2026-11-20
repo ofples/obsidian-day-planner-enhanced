@@ -115,7 +115,14 @@ test("connected read-only pane schedules or drags the actual task and exposes ac
     .click();
   expect(h.schedule).toHaveBeenCalledWith(task);
   target.querySelector<HTMLButtonElement>(".task-title")!.click();
-  expect(h.schedule).toHaveBeenCalledTimes(2);
+  flushSync();
+  expect(h.schedule).toHaveBeenCalledTimes(1);
+  expect(target.querySelector('[aria-label="Task details"]')).not.toBeNull();
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  flushSync();
+  expect(target.querySelector('[aria-label="Task details"]')).toBeNull();
   expect(get(h.preferences).selectedId).toBe(task.id);
   target
     .querySelector<HTMLButtonElement>('[aria-label="Connections"]')!
@@ -137,6 +144,131 @@ test("connected read-only pane schedules or drags the actual task and exposes ac
   expect(h.scheduler.drag.current()).toEqual(task);
   row.dispatchEvent(new Event("dragend", { bubbles: true }));
   expect(h.scheduler.drag.current()).toBeNull();
+  await unmount(component);
+  target.remove();
+});
+
+test("task details are read-only until an explicit action and close safely on account changes", async () => {
+  const h = fixture();
+  h.browser.update((state) => ({
+    ...state,
+    snapshot: {
+      ...snapshot,
+      tasks: [
+        {
+          ...task,
+          description: "First line\nSecond line <script>plain text</script>",
+          labels: ["work"],
+        },
+        { ...task, id: "child", title: "Child checklist", parentId: task.id },
+      ],
+    },
+  }));
+  const addToNote = vi.fn(async () => {});
+  const target = document.createElement("div");
+  document.body.append(target);
+  const component = mount(SimpleTasksPane, {
+    target,
+    props: { ...h, addToNote },
+  });
+  flushSync();
+  const title = target.querySelector<HTMLButtonElement>("button.task-row")!;
+  title.click();
+  flushSync();
+  const card = target.querySelector<HTMLElement>(
+    '[aria-label="Task details"]',
+  )!;
+  expect(card.textContent).toContain("First line");
+  expect(card.textContent).toContain("Child checklist");
+  expect(card.querySelector("script")).toBeNull();
+  expect(card.querySelector<HTMLAnchorElement>("a")?.href).toBe(
+    "https://app.todoist.com/app/task/provider-task",
+  );
+  expect(h.schedule).not.toHaveBeenCalled();
+  expect(h.service.refresh).not.toHaveBeenCalled();
+  Array.from(card.querySelectorAll<HTMLButtonElement>("button"))
+    .find((button) => button.textContent?.includes("Add to selected note"))!
+    .click();
+  await vi.waitFor(() =>
+    expect(addToNote).toHaveBeenCalledWith(
+      expect.objectContaining({ id: task.id }),
+      undefined,
+    ),
+  );
+  await vi.waitFor(() =>
+    expect(target.querySelector('[aria-label="Task details"]')).toBeNull(),
+  );
+  title.click();
+  flushSync();
+  document.dispatchEvent(
+    new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+  );
+  flushSync();
+  expect(document.activeElement).toBe(title);
+  title.click();
+  flushSync();
+  h.browser.update((state) => ({
+    ...state,
+    snapshot: {
+      ...snapshot,
+      account: { ...snapshot.account, id: "another-account" },
+    },
+  }));
+  flushSync();
+  expect(target.querySelector('[aria-label="Task details"]')).toBeNull();
+  await unmount(component);
+  target.remove();
+});
+
+test("saved views restore source filters without nested preferences or source writes", async () => {
+  const h = fixture();
+  const target = document.createElement("div");
+  document.body.append(target);
+  const component = mount(SimpleTasksPane, { target, props: h });
+  flushSync();
+  const search = target.querySelector<HTMLInputElement>(
+    '[aria-label="Search tasks"]',
+  )!;
+  search.value = "Provider";
+  search.dispatchEvent(new Event("input", { bubbles: true }));
+  target
+    .querySelector<HTMLButtonElement>('[aria-label="Task view options"]')!
+    .click();
+  flushSync();
+  const name = target.querySelector<HTMLInputElement>(
+    '[aria-label="View name"]',
+  )!;
+  name.value = "Morning triage";
+  name.dispatchEvent(new Event("input", { bubbles: true }));
+  flushSync();
+  target
+    .querySelector<HTMLFormElement>(".task-save-view")!
+    .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+  flushSync();
+  expect(get(h.preferences).savedViews?.[0]?.view).not.toHaveProperty(
+    "savedViews",
+  );
+  target
+    .querySelector<HTMLButtonElement>('[role="tab"][aria-label="Notes"]')!
+    .click();
+  flushSync();
+  expect(get(h.preferences).query).toBe("");
+  target
+    .querySelector<HTMLButtonElement>('[aria-label="Task view options"]')!
+    .click();
+  flushSync();
+  target
+    .querySelector<HTMLButtonElement>(".task-saved-views > div > button")!
+    .click();
+  flushSync();
+  expect(get(h.preferences).source).toBe("todoist");
+  expect(get(h.preferences).query).toBe("Provider");
+  const restored = taskViewStateSchema.parse(
+    JSON.parse(JSON.stringify(get(h.preferences))),
+  );
+  expect(restored.savedViews?.[0]?.title).toBe("Morning triage");
+  expect(h.service.refresh).not.toHaveBeenCalled();
+  expect(h.schedule).not.toHaveBeenCalled();
   await unmount(component);
   target.remove();
 });
@@ -181,6 +313,10 @@ test("copy-only pane preserves project filtering, dates and nested-task collapse
   expect(target.querySelector(".task-row-meta")?.textContent).toContain(
     "#work",
   );
+  target
+    .querySelector<HTMLButtonElement>('[aria-label="Task view options"]')!
+    .click();
+  flushSync();
   Array.from(
     target.querySelectorAll<HTMLButtonElement>(".task-grouping button"),
   )

@@ -29,6 +29,7 @@
     resolveImported,
     openConnections,
     scheduleImported,
+    addToNote,
     openNote,
     planning,
     sources,
@@ -43,6 +44,10 @@
       task: ProviderTask,
       reference?: TaskSourceReference,
     ) => void;
+    addToNote?: (
+      task: ProviderTask,
+      reference?: TaskSourceReference,
+    ) => Promise<void>;
     openNote?: (path: string, line: number) => void;
     planning?: AiPlanningService;
     sources?: TaskSourceCollection;
@@ -70,6 +75,7 @@
   {#if planning}<AiPlanningPanel planner={planning} />{/if}
   {#if !$planningVisible && simpleMode}
     <SimpleTasksPane
+      {addToNote}
       completeTask={legacy.completeTask}
       connections={openConnections}
       {noteContext}

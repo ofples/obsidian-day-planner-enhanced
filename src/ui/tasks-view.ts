@@ -1,5 +1,6 @@
 import {
   ItemView,
+  TFile,
   Notice,
   WorkspaceLeaf,
   type ViewStateResult,
@@ -165,6 +166,27 @@ export class TasksView extends ItemView {
         openConnections: this.openConnections,
         planning: this.planning,
         sources: this.sources,
+        addToNote: async (
+          task: ProviderTask,
+          reference?: TaskSourceReference,
+        ) => {
+          const path = get(noteContext).targetPath;
+          const file = this.app.vault.getAbstractFileByPath(path);
+          if (
+            !this.scheduler ||
+            !(file instanceof TFile) ||
+            file.extension !== "md"
+          )
+            throw new TaskReadError(
+              "Open the selected daily note before adding a task.",
+            );
+          const before = await this.app.vault.read(file);
+          await this.scheduler.insertFromPane(reference ?? task.id, {
+            path,
+            before,
+            offset: before.length,
+          });
+        },
         scheduleImported: (
           task: ProviderTask,
           reference?: TaskSourceReference,

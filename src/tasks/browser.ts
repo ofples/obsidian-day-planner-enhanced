@@ -4,7 +4,7 @@ import { z } from "zod";
 import type { TaskPaneSource } from "./source-settings";
 import type { ProviderTask, TaskSnapshot } from "./types";
 
-const sourceViewStateSchema = z.object({
+export const sourceViewStateSchema = z.object({
   groupBy: z.enum(["date", "project"]).default("date"),
   query: z.string().default(""),
   projectId: z.string().default(""),
@@ -22,6 +22,23 @@ export const taskViewStateSchema = sourceViewStateSchema.extend({
     .optional(),
   scannedNotePaths: z.array(z.string()).optional(),
   sourceViews: z.record(z.string(), sourceViewStateSchema).optional(),
+  savedViews: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        title: z.string().trim().min(1).max(60),
+        source: z.enum([
+          "todoist",
+          "notes",
+          "overview",
+          "google-tasks",
+          "github",
+        ]),
+        view: sourceViewStateSchema,
+      }),
+    )
+    .max(20)
+    .optional(),
 });
 export type TaskViewState = z.infer<typeof taskViewStateSchema>;
 

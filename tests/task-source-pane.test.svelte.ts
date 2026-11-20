@@ -1,15 +1,15 @@
 import { flushSync, mount, unmount } from "svelte";
 import { get, writable } from "svelte/store";
 import { expect, test, vi } from "vitest";
+
 import type {
   AiPlanningService,
   PlanningState,
 } from "../src/ai-scheduling/service";
-import { taskSourceOverview } from "../src/tasks/source-overview";
-
 import { taskViewStateSchema } from "../src/tasks/browser";
 import { TaskDrag } from "../src/tasks/drag";
 import type { TaskScheduler } from "../src/tasks/schedule";
+import { taskSourceOverview } from "../src/tasks/source-overview";
 import { taskSourceReference } from "../src/tasks/source-references";
 import SimpleTasksPane from "../src/ui/components/simple-tasks-pane.svelte";
 import TaskSourceConnections from "../src/ui/components/task-source-connections.svelte";
@@ -51,11 +51,9 @@ test("new sources use the existing rows, source-qualified actions and cached sea
   search.dispatchEvent(new Event("input", { bubbles: true }));
   flushSync();
   expect(h.google.backend.read).not.toHaveBeenCalled();
-  const selector = target.querySelector<HTMLSelectElement>(
-    '[aria-label="Task source"]',
-  )!;
-  selector.value = "github";
-  selector.dispatchEvent(new Event("change", { bubbles: true }));
+  target
+    .querySelector<HTMLButtonElement>('[role="tab"][aria-label="GitHub"]')!
+    .click();
   flushSync();
   expect(target.textContent).toContain("GitHub work");
   expect(get(preferences).query).toBe("");
@@ -88,8 +86,11 @@ test("new sources use the existing rows, source-qualified actions and cached sea
     .querySelector<HTMLElement>('[aria-label="GitHub work"]')!
     .dispatchEvent(drag);
   expect(scheduler.drag.accept(transfer).reference?.provider).toBe("github");
-  selector.value = "google-tasks";
-  selector.dispatchEvent(new Event("change", { bubbles: true }));
+  target
+    .querySelector<HTMLButtonElement>(
+      '[role="tab"][aria-label="Google Tasks"]',
+    )!
+    .click();
   flushSync();
   expect(get(preferences).query).toBe("Google");
   expect(() => scheduler.drag.accept(transfer)).toThrow(/session/);
