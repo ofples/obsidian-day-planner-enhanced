@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { NoteScalar } from "../../tasks/note-collection-model";
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Svelte validates the annotated component props.
   let { label, value = $bindable() }: { label: string; value: NoteScalar } =
     $props();
 </script>

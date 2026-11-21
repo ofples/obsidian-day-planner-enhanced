@@ -176,21 +176,24 @@ export function createNoteCollections(
       const file = plugin.app.vault.getAbstractFileByPath(path);
       if (!(file instanceof TFile))
         throw Error("The source note is unavailable.");
-      await plugin.app.fileManager.processFrontMatter(file, (frontmatter) => {
-        const current = normalizeNoteProperty(frontmatter[property]);
-        if (current === value) return;
-        if (JSON.stringify(current) !== JSON.stringify(expected ?? null))
-          throw Error(
-            "This note property changed. Refresh the collection before trying again.",
-          );
-        // The key is validated by the collection schema; write only that property.
-        Object.defineProperty(frontmatter, property, {
-          value,
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        });
-      });
+      await plugin.app.fileManager.processFrontMatter(
+        file,
+        (frontmatter: Record<string, unknown>) => {
+          const current = normalizeNoteProperty(frontmatter[property]);
+          if (current === value) return;
+          if (JSON.stringify(current) !== JSON.stringify(expected ?? null))
+            throw Error(
+              "This note property changed. Refresh the collection before trying again.",
+            );
+          // The key is validated by the collection schema; write only that property.
+          Object.defineProperty(frontmatter, property, {
+            value,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        },
+      );
     },
     open: async (path) => {
       await plugin.app.workspace.openLinkText(path, "", false);
