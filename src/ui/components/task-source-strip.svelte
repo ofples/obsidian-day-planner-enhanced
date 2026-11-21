@@ -64,12 +64,10 @@
       {:else if choice.id === "notes"}<FileText size={18} />
       {:else if choice.id === "todoist"}<ListChecks size={18} />
       {:else if choice.id === "google-tasks"}<CircleCheck size={18} />
-      {:else}<GitBranch size={18} />{/if}<span class="task-visually-hidden"
-        >{choice.label}</span
+      {:else}<GitBranch size={18} />{/if}<span
+        class="task-source-tab-label"
+        class:task-visually-hidden={source !== choice.id}>{choice.label}</span
       >
     </button>
   {/each}
-  <span class="task-active-source"
-    >{taskSourceChoices.find((choice) => choice.id === source)?.label}</span
-  >
 </div>
