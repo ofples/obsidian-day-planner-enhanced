@@ -3,11 +3,18 @@ import { get, writable } from "svelte/store";
 import { expect, test, vi } from "vitest";
 import { defaultSettings } from "../src/settings";
 import { NoteCollections } from "../src/tasks/note-collections";
-import { noteCollectionSchema } from "../src/tasks/note-collection-model";
+import {
+  noteCollectionSchema,
+  type NoteCollectionConfig,
+  type NoteScalar,
+} from "../src/tasks/note-collection-model";
 import type { NoteTaskDrag } from "../src/tasks/note-drag";
 import NoteCollectionsSection from "../src/ui/components/note-collections-section.svelte";
 
-function setup(configured = false) {
+function setup(
+  configured = false,
+  completion?: NoteCollectionConfig["completion"],
+) {
   const docs = new Map([
     [
       "Questions/One.md",
@@ -29,6 +36,7 @@ function setup(configured = false) {
     ],
   ]);
   const config = noteCollectionSchema.parse({
+    completion,
     id: "q",
     name: "Questions",
     folder: "Questions",
@@ -49,6 +57,13 @@ function setup(configured = false) {
     saved,
     open,
     schedule,
+    writeProperty: async (
+      path: string,
+      property: string,
+      value: NoteScalar,
+    ) => {
+      Object.assign(docs.get(path)!, { [property]: value });
+    },
     paths: () => [...docs.keys()],
     properties: (path) => docs.get(path),
     folderExists: (path) => path === "Questions",
@@ -132,7 +147,7 @@ test("folder setup defaults to filenames; mapping, filtering and grouping save a
   expect(h.target.querySelectorAll(".collection-note")).toHaveLength(1);
   expect(h.target.textContent).toContain("An open question");
   expect(h.target.textContent).not.toContain("An ongoing question");
-  expect(h.target.querySelector(".collection-group-title")?.textContent).toBe(
+  expect(h.target.querySelector(".collection-group-name")?.textContent).toBe(
     "Reflection",
   );
   await h.cleanup();
@@ -196,5 +211,98 @@ test("cancel and removing a collection leave source notes untouched and missing 
   expect(get(h.settings).noteCollections).toEqual([]);
   expect(h.open).not.toHaveBeenCalled();
   expect(h.schedule).not.toHaveBeenCalled();
+  await h.cleanup();
+});
+
+test("groups collapse independently and cards omit metadata already shown in the heading", async () => {
+  const h = setup(true);
+  expect(
+    h.target.querySelectorAll('.collection-metadata [title="category"]'),
+  ).toHaveLength(0);
+  h.button("Toggle Reflection").click();
+  flushSync();
+  expect(h.button("Toggle Reflection").getAttribute("aria-expanded")).toBe(
+    "false",
+  );
+  expect(h.target.textContent).not.toContain("An open question");
+  expect(h.target.textContent).toContain("An ongoing question");
+  h.button("Toggle Reflection").click();
+  flushSync();
+  expect(h.target.querySelectorAll(".collection-note")).toHaveLength(2);
+  h.settings.update((value) => ({
+    ...value,
+    noteCollections: value.noteCollections.map((config) => ({
+      ...config,
+      groupProperty: "state",
+    })),
+  }));
+  flushSync();
+  expect(
+    h.target.querySelectorAll('.collection-metadata [title="state"]'),
+  ).toHaveLength(0);
+  await h.cleanup();
+});
+
+test("completion is optional, updates the chosen field, and can be reverted", async () => {
+  const h = setup(true, {
+    property: "state",
+    checkedValue: "Done",
+    uncheckedValue: "Active",
+  });
+  h.button("Configure Questions").click();
+  flushSync();
+  expect(h.input("Completion property").value).toBe("state");
+  expect(h.input("When checked").value).toBe("Done");
+  h.button("Cancel").click();
+  flushSync();
+  h.input("Complete An open question").click();
+  await vi.waitFor(() =>
+    expect(h.input("Revert An open question").checked).toBe(true),
+  );
+  h.input("Revert An open question").click();
+  await vi.waitFor(() =>
+    expect(h.input("Complete An open question").checked).toBe(false),
+  );
+  h.button("Configure Questions").click();
+  flushSync();
+  h.input("Allow note completion").click();
+  flushSync();
+  h.button("Save").click();
+  await vi.waitFor(() => expect(h.target.querySelector("form")).toBeNull());
+  expect(get(h.settings).noteCollections[0]?.completion).toBeUndefined();
+  expect(h.target.querySelectorAll(".collection-note-complete")).toHaveLength(
+    0,
+  );
+  await h.cleanup();
+});
+
+test("the settings opt-in starts with typed checkbox values and saves custom text mappings", async () => {
+  const h = setup(true);
+  expect(h.target.querySelectorAll(".collection-note-complete")).toHaveLength(
+    0,
+  );
+  h.button("Configure Questions").click();
+  flushSync();
+  h.input("Allow note completion").click();
+  flushSync();
+  expect(h.select("When checked").value).toBe("true");
+  expect(h.select("When reverted").value).toBe("false");
+  h.input("Completion property").value = "state";
+  h.input("Completion property").dispatchEvent(
+    new Event("input", { bubbles: true }),
+  );
+  h.change("When checked type", "string");
+  h.input("When checked").value = "Done";
+  h.input("When checked").dispatchEvent(new Event("input", { bubbles: true }));
+  h.change("When reverted type", "string");
+  h.input("When reverted").value = "Active";
+  h.input("When reverted").dispatchEvent(new Event("input", { bubbles: true }));
+  h.button("Save").click();
+  await vi.waitFor(() => expect(h.target.querySelector("form")).toBeNull());
+  expect(get(h.settings).noteCollections[0]?.completion).toEqual({
+    property: "state",
+    checkedValue: "Done",
+    uncheckedValue: "Active",
+  });
   await h.cleanup();
 });

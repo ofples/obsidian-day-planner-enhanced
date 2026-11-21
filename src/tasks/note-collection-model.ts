@@ -33,6 +33,28 @@ export const noteCollectionSchema = z.object({
   name: z.string().trim().min(1).max(100),
   folder: z.string().refine(vaultPath, "Choose a folder inside this vault."),
   recursive: z.boolean().default(false),
+  completion: z
+    .object({
+      property: z
+        .string()
+        .trim()
+        .min(1)
+        .max(200)
+        .refine(
+          (name) =>
+            !["__proto__", "constructor", "prototype", "position"].includes(
+              name,
+            ),
+          "Choose a writable note property.",
+        ),
+      checkedValue: noteScalarSchema,
+      uncheckedValue: noteScalarSchema,
+    })
+    .refine(
+      (value) => value.checkedValue !== value.uncheckedValue,
+      "Checked and reverted values must differ.",
+    )
+    .optional(),
   titleProperty: z.string().max(200).default(""),
   statusProperty: z.string().max(200).default(""),
   groupProperty: z.string().max(200).default(""),
@@ -253,4 +275,16 @@ export function collectionNoteLink(
     )
     .join("/");
   return "[" + label + "](" + path + ")";
+}
+
+/** Completion is opt-in and preserves scalar types, including false and zero. */
+export function isCollectionNoteCompleted(
+  note: CollectionNote,
+  config: NoteCollectionConfig,
+) {
+  return Boolean(
+    config.completion &&
+      note.properties[config.completion.property] ===
+        config.completion.checkedValue,
+  );
 }

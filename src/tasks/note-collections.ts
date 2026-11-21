@@ -11,6 +11,7 @@ import {
   type CollectionNote,
   type NoteCollectionConfig,
   type NoteScalar,
+  type NoteProperty,
 } from "./note-collection-model";
 
 export interface NoteCollectionsState {
@@ -32,6 +33,7 @@ export interface NoteCollectionsPort {
   save(config: NoteCollectionConfig): Promise<void>;
   remove(id: string): Promise<void>;
   open(note: CollectionNote): Promise<void>;
+  setCompleted?(note: CollectionNote, completed: boolean): Promise<void>;
 }
 export interface NoteCollectionsHost {
   schedule?: (note: CollectionNote) => Promise<void>;
@@ -43,10 +45,16 @@ export interface NoteCollectionsHost {
   folderExists(path: string): boolean;
   chooseFolder(): Promise<string | null>;
   open(path: string): Promise<void>;
+  writeProperty?(
+    path: string,
+    property: string,
+    value: NoteScalar,
+    expected: NoteProperty | undefined,
+  ): Promise<void>;
   makeId?(): string;
 }
 
-/** Local note metadata is read through the host; no note body or properties are written. */
+/** Metadata stays read-only unless the collection explicitly opts into completion. */
 export class NoteCollections implements NoteCollectionsPort {
   readonly schedule?: (note: CollectionNote) => Promise<void>;
   readonly state = writable<NoteCollectionsState>({
@@ -60,6 +68,7 @@ export class NoteCollections implements NoteCollectionsPort {
   private readonly stop: () => void;
   private signature = "";
   private active = true;
+  private readonly pendingCompletions = new Set<string>();
   constructor(private readonly host: NoteCollectionsHost) {
     this.schedule = host.schedule;
     this.stop = host.settings.subscribe((settings) => {
@@ -273,6 +282,47 @@ export class NoteCollections implements NoteCollectionsPort {
         (entry) => entry.id !== id,
       ),
     }));
+  }
+  async setCompleted(note: CollectionNote, completed: boolean) {
+    const settings = get(this.host.settings);
+    const config = settings.noteCollections.find(
+      (item) => item.id === note.collectionId,
+    );
+    const mapping = config?.completion;
+    if (!config || !mapping || !this.host.writeProperty)
+      throw Error(
+        "Enable note completion in this collection's settings first.",
+      );
+    const path = Object.keys(settings.noteCollectionFileIds).find(
+      (path) => settings.noteCollectionFileIds[path] === note.id,
+    );
+    if (
+      !path ||
+      !this.host.paths().includes(path) ||
+      !collectionIncludes(config, path)
+    )
+      throw Error(
+        "This note moved or was removed. Refresh the collection and try again.",
+      );
+    if (this.pendingCompletions.has(note.id))
+      throw Error("This note is still being saved.");
+    const expected = note.properties[mapping.property];
+    const value = completed ? mapping.checkedValue : mapping.uncheckedValue;
+    const before = this.documents.get(path) ?? this.read(path);
+    this.pendingCompletions.add(note.id);
+    this.documents.set(path, {
+      ...before,
+      properties: { ...before.properties, [mapping.property]: value },
+    });
+    this.publish();
+    try {
+      await this.host.writeProperty(path, mapping.property, value, expected);
+    } catch (error) {
+      this.changed(path);
+      throw error;
+    } finally {
+      this.pendingCompletions.delete(note.id);
+    }
   }
   async open(note: CollectionNote) {
     const settings = get(this.host.settings);

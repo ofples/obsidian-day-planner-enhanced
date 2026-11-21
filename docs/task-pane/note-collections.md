@@ -14,18 +14,28 @@ Subfolders are excluded unless **Include subfolders** is enabled. The folder pic
 
 Expand **Customize display** to choose properties already found in the folder:
 
-| Mapping | Behavior |
-| --- | --- |
-| Title | Shows this property, falling back to the filename when empty. |
-| Status | Shows its existing value and provides a quick status filter. |
-| Group by | Groups notes by a property; a list can place a note in several groups. |
-| Show properties | Adds selected fields beneath each title. |
-| Sort by | Sorts by a property or title; numeric properties sort numerically. |
-| Duration (minutes) | Uses a numeric value from 1 to 1,440 for linked sessions. |
+| Mapping            | Behavior                                                               |
+| ------------------ | ---------------------------------------------------------------------- |
+| Title              | Shows this property, falling back to the filename when empty.          |
+| Status             | Shows its existing value and provides a quick status filter.           |
+| Group by           | Groups notes by a property; a list can place a note in several groups. |
+| Show properties    | Adds selected fields beneath each title.                               |
+| Sort by            | Sorts by a property or title; numeric properties sort numerically.     |
+| Duration (minutes) | Uses a numeric value from 1 to 1,440 for linked sessions.              |
 
 Filters support **Is any of**, **Is none of**, **Contains**, **Is empty**, and **Is set**. Values within one filter are alternatives; multiple filters must all match. Boolean and numeric values retain their types. Notes without a property can be included using **Is empty**.
 
-An inquiry collection could use `question` for its title, `inquiry-status` for status, and `inquiry-category` for grouping. No particular property names or statuses are required. A note's existing status does not acquire task-completion semantics.
+An inquiry collection could use `question` for its title, `inquiry-status` for status, and `inquiry-category` for grouping. No particular property names or statuses are required. A note's existing status does not acquire task-completion semantics unless you opt into completion below.
+
+Groups have independent expand/collapse controls and counts. Cards omit the grouping property and repeated values already shown in their group heading.
+
+## Optional note completion
+
+Under **Configure collection**, enable **Allow notes to be ticked off** to add checkboxes. Choose a top-level **Property to update**, the value **When checked**, and the value **When reverted**. Values can be text (for example `state: Done` / `state: Active`), checkbox booleans (`completed: true` / `completed: false`), or numbers.
+
+Completion is off by default. Only the selected property is updated through Obsidian's frontmatter API; the note body and other properties are preserved. A checkbox is checked when the property exactly matches the configured checked value, including its type. Reverting writes your configured reverted value. Existing filters and grouping still apply, so an updated note can move groups or leave a filtered view. Changes appear immediately and roll back if saving fails. A newer external edit to that property is preserved and asks you to refresh.
+
+This option applies to the source note's checkbox only. Opening, dragging and completing a linked schedule session do not change the note's completion property. Disable the option to remove these checkboxes without altering note properties.
 
 ## Read and schedule
 

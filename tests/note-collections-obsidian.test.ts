@@ -3,7 +3,10 @@ import { get, writable } from "svelte/store";
 import { afterEach, expect, test, vi } from "vitest";
 
 import { defaultSettings, type DayPlannerSettings } from "../src/settings";
-import { noteCollectionSchema } from "../src/tasks/note-collection-model";
+import {
+  noteCollectionSchema,
+  projectNoteCollection,
+} from "../src/tasks/note-collection-model";
 import { createNoteCollections } from "../src/tasks/note-collections-obsidian";
 
 vi.mock("obsidian", () => ({
@@ -11,6 +14,7 @@ vi.mock("obsidian", () => ({
   Modal: class {},
   Setting: class {},
   TFolder: class {},
+  TFile: class {},
 }));
 
 afterEach(() => vi.useRealTimers());
@@ -71,4 +75,79 @@ test("folder renames wait for the host's descendant-path cache and preserve note
   service.dispose();
   await vi.runOnlyPendingTimersAsync();
   expect(get(settings).noteCollections[0]?.folder).toBe(folder);
+});
+
+test("completion updates one frontmatter property and rejects a newer external change", async () => {
+  const { TFile, TFolder } = await import("obsidian");
+  const path = "Questions/One.md",
+    file = Object.assign(new TFile(), { path });
+  let properties: Record<string, unknown> = {
+    state: "Active",
+    tags: ["keep"],
+    unrelated: 42,
+  };
+  const cache = { ...properties };
+  const config = noteCollectionSchema.parse({
+    id: "questions",
+    name: "Questions",
+    folder: "Questions",
+    completion: {
+      property: "state",
+      checkedValue: "Done",
+      uncheckedValue: "Active",
+    },
+  });
+  const settings = writable<DayPlannerSettings>({
+    ...structuredClone(defaultSettings),
+    noteCollections: [config],
+    noteCollectionFileIds: { [path]: "one" },
+  });
+  const processFrontMatter = vi.fn(
+    async (
+      _file: unknown,
+      update: (properties: Record<string, unknown>) => void,
+    ) => {
+      const draft = structuredClone(properties);
+      update(draft);
+      properties = draft;
+    },
+  );
+  const plugin = {
+    app: {
+      vault: {
+        getMarkdownFiles: () => [file],
+        getAbstractFileByPath: (name: string) =>
+          name === path ? file : new TFolder(),
+        on: () => ({}),
+      },
+      metadataCache: {
+        getCache: () => ({ frontmatter: cache }),
+        on: () => ({}),
+      },
+      fileManager: { processFrontMatter },
+      workspace: { onLayoutReady: () => {} },
+    },
+    registerEvent: () => {},
+    register: () => {},
+  } as unknown as Plugin;
+  const service = createNoteCollections(plugin, settings, async () => {});
+  const note = () =>
+    projectNoteCollection(
+      config,
+      get(service.state).documents,
+      get(settings).noteCollectionFileIds,
+    ).items[0]!;
+  await service.setCompleted(note(), true);
+  expect(properties).toEqual({ state: "Done", tags: ["keep"], unrelated: 42 });
+  expect(processFrontMatter).toHaveBeenCalledWith(file, expect.any(Function));
+  properties.state = "Changed elsewhere";
+  await expect(service.setCompleted(note(), false)).rejects.toThrow(
+    "property changed",
+  );
+  expect(properties).toEqual({
+    state: "Changed elsewhere",
+    tags: ["keep"],
+    unrelated: 42,
+  });
+  service.dispose();
 });

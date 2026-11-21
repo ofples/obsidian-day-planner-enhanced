@@ -7,11 +7,13 @@ import {
 } from "../src/settings";
 import {
   collectionIncludes,
+  isCollectionNoteCompleted,
   collectionNoteLink,
   normalizeNoteProperty,
   noteCollectionSchema,
   noteCollectionFilterSchema,
   projectNoteCollection,
+  type NoteScalar,
 } from "../src/tasks/note-collection-model";
 import { NoteCollections } from "../src/tasks/note-collections";
 import { NoteTaskDrag } from "../src/tasks/note-drag";
@@ -203,6 +205,11 @@ function fixture() {
     settings,
     saved,
     open,
+    writeProperty: vi.fn(
+      async (path: string, property: string, value: NoteScalar) => {
+        Object.assign(documents.get(path)!, { [property]: value });
+      },
+    ),
     paths: () => [...documents.keys()],
     properties: (path: string) => documents.get(path),
     folderExists: (path: string) => folders.has(path),
@@ -287,5 +294,112 @@ describe("live note collection service", () => {
     const snapshot = get(f.service.state);
     f.settings.set({ ...get(f.settings), noteCollections: [] });
     expect(get(f.service.state)).toBe(snapshot);
+  });
+});
+
+describe("opt-in collection completion", () => {
+  function item(f: ReturnType<typeof fixture>) {
+    return projectNoteCollection(
+      get(f.settings).noteCollections[0]!,
+      get(f.service.state).documents,
+      get(f.settings).noteCollectionFileIds,
+    ).items.find((note) => note.path === first.path)!;
+  }
+  test("an unconfigured collection never writes a property", async () => {
+    const f = fixture();
+    await expect(f.service.setCompleted(item(f), true)).rejects.toThrow(
+      "Enable note completion",
+    );
+    expect(f.host.writeProperty).not.toHaveBeenCalled();
+    f.service.dispose();
+  });
+  test("typed completion changes only the configured field and reverts to its chosen value", async () => {
+    const f = fixture();
+    await f.service.save({
+      ...config,
+      completion: {
+        property: "reviewed",
+        checkedValue: true,
+        uncheckedValue: false,
+      },
+    });
+    await f.service.setCompleted(item(f), true);
+    expect(f.documents.get(first.path)).toEqual({
+      ...first.properties,
+      reviewed: true,
+    });
+    expect(
+      isCollectionNoteCompleted(item(f), get(f.settings).noteCollections[0]!),
+    ).toBe(true);
+    await f.service.setCompleted(item(f), false);
+    expect(f.documents.get(first.path)).toEqual(first.properties);
+    f.service.dispose();
+  });
+  test("an immediate optimistic update rolls back if storage rejects it", async () => {
+    const f = fixture();
+    await f.service.save({
+      ...config,
+      completion: {
+        property: "reviewed",
+        checkedValue: true,
+        uncheckedValue: false,
+      },
+    });
+    let reject!: (error: Error) => void;
+    f.host.writeProperty.mockImplementationOnce(
+      () => new Promise((_resolve, no) => (reject = no)),
+    );
+    const saving = f.service.setCompleted(item(f), true);
+    expect(item(f).properties.reviewed).toBe(true);
+    reject(Error("Disk unavailable"));
+    await expect(saving).rejects.toThrow("Disk unavailable");
+    expect(item(f).properties.reviewed).toBe(false);
+    f.service.dispose();
+  });
+  test("completion follows a renamed note using its existing identity", async () => {
+    const f = fixture();
+    await f.service.save({
+      ...config,
+      completion: {
+        property: "state",
+        checkedValue: "Done",
+        uncheckedValue: "Active",
+      },
+    });
+    const shown = item(f),
+      moved = "Topics/Questions/Moved.md";
+    f.documents.set(moved, f.documents.get(first.path)!);
+    f.documents.delete(first.path);
+    f.service.renamed(first.path, moved);
+    await f.service.setCompleted(shown, true);
+    expect(f.host.writeProperty).toHaveBeenCalledWith(
+      moved,
+      "state",
+      "Done",
+      "Active",
+    );
+    f.service.dispose();
+  });
+  test("mapping validation rejects identical values and reserved keys", () => {
+    expect(
+      noteCollectionSchema.safeParse({
+        ...config,
+        completion: {
+          property: "state",
+          checkedValue: "Done",
+          uncheckedValue: "Done",
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      noteCollectionSchema.safeParse({
+        ...config,
+        completion: {
+          property: "__proto__",
+          checkedValue: true,
+          uncheckedValue: false,
+        },
+      }).success,
+    ).toBe(false);
   });
 });

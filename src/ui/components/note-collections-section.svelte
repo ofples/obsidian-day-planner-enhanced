@@ -12,6 +12,7 @@
 
   import {
     projectNoteCollection,
+    isCollectionNoteCompleted,
     notePropertyText,
     noteCollectionFilterSchema,
     collectionNoteLink,
@@ -21,6 +22,8 @@
   } from "../../tasks/note-collection-model";
   import type { NoteCollectionsPort } from "../../tasks/note-collections";
   import type { NoteTaskDrag } from "../../tasks/note-drag";
+
+  import NotePropertyValue from "./note-property-value.svelte";
 
   // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- Svelte validates annotated component props.
   let {
@@ -40,6 +43,8 @@
   const busy = $derived(action !== null);
   let issue = $state("");
   let collapsed = $state<string[]>([]);
+  let collapsedGroups = $state<string[]>([]);
+  let completing = $state<string[]>([]);
   let limits = $state<Record<string, number>>({});
   let statusFilters = $state<Record<string, string>>({});
   const inspection = $derived(
@@ -121,6 +126,15 @@
       return;
     }
     if (
+      draft.completion &&
+      (!draft.completion.property.trim() ||
+        draft.completion.checkedValue === draft.completion.uncheckedValue)
+    ) {
+      issue =
+        "Choose a completion property and different checked/reverted values.";
+      return;
+    }
+    if (
       draft.filters.some(
         (filter) =>
           !filter.property ||
@@ -185,6 +199,42 @@
       },
       event.dataTransfer,
     );
+  }
+  function cardMetadata(
+    note: CollectionNote,
+    config: NoteCollectionConfig,
+    group: string,
+  ) {
+    const seen = new Set<string>([group]);
+    return [
+      ...new Set([config.statusProperty, ...config.visibleProperties]),
+    ].flatMap((property) => {
+      const text = notePropertyText(note.properties[property]);
+      if (
+        !property ||
+        property === config.groupProperty ||
+        !text ||
+        seen.has(text)
+      )
+        return [];
+      seen.add(text);
+      return [{ property, text }];
+    });
+  }
+  async function complete(note: CollectionNote, checked: boolean) {
+    if (!port.setCompleted || completing.includes(note.id)) return;
+    completing = [...completing, note.id];
+    issue = "";
+    try {
+      await port.setCompleted(note, checked);
+    } catch (error) {
+      issue =
+        error instanceof Error
+          ? error.message
+          : "Could not update the note property.";
+    } finally {
+      completing = completing.filter((id) => id !== note.id);
+    }
   }
   function availableProperties(current: string) {
     return [
@@ -257,6 +307,53 @@
             ><input type="checkbox" bind:checked={draft.recursive} />Include
             subfolders</label
           >
+          <label class="check-row"
+            ><input
+              aria-label="Allow note completion"
+              checked={Boolean(draft.completion)}
+              onchange={(event) => {
+                if (!draft) return;
+                draft.completion = event.currentTarget.checked
+                  ? {
+                      property: "completed",
+                      checkedValue: true,
+                      uncheckedValue: false,
+                    }
+                  : undefined;
+              }}
+              type="checkbox"
+            />Allow notes to be ticked off</label
+          >
+          {#if draft.completion}
+            <div class="completion-settings">
+              <label
+                >Property to update<input
+                  aria-label="Completion property"
+                  list="collection-completion-properties"
+                  maxlength="200"
+                  placeholder="completed"
+                  bind:value={draft.completion.property}
+                /></label
+              >
+              <datalist id="collection-completion-properties"
+                >{#each availableProperties(draft.completion.property) as property}<option
+                    value={property}
+                  ></option>{/each}</datalist
+              >
+              <NotePropertyValue
+                label="When checked"
+                bind:value={draft.completion.checkedValue}
+              />
+              <NotePropertyValue
+                label="When reverted"
+                bind:value={draft.completion.uncheckedValue}
+              />
+              <small
+                >Updates only this property in the source note. Existing filters
+                and grouping still apply.</small
+              >
+            </div>
+          {/if}
           <details>
             <summary>Customize display</summary>
             {#each ["titleProperty", "statusProperty", "groupProperty", "sortProperty", "durationProperty"] as key}
@@ -465,43 +562,82 @@
             </p>{/if}
           {#each view.groups as group (group.name)}
             {#if group.items.some((item) => visible.has(item.id))}
+              {@const groupKey = JSON.stringify([view.config.id, group.name])}
+              {@const groupExpanded = !collapsedGroups.includes(groupKey)}
               {#if group.name}<h4 class="collection-group-title">
-                  {group.name}
-                </h4>{/if}
-              <div class="collection-notes" role="list">
-                {#each group.items.filter( (item) => visible.has(item.id), ) as note (note.id)}
-                  <div class="collection-note" role="listitem">
-                    <button
-                      class="collection-note-open"
-                      draggable={Boolean(noteDrag)}
-                      onclick={() => run(() => port.open(note))}
-                      ondragend={() => noteDrag?.cancel()}
-                      ondragstart={(event) => startDrag(event, note)}
-                      title={note.path}
-                      type="button"
+                  <button
+                    class="collection-group-toggle"
+                    aria-expanded={groupExpanded}
+                    aria-label={"Toggle " + group.name}
+                    onclick={() =>
+                      (collapsedGroups = groupExpanded
+                        ? [...collapsedGroups, groupKey]
+                        : collapsedGroups.filter((key) => key !== groupKey))}
+                    type="button"
+                  >
+                    {#if groupExpanded}<ChevronDown
+                        size={13}
+                      />{:else}<ChevronRight size={13} />{/if}
+                    <span class="collection-group-name">{group.name}</span><span
+                      class="collection-count">{group.items.length}</span
                     >
-                      <span class="collection-note-title">{note.title}</span>
-                      <span class="collection-metadata">
-                        {#each [...new Set( [view.config.statusProperty, ...view.config.visibleProperties], )].filter(Boolean) as property}
-                          {#if notePropertyText(note.properties[property])}<span
-                              title={property}
-                              >{notePropertyText(
-                                note.properties[property],
-                              )}</span
-                            >{/if}
-                        {/each}
-                      </span>
-                    </button>
-                    {#if port.schedule}<button
-                        class="icon-button schedule-note"
-                        aria-label={"Schedule " + note.title}
-                        onclick={() => run(() => port.schedule!(note))}
-                        title="Schedule a linked session"
-                        type="button"><CalendarClock size={15} /></button
-                      >{/if}
-                  </div>
-                {/each}
-              </div>
+                  </button>
+                </h4>{/if}
+              {#if !group.name || groupExpanded}<div
+                  class="collection-notes"
+                  role="list"
+                >
+                  {#each group.items.filter( (item) => visible.has(item.id), ) as note (note.id)}
+                    {@const completed = isCollectionNoteCompleted(
+                      note,
+                      view.config,
+                    )}
+                    {@const metadata = cardMetadata(
+                      note,
+                      view.config,
+                      group.name,
+                    )}
+                    <div
+                      class="collection-note"
+                      class:is-completed={completed}
+                      role="listitem"
+                    >
+                      {#if view.config.completion && port.setCompleted}<input
+                          class="collection-note-complete"
+                          aria-label={(completed ? "Revert " : "Complete ") +
+                            note.title}
+                          checked={completed}
+                          disabled={completing.includes(note.id)}
+                          onchange={(event) =>
+                            void complete(note, event.currentTarget.checked)}
+                          type="checkbox"
+                        />{/if}
+                      <button
+                        class="collection-note-open"
+                        draggable={Boolean(noteDrag)}
+                        onclick={() => run(() => port.open(note))}
+                        ondragend={() => noteDrag?.cancel()}
+                        ondragstart={(event) => startDrag(event, note)}
+                        title={note.path}
+                        type="button"
+                      >
+                        <span class="collection-note-title">{note.title}</span>
+                        {#if metadata.length}<span class="collection-metadata">
+                            {#each metadata as item}<span title={item.property}
+                                >{item.text}</span
+                              >{/each}
+                          </span>{/if}
+                      </button>
+                      {#if port.schedule}<button
+                          class="icon-button schedule-note"
+                          aria-label={"Schedule " + note.title}
+                          onclick={() => run(() => port.schedule!(note))}
+                          title="Schedule a linked session"
+                          type="button"><CalendarClock size={15} /></button
+                        >{/if}
+                    </div>
+                  {/each}
+                </div>{/if}
             {/if}
           {/each}
           {#if visible.size < view.items.length}<button
@@ -678,6 +814,56 @@
     background: none;
     border: 0;
     box-shadow: none;
+  }
+
+  .collection-group-toggle {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+
+    width: 100%;
+    padding: 3px 0;
+
+    font: inherit;
+    color: inherit;
+
+    background: none;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .collection-group-name {
+    text-align: left;
+    overflow-wrap: anywhere;
+  }
+
+  .collection-group-toggle :global(svg) {
+    flex: none;
+  }
+
+  .collection-note-complete {
+    flex: none;
+
+    width: 16px;
+    height: 16px;
+    margin: 11px 0 0 8px;
+
+    border-radius: 50%;
+  }
+
+  .collection-note.is-completed .collection-note-title {
+    color: var(--text-muted);
+    text-decoration: line-through;
+  }
+
+  .completion-settings {
+    display: grid;
+    gap: 12px;
+
+    padding: 10px;
+
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
   }
 
   .collection-group-title {
