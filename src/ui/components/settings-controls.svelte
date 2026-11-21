@@ -64,6 +64,15 @@
           }),
         ),
     );
+    new SettingGroup(el)
+      .setHeading("Note collections")
+      .addSetting((setting) =>
+        setting
+          .setName("Folder sources")
+          .setDesc(
+            `${$settings.noteCollections.length} collection(s). Open Tasks → Notes to add a folder and configure its property mappings, filters and grouping. Notes remain ordinary Markdown files.`,
+          ),
+      );
 
     new SettingGroup(el).setHeading("Linked tasks").addSetting((setting) =>
       setting

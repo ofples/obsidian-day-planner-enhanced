@@ -6,6 +6,7 @@
   import type { DayPlannerSettings } from "../../settings";
   import { switchTaskSource, type TaskViewState } from "../../tasks/browser";
   import type { CaptureCandidate } from "../../tasks/capture-parser";
+  import type { NoteCollectionsPort } from "../../tasks/note-collections";
   import type { NoteTaskDrag } from "../../tasks/note-drag";
   import type { TaskScheduler } from "../../tasks/schedule";
   import type { TaskSource } from "../../tasks/source";
@@ -25,6 +26,7 @@
   let {
     noteTasks,
     noteDrag,
+    noteCollections,
     noteContext,
     resolveImported,
     openConnections,
@@ -37,6 +39,7 @@
   }: ComponentProps<typeof TasksPane> & {
     noteTasks?: Readable<CaptureCandidate[]>;
     noteDrag?: NoteTaskDrag;
+    noteCollections?: NoteCollectionsPort;
     noteContext?: Readable<{ currentPath: string; targetPath: string }>;
     resolveImported?: (uid: string) => TaskSource | undefined;
     openConnections?: () => void;
@@ -78,6 +81,7 @@
       {addToNote}
       completeTask={legacy.completeTask}
       connections={openConnections}
+      {noteCollections}
       {noteContext}
       {noteDrag}
       {noteTasks}

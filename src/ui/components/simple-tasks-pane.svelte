@@ -37,6 +37,7 @@
   } from "../../tasks/browser";
   import type { CaptureCandidate } from "../../tasks/capture-parser";
   import { githubTaskView } from "../../tasks/github-view";
+  import type { NoteCollectionsPort } from "../../tasks/note-collections";
   import type { NoteTaskDrag } from "../../tasks/note-drag";
   import { noteTaskRows } from "../../tasks/note-list";
   import type { ImportedTaskSource } from "../../tasks/plain-import";
@@ -63,6 +64,7 @@
   import { TaskRenderCache } from "../task-render-cache";
   import "../task-panel.css";
 
+  import NoteCollectionsSection from "./note-collections-section.svelte";
   import NoteTasksSection from "./note-tasks-section.svelte";
   import TaskDetailsCard from "./task-details-card.svelte";
   import TaskPopover from "./task-popover.svelte";
@@ -75,6 +77,7 @@
     preferences,
     noteTasks = readable<CaptureCandidate[]>([]),
     noteDrag,
+    noteCollections,
     noteContext = readable({ currentPath: "", targetPath: "" }),
     resolveImported,
     connections,
@@ -91,6 +94,7 @@
     preferences: Writable<TaskViewState>;
     noteTasks?: Readable<CaptureCandidate[]>;
     noteDrag?: NoteTaskDrag;
+    noteCollections?: NoteCollectionsPort;
     noteContext?: Readable<{ currentPath: string; targetPath: string }>;
     resolveImported?: (uid: string) => TaskSource | undefined;
     connections?: () => void;
@@ -117,6 +121,17 @@
   });
   const viewPreferences = $derived(taskView ? curatedPreferences : preferences);
   let viewAnchor = $state<HTMLElement | null>(null);
+  let bodyHeight = $state(0);
+  function measureBody(node: HTMLElement) {
+    const update = () => {
+      bodyHeight = node.clientHeight;
+    };
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
   let detailAnchor = $state<HTMLElement | null>(null);
   let detailId = $state<string | null>(null);
   let detailScope = $state("");
@@ -630,7 +645,7 @@
         <input
           aria-label="Search tasks"
           placeholder={source === "notes"
-            ? "Search note tasks"
+            ? "Search notes and tasks"
             : "Search tasks"}
           type="search"
           bind:value={$viewPreferences.query}
@@ -986,7 +1001,7 @@
       />
     {/key}
   {/if}
-  <div class="task-body">
+  <div class="task-body" use:measureBody>
     <div class="task-list-area">
       {#if source === "overview"}<NoteTasksSection
           candidates={displayedNoteTasks}
@@ -1000,7 +1015,14 @@
           scannedPaths={taskView ? curatedNotePaths : []}
           showAdded={Boolean($viewPreferences.showAdded)}
         />{/if}
-      {#if source === "notes"}<NoteTasksSection
+      {#if source === "notes"}
+        {#if noteCollections}<NoteCollectionsSection
+            availableHeight={bodyHeight}
+            {noteDrag}
+            port={noteCollections}
+            query={$viewPreferences.query}
+          />{/if}
+        <NoteTasksSection
           candidates={displayedNoteTasks}
           currentPath={$noteContext.currentPath}
           matchingKeys={selection?.noteKeys}

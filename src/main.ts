@@ -104,6 +104,8 @@ import { createTaskDeletionController } from "./tasks/deletion-obsidian";
 import { taskDragMime } from "./tasks/drag";
 import { withPendingDrops } from "./tasks/drop-feedback";
 import { taskDropOffset } from "./tasks/editor-drop";
+import type { NoteCollectionsPort } from "./tasks/note-collections";
+import { createNoteCollections } from "./tasks/note-collections-obsidian";
 import { NoteTaskDrag } from "./tasks/note-drag";
 import { createTaskService } from "./tasks/obsidian";
 import type { TaskReconciler } from "./tasks/reconcile";
@@ -182,6 +184,8 @@ export default class DayPlanner extends Plugin {
   taskReconciler?: TaskReconciler;
   taskDeleter?: TaskDeletionController;
   private noteTaskDrag?: NoteTaskDrag;
+  private noteCollections?: NoteCollectionsPort;
+  private settingsWrites: Promise<void> = Promise.resolve();
   private noteTaskCandidates: Readable<CaptureCandidate[]> = readable([]);
   getSettings!: () => DayPlannerSettings;
   private settingsStore!: Writable<DayPlannerSettings>;
@@ -335,6 +339,13 @@ export default class DayPlanner extends Plugin {
     });
 
     this.initSettingsStore({ initialSettings, dispatch });
+    this.noteCollections = createNoteCollections(
+      this,
+      this.settingsStore,
+      () => this.settingsWrites,
+      () => this.taskScheduler,
+      () => this.getSettings().defaultDurationMinutes,
+    );
     registerNextTaskSlot(this, () => this.getSettings());
     this.taskService = createTaskService(
       this,
@@ -613,6 +624,7 @@ export default class DayPlanner extends Plugin {
             this.periodicNotes,
             this.aiPlanning,
             this.taskSources,
+            this.noteCollections,
           ),
       );
     this.addCommand({
@@ -1096,11 +1108,19 @@ export default class DayPlanner extends Plugin {
     settingsStore.set(initialSettings);
 
     this.register(
-      settingsStore.subscribe(async (newValue) => {
+      settingsStore.subscribe((newValue) => {
         configureTimestampRegExps(newValue.timestampFormat);
         dispatch(settingsUpdated(newValue));
 
-        await this.saveData(newValue);
+        this.settingsWrites = this.settingsWrites
+          .catch(() => {})
+          .then(() => this.saveData(newValue));
+        void this.settingsWrites.catch(
+          () =>
+            new Notice(
+              "Day Planner settings could not be saved. Check available storage and retry.",
+            ),
+        );
       }),
     );
 

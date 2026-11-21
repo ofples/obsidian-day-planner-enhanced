@@ -4,6 +4,8 @@ This fork adds Google Calendar two-way sync, a Tasks pane for Todoist and note t
 
 [Download this fork](https://github.com/ofples/obsidian-day-planner-enhanced/releases) · [Google Calendar setup](GOOGLE-CALENDAR.md) · [Tasks guide](docs/task-pane/README.md) · [Privacy notice](PRIVACY.md)
 
+The current source candidate adds [folder collections under Notes](docs/task-pane/note-collections.md): browse Markdown notes using existing properties and schedule linked sessions without changing their contents or statuses.
+
 ### Share a schedule
 
 Choose **Export schedule…** from the planner menu. Select PNG or PDF, a timeline or compact overview, and whether to include subtasks, all-day events and other calendars. Set the default destination under **Exports** in Day Planner settings. PNG and desktop PDF exports use that folder, with `Schedule Exports` as the default.

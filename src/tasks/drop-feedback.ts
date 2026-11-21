@@ -6,13 +6,13 @@ import type { ListItemEntryWithChildren } from "../redux/index/index-slice";
 import { createListItemEntry } from "../service/index/list-item-utils";
 import type { EditableTimeBlock } from "../time-block-types";
 
-import type { NoteTaskReference } from "./note-drag";
+import type { NoteTaskReference, ChecklistNoteReference } from "./note-drag";
 import type { ScheduleInterval } from "./schedule-types";
 import { taskSourceSchema, type TaskSource } from "./source";
 
 export type DropDestination =
   | { interval: ScheduleInterval }
-  | { parent: NoteTaskReference }
+  | { parent: ChecklistNoteReference }
   | { path: string; offset: number; before: string; timePrefix?: string };
 
 export interface PendingDrop {
@@ -188,13 +188,15 @@ export function withPendingDrops(
       continue;
     const entry = previewEntry(drop);
     if (!entry) continue;
-    if (drop.previous)
+    if (drop.previous && drop.previous.kind !== "note") {
+      const previous = drop.previous;
       result = result.filter(
         (block) =>
           block.source === "unwritten" ||
-          block.path !== drop.previous!.path ||
-          block.position.start.line !== drop.previous!.line,
+          block.path !== previous.path ||
+          block.position.start.line !== previous.line,
       );
+    }
     if ("parent" in drop.destination) {
       const parent = drop.destination.parent;
       const candidates = result.filter(

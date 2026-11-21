@@ -5,13 +5,23 @@ import { hasTaskLock } from "../util/task-lock";
 import { scheduleNoteTitle } from "./schedule-markdown";
 
 export const noteTaskDragMime = "application/x-day-planner-note-task+json";
-export interface NoteTaskReference {
+export interface ChecklistNoteReference {
+  kind?: "checklist";
   path: string;
   line: number;
   text: string;
   durationMinutes?: number;
   title?: string;
 }
+export interface WholeNoteReference {
+  kind: "note";
+  noteId: string;
+  path: string;
+  text: string;
+  title?: string;
+  durationMinutes?: number;
+}
+export type NoteTaskReference = ChecklistNoteReference | WholeNoteReference;
 
 export class NoteTaskDrag {
   readonly state = writable<NoteTaskReference | null>(null);
@@ -23,11 +33,17 @@ export class NoteTaskDrag {
   constructor(private readonly namespace: string) {}
 
   start(reference: NoteTaskReference, transfer: DataTransfer) {
-    if (hasTaskLock(reference.text))
+    if (reference.kind !== "note" && hasTaskLock(reference.text))
       throw new Error("Unlock this task before moving it.");
     const id = crypto.randomUUID();
     this.active = {
-      reference: { ...reference, title: scheduleNoteTitle(reference.text) },
+      reference: {
+        ...reference,
+        title:
+          reference.kind === "note"
+            ? (reference.title ?? scheduleNoteTitle(reference.text))
+            : scheduleNoteTitle(reference.text),
+      },
       id,
       expires: Date.now() + 120_000,
     };
@@ -36,7 +52,7 @@ export class NoteTaskDrag {
       JSON.stringify({ namespace: this.namespace, id }),
     );
     transfer.setData("text/plain", reference.text);
-    transfer.effectAllowed = "move";
+    transfer.effectAllowed = reference.kind === "note" ? "copy" : "move";
     this.state.set(this.active.reference);
   }
 

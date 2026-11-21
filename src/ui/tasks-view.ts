@@ -19,6 +19,7 @@ import { taskViewStateSchema } from "../tasks/browser";
 import type { TaskCapture } from "../tasks/capture";
 import type { CaptureCandidate } from "../tasks/capture-parser";
 import type { TaskDeletionController } from "../tasks/deletion";
+import type { NoteCollectionsPort } from "../tasks/note-collections";
 import type { NoteTaskDrag } from "../tasks/note-drag";
 import type { TaskReconciler } from "../tasks/reconcile";
 import type { TaskScheduler } from "../tasks/schedule";
@@ -58,6 +59,7 @@ export class TasksView extends ItemView {
     private readonly daily?: Pick<PeriodicNotes, "createDailyNotePath">,
     private readonly planning?: AiPlanningService,
     private readonly sources?: TaskSourceCollection,
+    private readonly noteCollections?: NoteCollectionsPort,
   ) {
     super(leaf);
   }
@@ -161,6 +163,7 @@ export class TasksView extends ItemView {
         deleter: this.deleter,
         noteTasks: this.noteTasks,
         noteDrag: this.noteDrag,
+        noteCollections: this.noteCollections,
         noteContext,
         resolveImported: (uid: string) => this.calendar?.importedSource?.(uid),
         openConnections: this.openConnections,

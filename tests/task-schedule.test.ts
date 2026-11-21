@@ -354,7 +354,9 @@ async function harness() {
   await service.initialize();
   await service.connect("token");
   const warn = vi.fn();
+  const collectionNotes = new Map<string, string>();
   const host = {
+    collectionNotePath: (id: string) => collectionNotes.get(id),
     warn,
     read: async (path: string) => texts.get(path) ?? null,
     flush: async () => {},
@@ -395,6 +397,7 @@ async function harness() {
     reconciler,
   );
   return {
+    collectionNotes,
     get deleter() {
       return deleter;
     },
@@ -1953,6 +1956,71 @@ describe("recurring occurrence freezing", () => {
     expect(h.scheduler.projection(root.id)?.linkUid).toBe(current.linkUid);
     expect(h.apply).toHaveBeenCalledTimes(count);
     expect(h.tasks.get(root.id)?.completionCount).toBe(1);
+    h.service.stop();
+  });
+});
+
+describe("whole-note collection scheduling", () => {
+  test("creates an idempotent linked session while preserving the complete source note and its status", async () => {
+    const h = await harness(),
+      path = "Topics/Questions/One.md",
+      id = "collection-note-one",
+      dropId = crypto.randomUUID();
+    const before =
+      "---\r\nquestion: Can I begin again?\r\nstate: Ongoing\r\n---\r\n\r\nAn inquiry, with its own history.\r\n";
+    h.file(path);
+    h.texts.set(path, before);
+    h.collectionNotes.set(id, path);
+    const reference = {
+      kind: "note" as const,
+      noteId: id,
+      path,
+      text: "A question",
+      title: "Can I begin again?",
+      durationMinutes: 25,
+    };
+    const placed = await h.scheduler.placeNote(reference, interval, dropId);
+    expect(h.texts.get(path)).toBe(before);
+    expect(placed.path).not.toBe(path);
+    expect(h.texts.get(placed.path)).toContain("Topics/Questions/One.md");
+    expect(h.texts.get(placed.path)).toContain("Can I begin again?");
+    expect(h.apply).not.toHaveBeenCalled();
+    const daily = h.texts.get(placed.path);
+    await h.restart();
+    await h.scheduler.placeNote(reference, interval, dropId);
+    expect(h.texts.get(placed.path)).toBe(daily);
+    expect(h.texts.get(path)).toBe(before);
+    h.scheduler.stop();
+    h.service.stop();
+  });
+  test("resolves renamed notes by collection identity and refuses missing identities before writing", async () => {
+    const h = await harness(),
+      path = "Topics/Renamed note.md",
+      id = "renamed-note";
+    h.file(path);
+    h.texts.set(path, "---\nstate: Paused\n---\nLeave me as I am.");
+    h.collectionNotes.set(id, path);
+    const reference = {
+      kind: "note" as const,
+      noteId: id,
+      path: "Topics/Old name.md",
+      text: "Inquiry",
+      title: "Inquiry",
+    };
+    const placed = await h.scheduler.placeNote(
+      reference,
+      interval,
+      crypto.randomUUID(),
+    );
+    expect(h.texts.get(placed.path)).toContain("Topics/Renamed%20note.md");
+    h.collectionNotes.delete(id);
+    const before = structuredClone([...h.texts]);
+    await expect(
+      h.scheduler.placeNote(reference, interval, crypto.randomUUID()),
+    ).rejects.toThrow("collection reference is unavailable");
+    expect([...h.texts]).toEqual(before);
+    expect(h.apply).not.toHaveBeenCalled();
+    h.scheduler.stop();
     h.service.stop();
   });
 });

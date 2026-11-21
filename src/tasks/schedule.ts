@@ -15,7 +15,12 @@ import { pendingTaskDeletion } from "./deletion-types";
 import { TaskDrag } from "./drag";
 import { TaskDropFeedback, type DropDestination } from "./drop-feedback";
 import { pendingIdentityDecision } from "./identity-types";
-import type { NoteTaskReference } from "./note-drag";
+import { collectionNoteLink } from "./note-collection-model";
+import type {
+  NoteTaskReference,
+  ChecklistNoteReference,
+  WholeNoteReference,
+} from "./note-drag";
 import {
   matchingOccurrenceUndo,
   occurrenceCompletionVerified,
@@ -88,6 +93,7 @@ export class TaskScheduler {
       reveal?(source: TaskSource): Promise<void>;
       warn?(message: string): void;
       dailyPath?(date: string): string;
+      collectionNotePath?(id: string): string | undefined;
     },
     readonly sources?: TaskSourceCollection,
   ) {
@@ -289,7 +295,7 @@ export class TaskScheduler {
 
   nestFromPane(
     taskId: TaskSourceSelection,
-    parent: NoteTaskReference,
+    parent: ChecklistNoteReference,
     id: string = crypto.randomUUID(),
   ) {
     return this.previewDrop(taskId, { parent }, id, () =>
@@ -387,7 +393,7 @@ export class TaskScheduler {
     );
   }
 
-  private async resolveNote(reference: NoteTaskReference) {
+  private async resolveNote(reference: ChecklistNoteReference) {
     await this.host.flush([reference.path]);
     const text = await this.host.read(reference.path);
     if (text === null) throw new TaskReadError("The source note is missing.");
@@ -413,7 +419,7 @@ export class TaskScheduler {
 
   nestNote(
     reference: NoteTaskReference,
-    parent: NoteTaskReference,
+    parent: ChecklistNoteReference,
     id: string,
   ) {
     return this.dropFeedback.run(
@@ -433,6 +439,24 @@ export class TaskScheduler {
     interval: ScheduleInterval,
     id: string,
   ) {
+    if (reference.kind === "note") {
+      const raw = await this.collectionNoteMarkdown(reference);
+      const target = scheduleIntervalSchema.parse(interval);
+      return this.importer.runPane(
+        "collection-note:" + reference.noteId,
+        id,
+        JSON.stringify(["schedule", reference.noteId, target]),
+        (savedId, prepare, pending) =>
+          this.importer.schedule(
+            raw,
+            target,
+            savedId,
+            undefined,
+            prepare,
+            pending.prepared,
+          ),
+      );
+    }
     const source = await this.resolveNote(reference);
     return this.importer.schedule(
       source.raw,
@@ -447,8 +471,41 @@ export class TaskScheduler {
     parent: { path: string; line: number; text: string },
     id: string,
   ) {
+    if (reference.kind === "note") {
+      const raw = await this.collectionNoteMarkdown(reference);
+      return this.importer.runPane(
+        "collection-note:" + reference.noteId,
+        id,
+        JSON.stringify(["nest", reference.noteId, parent]),
+        (savedId, prepare, pending) =>
+          this.importer.nest(
+            raw,
+            parent,
+            savedId,
+            undefined,
+            prepare,
+            pending.prepared,
+          ),
+      );
+    }
     const source = await this.resolveNote(reference);
     return this.importer.nest(source.raw, parent, id, source);
+  }
+  private async collectionNoteMarkdown(reference: WholeNoteReference) {
+    const path = this.host.collectionNotePath?.(reference.noteId);
+    if (!path)
+      throw new TaskReadError(
+        "This note's collection reference is unavailable. Refresh Notes and start a new drag.",
+      );
+    await this.host.flush([path]);
+    if ((await this.host.read(path)) === null)
+      throw new TaskReadError(
+        "The source note was removed. Refresh the collection before scheduling.",
+      );
+    return collectionNoteLink({
+      path,
+      title: reference.title ?? reference.text,
+    });
   }
 
   insert(

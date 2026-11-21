@@ -26,6 +26,10 @@ export function createTaskScheduler(
     calendar,
     {
       dailyPath: (date) => daily.createDailyNotePath(window.moment(date)),
+      collectionNotePath: (id) =>
+        Object.entries(get(settings).noteCollectionFileIds).find(
+          ([, value]) => value === id,
+        )?.[0],
       read: async (path) => {
         const file = app.vault.getFileByPath(path);
         return file ? app.vault.read(file) : null;

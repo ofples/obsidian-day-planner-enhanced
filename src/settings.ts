@@ -7,6 +7,11 @@ import {
   type TaskCaptureSettings,
 } from "./tasks/capture-settings";
 import {
+  noteCollectionsSchema,
+  noteCollectionIdsSchema,
+  type NoteCollectionConfig,
+} from "./tasks/note-collection-model";
+import {
   taskSourcesSettingsSchema,
   type TaskSourcesSettings,
 } from "./tasks/source-settings";
@@ -63,6 +68,8 @@ export type TimelineColumnType = "timeTracker" | "planner";
 export type TimelineColumns = Record<TimelineColumnType, boolean>;
 
 export interface DayPlannerSettings {
+  noteCollections: NoteCollectionConfig[];
+  noteCollectionFileIds: Record<string, string>;
   taskSources: TaskSourcesSettings;
   experimentalTodoistSync: boolean;
   weakTodoistSync: boolean;
@@ -114,6 +121,8 @@ export interface DayPlannerSettings {
 }
 
 export const defaultSettings: DayPlannerSettings = {
+  noteCollections: [],
+  noteCollectionFileIds: {},
   taskSources: taskSourcesSettingsSchema.parse({}),
   scheduleExportFolder: "Schedule Exports",
   experimentalTodoistSync: false,
@@ -200,6 +209,12 @@ export function mergeStoredSettings(
   return {
     ...defaultSettings,
     ...currentSettings,
+    noteCollections: noteCollectionsSchema.parse(
+      currentSettings.noteCollections ?? [],
+    ),
+    noteCollectionFileIds: noteCollectionIdsSchema.parse(
+      currentSettings.noteCollectionFileIds ?? {},
+    ),
     taskSources: taskSourcesSettingsSchema.parse(
       currentSettings.taskSources ?? {},
     ),
