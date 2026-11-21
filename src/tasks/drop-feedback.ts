@@ -24,6 +24,8 @@ export interface PendingDrop {
   taskIds: string[];
   saved?: TaskSource;
   targetPath?: string;
+  /** Number of equivalent children expected after this particular queued drop. */
+  expectedOccurrences?: number;
 }
 
 /** Display-only drop receipts. Persistence and provider calls retain their existing queues. */
@@ -31,8 +33,31 @@ export class TaskDropFeedback {
   readonly state = writable<PendingDrop[]>([]);
   private blocks: EditableTimeBlock[] = [];
 
-  async run<T>(drop: PendingDrop, persist: () => Promise<T>): Promise<T> {
+  async run<T>(intent: PendingDrop, persist: () => Promise<T>): Promise<T> {
+    let drop = intent;
     if (get(this.state).some((item) => item.id === drop.id)) return persist();
+    if ("parent" in drop.destination) {
+      const entry = previewEntry(drop);
+      const target = findParent(this.blocks, drop);
+      const matching = entry
+        ? (target?.children ?? []).filter(
+            (child) => entrySignature(child) === entrySignature(entry),
+          ).length
+        : 0;
+      const preceding = get(this.state).filter(
+        (item) =>
+          sameParent(item, drop) &&
+          entrySignature(previewEntry(item)) === entrySignature(entry),
+      );
+      drop = {
+        ...drop,
+        expectedOccurrences:
+          Math.max(
+            matching,
+            ...preceding.map((item) => item.expectedOccurrences ?? 1),
+          ) + 1,
+      };
+    }
     this.state.update((items) => [...items, drop]);
     try {
       const result = await persist();
@@ -59,7 +84,11 @@ export class TaskDropFeedback {
   reconcile(blocks: EditableTimeBlock[]) {
     this.blocks = blocks;
     const settled = get(this.state).filter(
-      (drop) => drop.saved && hasSource(blocks, drop.saved),
+      (drop) =>
+        drop.saved &&
+        ("parent" in drop.destination
+          ? nestVisible(blocks, drop)
+          : hasSource(blocks, drop.saved)),
     );
     if (settled.length) {
       const ids = new Set(settled.map((drop) => drop.id));
@@ -71,6 +100,7 @@ export class TaskDropFeedback {
     const settled = get(this.state).filter(
       (drop) =>
         drop.saved &&
+        !("parent" in drop.destination) &&
         sources.some(
           (source) =>
             source.path === drop.saved!.path &&
@@ -112,6 +142,59 @@ function hasSource(blocks: EditableTimeBlock[], source: TaskSource) {
   return false;
 }
 
+function entrySignature(entry?: {
+  text: string;
+  task?: string;
+  children?: ListItemEntryWithChildren[];
+}): string {
+  return entry
+    ? JSON.stringify([
+        entry.text.trimEnd(),
+        entry.task ?? null,
+        (entry.children ?? []).map(entrySignature),
+      ])
+    : "";
+}
+
+function sameParent(a: PendingDrop, b: PendingDrop) {
+  return (
+    "parent" in a.destination &&
+    "parent" in b.destination &&
+    a.destination.parent.path === b.destination.parent.path &&
+    a.destination.parent.line === b.destination.parent.line &&
+    firstLine(a.destination.parent.text) ===
+      firstLine(b.destination.parent.text)
+  );
+}
+
+function findParent(blocks: EditableTimeBlock[], drop: PendingDrop) {
+  if (!("parent" in drop.destination)) return;
+  const parent = drop.destination.parent;
+  const candidates = blocks.filter(
+    (block) =>
+      block.source !== "unwritten" &&
+      block.path === parent.path &&
+      firstLine(block.text) === firstLine(parent.text),
+  );
+  return (
+    candidates.find(
+      (block) =>
+        block.source !== "unwritten" &&
+        block.position.start.line === parent.line,
+    ) ?? (candidates.length === 1 ? candidates[0] : undefined)
+  );
+}
+
+function nestVisible(blocks: EditableTimeBlock[], drop: PendingDrop) {
+  const entry = previewEntry(drop);
+  return (
+    !!entry &&
+    (findParent(blocks, drop)?.children ?? []).filter(
+      (child) => entrySignature(child) === entrySignature(entry),
+    ).length >= (drop.expectedOccurrences ?? 1)
+  );
+}
+
 /** Use the same list-entry representation as indexed Markdown, including descriptions and descendants. */
 const entryCache = new WeakMap<PendingDrop, ListItemEntryWithChildren>();
 function previewEntry(drop: PendingDrop) {
@@ -137,6 +220,18 @@ function previewEntry(drop: PendingDrop) {
         offset: node.position!.end.offset!,
       },
     };
+    const nestedIndex = node.children.findIndex(
+      (child) => child.type === "list",
+    );
+    if (nestedIndex >= 0) {
+      const own = node.children[nestedIndex - 1]?.position;
+      if (own)
+        position.end = {
+          line: own.end.line - 1,
+          col: own.end.column - 1,
+          offset: own.end.offset!,
+        };
+    }
     const result = createListItemEntry({
       path: "",
       contents: drop.raw,
@@ -169,7 +264,12 @@ export function withPendingDrops(
 ): EditableTimeBlock[] {
   let result = blocks;
   for (const drop of drops) {
-    if (drop.saved && hasSource(blocks, drop.saved)) continue;
+    if (
+      drop.saved &&
+      !("parent" in drop.destination) &&
+      hasSource(blocks, drop.saved)
+    )
+      continue;
     if (
       "interval" in drop.destination &&
       blocks.some((block) => {
@@ -198,19 +298,8 @@ export function withPendingDrops(
       );
     }
     if ("parent" in drop.destination) {
-      const parent = drop.destination.parent;
-      const candidates = result.filter(
-        (block) =>
-          block.source !== "unwritten" &&
-          block.path === parent.path &&
-          firstLine(block.text) === firstLine(parent.text),
-      );
-      const target =
-        candidates.find(
-          (block) =>
-            block.source !== "unwritten" &&
-            block.position.start.line === parent.line,
-        ) ?? (candidates.length === 1 ? candidates[0] : undefined);
+      if (nestVisible(result, drop)) continue;
+      const target = findParent(result, drop);
       result = result.map((block) =>
         block === target
           ? { ...block, children: [...(block.children ?? []), entry] }
@@ -222,6 +311,7 @@ export function withPendingDrops(
         ...result,
         {
           ...entry,
+          previewPath: drop.targetPath,
           source: "unwritten",
           destination: { type: "plannerHeading" },
           startTime: window.moment(start),

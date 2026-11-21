@@ -59,10 +59,7 @@ describe("optimistic drops", () => {
     const savingSecond = feedback.run(drop("Second"), () => second.promise);
     expect(
       withPendingDrops([], get(feedback.state)).map((block) => block.text),
-    ).toEqual([
-      "First\nA description\n- [ ] Child",
-      "Second\nA description\n- [ ] Child",
-    ]);
+    ).toEqual(["First\nA description", "Second\nA description"]);
     expect(
       withPendingDrops([], get(feedback.state))[0]!.children?.[0]?.text,
     ).toBe("Child");
@@ -123,6 +120,68 @@ describe("optimistic drops", () => {
     pending.reject(new Error("Failed"));
     await expect(saving).rejects.toThrow("Failed");
     expect(withPendingDrops([parent], get(feedback.state))).toEqual([parent]);
+  });
+  test("frame children are not duplicated when indexing wins the receipt race", async () => {
+    const feedback = new TaskDropFeedback();
+    const parent = persisted("Frame #frame"),
+      pending = deferred<{ path: string; raw: string; from: number }>();
+    feedback.reconcile([parent]);
+    const intent = {
+      ...drop("Child"),
+      raw: "- [ ] Child",
+      destination: {
+        parent: { path: parent.path, line: 0, text: parent.text },
+      },
+    };
+    const saving = feedback.run(intent, () => pending.promise);
+    const preview = withPendingDrops([parent], get(feedback.state))[0]!;
+    expect(preview.children).toHaveLength(1);
+    const indexed = {
+      ...parent,
+      children: preview.children!.map((child) => ({
+        ...child,
+        id: "real-child",
+        path: parent.path,
+      })),
+    };
+    expect(
+      withPendingDrops([indexed], get(feedback.state))[0]!.children,
+    ).toHaveLength(1);
+    feedback.reconcile([indexed]);
+    pending.resolve({ path: parent.path, raw: "- [ ] Child", from: 30 });
+    await saving;
+    expect(get(feedback.state)).toEqual([]);
+    expect(
+      withPendingDrops([indexed], get(feedback.state))[0]!.children,
+    ).toHaveLength(1);
+  });
+  test("two equal queued children retain their own occurrence through metadata lag", async () => {
+    const feedback = new TaskDropFeedback();
+    const parent = persisted("Frame #frame");
+    feedback.reconcile([parent]);
+    const intent = (id: string): PendingDrop => ({
+      ...drop(id),
+      raw: "- [ ] Same task",
+      destination: {
+        parent: { path: parent.path, line: 0, text: parent.text },
+      },
+    });
+    const first = deferred<{ path: string; raw: string; from: number }>(),
+      second = deferred<void>();
+    const one = feedback.run(intent("one"), () => first.promise);
+    const two = feedback.run(intent("two"), () => second.promise);
+    const pending = get(feedback.state);
+    const projected = withPendingDrops([parent], pending)[0]!;
+    expect(projected.children).toHaveLength(2);
+    const indexed = { ...parent, children: [projected.children![0]!] };
+    feedback.reconcile([indexed]);
+    first.resolve({ path: parent.path, raw: "- [ ] Same task", from: 30 });
+    await one;
+    expect(
+      withPendingDrops([indexed], get(feedback.state))[0]!.children,
+    ).toHaveLength(2);
+    second.resolve();
+    await two;
   });
 });
 

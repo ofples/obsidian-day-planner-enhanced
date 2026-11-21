@@ -1,9 +1,11 @@
 import { syncCanonicalCalendar } from "./canonical-engine";
 import { normalizeLocalSnapshot } from "./markdown";
+import { isCalendarSnapshotInWindow } from "./scope";
 import {
   canonicalSnapshotOf,
   sameCanonicalSnapshot,
   sameSnapshot,
+  CalendarSyncInterrupted,
   snapshotOf,
   type CalendarApi,
   type CalendarSnapshot,
@@ -451,6 +453,7 @@ export async function syncCalendar({
     result.deleted++;
   }
   const locals = await notes.scan();
+  notes.assertCurrent?.();
   const byUid = new Map<string, LocalBlock>();
   for (const block of locals) {
     if (byUid.has(block.uid))
@@ -521,13 +524,35 @@ export async function syncCalendar({
   const pendingImportUids = new Set(importedIds.values());
 
   for (const [uid, record] of Object.entries(state.records)) {
+    notes.assertCurrent?.();
+    const local = byUid.get(uid);
+    const listed = byEvent.get(record.eventId);
+    const remoteInWindow =
+      listed &&
+      isCalendarSnapshotInWindow(
+        {
+          title: "",
+          start: listed.start?.dateTime ?? listed.start?.date ?? "",
+          end: listed.end?.dateTime ?? listed.end?.date ?? "",
+        },
+        timeMin,
+        timeMax,
+      );
+    if (
+      !isCalendarSnapshotInWindow(record.base, timeMin, timeMax) &&
+      !(
+        local && isCalendarSnapshotInWindow(local.snapshot, timeMin, timeMax)
+      ) &&
+      !remoteInWindow
+    )
+      continue;
     if (record.deleted) continue;
     if (notes.canSync && !(await notes.canSync(record.path, record.base)))
       continue;
-    const local = byUid.get(uid);
     let descriptionBlock = local;
     const remote =
       byEvent.get(record.eventId) ?? (await api.get(record.eventId));
+    notes.assertCurrent?.();
     let colorEvent = remote;
     const remoteDeleted = !remote || remote.status === "cancelled";
     const owned = remote !== null && isOwned(remote, state.namespace, uid);
@@ -547,8 +572,7 @@ export async function syncCalendar({
       result.conflicts.push(`${record.path}: ${record.base.title} — ${reason}`);
 
     if (local && !(await notes.isUnchanged(local))) {
-      conflict("note changed during sync; retry");
-      continue;
+      throw new CalendarSyncInterrupted();
     }
     if (remoteDeleted) {
       if (localChanged && !record.pendingDelete) {
@@ -572,6 +596,7 @@ export async function syncCalendar({
       continue;
     }
     if (!local) {
+      await notes.assertMissingCurrent?.(record.path);
       if (record.eventId === exportId(state.namespace, uid) && !owned) {
         conflict("the event's Day Planner ownership could not be verified");
         continue;
@@ -661,6 +686,7 @@ export async function syncCalendar({
   }
 
   for (const local of locals) {
+    notes.assertCurrent?.();
     if (notes.canSync && !(await notes.canSync(local.path, local.snapshot)))
       continue;
     if (state.records[local.uid]) continue;
@@ -711,6 +737,7 @@ export async function syncCalendar({
 
   if (!importEvents) return result;
   for (const event of events) {
+    notes.assertCurrent?.();
     if (
       linkedEvents.has(event.id) ||
       event.extendedProperties?.private?.["dayPlannerVault"]

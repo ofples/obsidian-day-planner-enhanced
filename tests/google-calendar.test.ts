@@ -14,6 +14,7 @@ import {
 import {
   snapshotOf,
   sameSnapshot,
+  CalendarSyncInterrupted,
   type CalendarApi,
   type CalendarNotes,
   type CalendarSnapshot,
@@ -332,12 +333,14 @@ describe("calendar reconciliation", () => {
     expect((await h.run()).pulled).toBe(1);
     expect(h.notes.cancel).not.toHaveBeenCalled();
   });
-  test("a note edited after the scan is skipped", async () => {
+  test("a note edited after the scan interrupts reconciliation without a conflict or write", async () => {
     const h = harness();
     h.setEvents([event(other)]);
     vi.mocked(h.notes.isUnchanged).mockResolvedValue(false);
-    expect((await h.run()).conflicts).toHaveLength(1);
+    await expect(h.run()).rejects.toBeInstanceOf(CalendarSyncInterrupted);
     expect(h.notes.write).not.toHaveBeenCalled();
+    expect(h.api.update).not.toHaveBeenCalled();
+    expect(h.api.remove).not.toHaveBeenCalled();
   });
   test("duplicate copied IDs stop before remote writes", async () => {
     const h = harness();

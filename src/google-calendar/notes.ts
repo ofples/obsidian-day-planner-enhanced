@@ -20,6 +20,7 @@ import {
 import { isCalendarDateInScope, isCalendarNoteEnabled } from "./scope";
 import {
   sameSnapshot,
+  CalendarSyncInterrupted,
   type CalendarNotes,
   type CalendarSnapshot,
   type CalendarSyncState,
@@ -87,10 +88,19 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     private readonly save: () => Promise<void>,
     private readonly edits?: Pick<TransactionWriter, "isWriting" | "revision">,
     private readonly localWrites = false,
+    private readonly onWrite?: (
+      path: string,
+      text: string,
+      local: boolean,
+    ) => void,
   ) {}
 
   private notesCurrent() {
     return !this.edits?.isWriting && this.edits?.revision === this.scanRevision;
+  }
+
+  assertCurrent() {
+    if (!this.notesCurrent()) throw new CalendarSyncInterrupted();
   }
 
   private noteDateInScope(file: TFile) {
@@ -259,6 +269,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       await this.save();
       return;
     }
+    if (!localWrites && !this.localWrites) this.assertCurrent();
     this.state.pendingNoteChange = {
       edits,
       identities,
@@ -266,39 +277,69 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       ...(localWrites ? { localWrites: true } : {}),
     };
     await this.save();
-    await this.recoverNoteChange();
+    await this.recoverNoteChange(true);
     for (const edit of edits)
       if (this.scannedDocuments[edit.path] === edit.before)
         this.scannedDocuments[edit.path] = edit.after;
   }
 
-  private async recoverNoteChange() {
+  private async recoverNoteChange(fresh = false) {
     const pending = this.state.pendingNoteChange;
     if (!pending) return;
-    for (const edit of pending.edits) {
-      const file = this.file(edit.path);
-      const text = await this.app.vault.read(file);
+    let applied = 0;
+    try {
+      for (const edit of pending.edits) {
+        const file = this.file(edit.path);
+        const text = await this.app.vault.read(file);
+        if (
+          !pending.localWrites &&
+          (!this.noteDateInScope(file) ||
+            !isCalendarNoteEnabled(text) ||
+            !isCalendarNoteEnabled(edit.after))
+        )
+          throw new Error(
+            "A pending calendar recovery is outside sync scope. Review it before syncing.",
+          );
+        if (text !== edit.before && text !== edit.after)
+          throw new Error(
+            `Note changed during calendar recovery: ${edit.path}. Restore the note from history before retrying.`,
+          );
+      }
+      for (const edit of pending.edits) {
+        await this.app.vault.process(this.file(edit.path), (text) => {
+          if (fresh && !pending.localWrites && !this.localWrites)
+            this.assertCurrent();
+          if (text === edit.after) {
+            applied++;
+            return text;
+          }
+          if (text !== edit.before)
+            throw new Error("The note changed during sync; retry.");
+          applied++;
+          this.onWrite?.(
+            edit.path,
+            edit.after,
+            Boolean(pending.localWrites || this.localWrites),
+          );
+          return edit.after;
+        });
+      }
+    } catch (error) {
+      // A fresh, unstarted remote write can be recomputed after typing stops.
+      // Keep crash/partial-write journals intact; they still need recovery.
       if (
+        fresh &&
         !pending.localWrites &&
-        (!this.noteDateInScope(file) ||
-          !isCalendarNoteEnabled(text) ||
-          !isCalendarNoteEnabled(edit.after))
-      )
-        throw new Error(
-          "A pending calendar recovery is outside sync scope. Review it before syncing.",
-        );
-      if (text !== edit.before && text !== edit.after)
-        throw new Error(
-          `Note changed during calendar recovery: ${edit.path}. Restore the note from history before retrying.`,
-        );
-    }
-    for (const edit of pending.edits) {
-      await this.app.vault.process(this.file(edit.path), (text) => {
-        if (text === edit.after) return text;
-        if (text !== edit.before)
-          throw new Error("The note changed during sync; retry.");
-        return edit.after;
-      });
+        !this.localWrites &&
+        !applied &&
+        (error instanceof CalendarSyncInterrupted ||
+          (error instanceof Error && /note changed/i.test(error.message)))
+      ) {
+        delete this.state.pendingNoteChange;
+        await this.save();
+        throw new CalendarSyncInterrupted();
+      }
+      throw error;
     }
     this.state.identities = pending.identities;
     this.state.documents = pending.documents;
@@ -338,6 +379,18 @@ export class ObsidianCalendarNotes implements CalendarNotes {
       return false;
     const text = await this.app.vault.read(file);
     return this.notesCurrent() && text === before;
+  }
+
+  async assertMissingCurrent(path: string) {
+    this.assertCurrent();
+    // A file absent for the whole scan is a genuine missing-note choice.
+    if (
+      this.scannedDocuments[path] === undefined &&
+      !this.app.vault.getAbstractFileByPath(path)
+    )
+      return;
+    if (!(await this.isDocumentUnchanged(path)))
+      throw new CalendarSyncInterrupted();
   }
 
   async canDelete(record: SyncRecord, uid: string, owned = false) {
@@ -617,7 +670,9 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     }
     await this.app.vault.process(targetFile, (text) => {
       if (text.includes(marker)) return text;
-      return appendToPlanner(text, raw, this.settings);
+      const after = appendToPlanner(text, raw, this.settings);
+      this.onWrite?.(targetFile.path, after, this.localWrites);
+      return after;
     });
     await this.app.vault.process(sourceFile, (text) => {
       if (!text.includes(marker)) return text;
@@ -626,7 +681,10 @@ export class ObsidianCalendarNotes implements CalendarNotes {
         throw new Error(
           "Source note changed during the calendar move; both copies were preserved.",
         );
-      return text.slice(0, index) + text.slice(index + source.raw.length);
+      const after =
+        text.slice(0, index) + text.slice(index + source.raw.length);
+      this.onWrite?.(sourceFile.path, after, this.localWrites);
+      return after;
     });
     delete this.state.pendingMove;
     await this.save();
@@ -636,6 +694,7 @@ export class ObsidianCalendarNotes implements CalendarNotes {
     if (!(await this.canSync(block.path, block.snapshot)))
       throw new Error("This note is outside Google Calendar sync scope.");
     await this.app.vault.process(this.file(block.path), (text) => {
+      this.assertCurrent();
       const index = this.locate(text, block);
       if (index < 0) throw new Error("The note changed during sync; retry.");
       const lines = block.raw.split(/\r?\n/);
@@ -645,11 +704,12 @@ export class ObsidianCalendarNotes implements CalendarNotes {
         .replace(syncMarker, "")
         .replace(/^\s*(?:[-*+]|\d+[.)])\s+(?:\[[^\]]\]\s*)?/, "");
       lines[0] = `- [-] ${struckCancellation(range)}`;
-      return (
+      const after =
         text.slice(0, index) +
         lines.join(block.raw.includes("\r\n") ? "\r\n" : "\n") +
-        text.slice(index + block.raw.length)
-      );
+        text.slice(index + block.raw.length);
+      this.onWrite?.(block.path, after, this.localWrites);
+      return after;
     });
   }
 }

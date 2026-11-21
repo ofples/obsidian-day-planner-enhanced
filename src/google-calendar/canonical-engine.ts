@@ -8,15 +8,18 @@ import {
   type SyncResult,
 } from "./engine";
 import { normalizeLocalSnapshot } from "./markdown";
+import { isCalendarSnapshotInWindow } from "./scope";
 import {
   canonicalSnapshotOf,
   sameCanonicalSnapshot,
+  CalendarSyncInterrupted,
   type CalendarApi,
   type CalendarNotes,
   type CalendarSnapshot,
   type CalendarSyncState,
   type GoogleEvent,
   type LocalBlock,
+  type SyncRecord,
 } from "./types";
 
 const fields = [
@@ -42,6 +45,23 @@ function value(snapshot: CalendarSnapshot, field: Field) {
 
 function sameField(a: CalendarSnapshot, b: CalendarSnapshot, field: Field) {
   return JSON.stringify(value(a, field)) === JSON.stringify(value(b, field));
+}
+
+/** Acknowledged local fields are not competing Google edits on the next pass.
+ * Remote-only fields keep their old shared baseline until the note receives them.
+ */
+function acknowledgeUpdate(record: SyncRecord, remote: CalendarSnapshot) {
+  const pending = record.pendingUpdate;
+  if (!pending) return;
+  const checkpoint = { ...pending.base };
+  for (const field of fields)
+    if (
+      sameField(remote, pending.snapshot, field) &&
+      sameField(pending.local, pending.snapshot, field)
+    )
+      copyField(checkpoint, pending.snapshot, field);
+  record.base = checkpoint;
+  delete record.pendingUpdate;
 }
 
 function copyField(
@@ -141,6 +161,7 @@ export async function syncCanonicalCalendar({
   const allowed = async (path: string, snapshot: CalendarSnapshot) =>
     !notes.canSync || (await notes.canSync(path, snapshot));
   const locals = await notes.scan();
+  notes.assertCurrent?.();
   const assertAuthoritativeNote = async () => {
     if (noteAuthority && !(await notes.isDocumentUnchanged?.(noteAuthority)))
       throw new Error(
@@ -333,8 +354,30 @@ export async function syncCanonicalCalendar({
 
   const missingPaths = new Set<string>();
   for (const [uid, record] of Object.entries(state.records)) {
-    if (record.deleted || !(await allowed(record.path, record.base))) continue;
+    notes.assertCurrent?.();
     const local = byUid.get(uid);
+    const listed = byEvent.get(record.eventId);
+    const remoteInWindow =
+      listed &&
+      isCalendarSnapshotInWindow(
+        {
+          title: "",
+          start: listed.start?.dateTime ?? listed.start?.date ?? "",
+          end: listed.end?.dateTime ?? listed.end?.date ?? "",
+        },
+        timeMin,
+        timeMax,
+      );
+    if (
+      !noteAuthority &&
+      !isCalendarSnapshotInWindow(record.base, timeMin, timeMax) &&
+      !(
+        local && isCalendarSnapshotInWindow(local.snapshot, timeMin, timeMax)
+      ) &&
+      !remoteInWindow
+    )
+      continue;
+    if (record.deleted || !(await allowed(record.path, record.base))) continue;
     if (
       noteAuthority &&
       (local ? local.path !== noteAuthority : record.path !== noteAuthority)
@@ -348,6 +391,7 @@ export async function syncCanonicalCalendar({
     try {
       let event =
         byEvent.get(record.eventId) ?? (await api.get(record.eventId));
+      notes.assertCurrent?.();
       if (!event || event.status === "cancelled") {
         if (noteAuthority && local) {
           const snapshot = localSnapshot(local, record.base);
@@ -434,6 +478,7 @@ export async function syncCanonicalCalendar({
         }
         record.deleted = true;
         delete record.pendingDelete;
+        delete record.pendingUpdate;
         await save();
         result.deleted++;
         continue;
@@ -441,6 +486,12 @@ export async function syncCanonicalCalendar({
       const remote = noteAuthority
         ? { ...record.base, colorId: event.colorId ?? null }
         : validSnapshot(event, record.base);
+      if (record.pendingUpdate) {
+        acknowledgeUpdate(record, remote);
+        record.remoteEtag = event.etag;
+        record.remoteUpdated = event.updated;
+        await save();
+      }
       if (!noteAuthority && !(await allowed("", remote))) {
         conflict("Google moved this event outside the enabled note dates.");
         continue;
@@ -454,7 +505,15 @@ export async function syncCanonicalCalendar({
         remember(event);
       }
       if (!local) {
+        if (notes.assertMissingCurrent)
+          await notes.assertMissingCurrent(record.path);
+        else if (
+          notes.isDocumentUnchanged &&
+          !(await notes.isDocumentUnchanged(record.path))
+        )
+          throw new CalendarSyncInterrupted();
         if (record.pendingDelete) delete record.pendingDelete;
+        delete record.pendingUpdate;
         if (
           isCanonicalOwned(event, state.namespace, uid) &&
           (noteAuthority ||
@@ -467,6 +526,7 @@ export async function syncCanonicalCalendar({
           await api.remove(event);
           record.deleted = true;
           delete record.pendingDelete;
+          delete record.pendingUpdate;
           delete record.pendingConflict;
           await save();
           result.deleted++;
@@ -534,6 +594,15 @@ export async function syncCanonicalCalendar({
         change.conflicts = competing;
       }
       await assertAuthoritativeNote();
+      if (!sameCanonicalSnapshot(remote, change.merged)) {
+        record.pendingUpdate = {
+          base,
+          local: current,
+          snapshot: change.merged,
+        };
+        await save();
+      }
+      notes.assertCurrent?.();
       const confirmed = noteAuthority
         ? await api.update(event, change.merged, true)
         : await api.update(event, change.merged);
@@ -549,6 +618,13 @@ export async function syncCanonicalCalendar({
         );
       if (confirmed !== event) result.pushed++;
       const accepted = validSnapshot(confirmed, change.merged);
+      if (record.pendingUpdate) {
+        acknowledgeUpdate(record, accepted);
+        record.remoteEtag = confirmed.etag;
+        record.remoteUpdated = confirmed.updated;
+        await save();
+      }
+      notes.assertCurrent?.();
       if (change.conflicts.length) {
         record.pendingConflict = {
           mine: change.mine,
@@ -586,6 +662,8 @@ export async function syncCanonicalCalendar({
         });
       }
     } catch (error) {
+      if (error instanceof CalendarSyncInterrupted) throw error;
+      notes.assertCurrent?.();
       if (state.pendingCreate) throw error;
       if (!local) missingPaths.add(record.path);
       conflict(
@@ -602,6 +680,7 @@ export async function syncCanonicalCalendar({
         `${path}: Resolve the missing note blocks before exporting new blocks, or force sync this note to Google.`,
       );
   for (const local of locals) {
+    notes.assertCurrent?.();
     if (
       state.records[local.uid] ||
       (noteAuthority && local.path !== noteAuthority) ||
@@ -661,6 +740,7 @@ export async function syncCanonicalCalendar({
 
   if (!importEvents || noteAuthority) return result;
   for (const event of events) {
+    notes.assertCurrent?.();
     if (
       recordsByEvent.has(event.id) ||
       event.status === "cancelled" ||
@@ -698,6 +778,8 @@ export async function syncCanonicalCalendar({
       await save();
       result.pulled++;
     } catch (error) {
+      if (error instanceof CalendarSyncInterrupted) throw error;
+      notes.assertCurrent?.();
       result.conflicts.push(
         `${event.summary ?? "Google event"} — ${error instanceof Error ? error.message : "Import needs review."}`,
       );

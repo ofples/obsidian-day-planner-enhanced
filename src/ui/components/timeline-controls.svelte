@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { EllipsisVertical, LoaderCircle } from "lucide-svelte";
+  import { EllipsisVertical, RefreshCw } from "lucide-svelte";
   import { Menu } from "obsidian";
   import { readable } from "svelte/store";
 
@@ -109,18 +109,19 @@
         >
       {/if}
       <PlannerDayCount />
+      <button
+        class="clickable-icon sync-button"
+        aria-busy={$googleSyncing}
+        aria-label="Sync"
+        onclick={reSync}
+        title="Sync"
+        type="button"
+      >
+        <RefreshCw
+          class={$googleSyncing ? "is-spinning svg-icon" : "svg-icon"}
+        />
+      </button>
       {#if $isInSidebar}
-        <button
-          class="clickable-icon sync-button"
-          aria-busy={$googleSyncing}
-          aria-label="Sync"
-          onclick={reSync}
-          type="button"
-        >
-          {#if $googleSyncing}<LoaderCircle
-              class="is-spinning svg-icon"
-            />{:else}Sync{/if}
-        </button>
         <ControlButton label="More options" onclick={handleMenuClick}>
           <EllipsisVertical class="svg-icon" />
         </ControlButton>

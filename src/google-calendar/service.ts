@@ -1,5 +1,12 @@
 import type { Moment } from "moment";
-import { Modal, Notice, Platform, type App, type Plugin } from "obsidian";
+import {
+  Modal,
+  Notice,
+  Platform,
+  type App,
+  type Plugin,
+  type TFile,
+} from "obsidian";
 import { writable } from "svelte/store";
 import { z } from "zod";
 
@@ -30,7 +37,11 @@ import {
   type MissingLocalConflict,
 } from "./engine";
 import { ObsidianCalendarNotes } from "./notes";
-import { isCalendarDateInScope } from "./scope";
+import {
+  calendarSyncDelaySeconds,
+  isCalendarDateInScope,
+  isCalendarSnapshotInWindow,
+} from "./scope";
 import type { CalendarSyncState } from "./types";
 import type { LocalBlock, LocalIdentity } from "./types";
 import {
@@ -39,6 +50,7 @@ import {
   sameSnapshot,
   snapshotOf,
   type CalendarSnapshot,
+  CalendarSyncInterrupted,
 } from "./types";
 import { googleEventsToBlocks, visibleGoogleCalendars } from "./view";
 
@@ -47,6 +59,7 @@ export interface GoogleCalendarSettings {
   clientId: string;
   calendarId: string;
   autoSync: boolean;
+  autoSyncDelaySeconds: number;
   syncStartDate: string;
   daysPast: number;
   daysAhead: number;
@@ -93,6 +106,13 @@ const stateSchema = z.object({
       base: snapshotSchema,
       deleted: z.boolean().optional(),
       pendingDelete: z.boolean().optional(),
+      pendingUpdate: z
+        .object({
+          base: snapshotSchema,
+          local: snapshotSchema,
+          snapshot: snapshotSchema,
+        })
+        .optional(),
       pendingConflict: z
         .object({
           mine: snapshotSchema,
@@ -196,6 +216,9 @@ export class GoogleCalendarSync {
   readonly syncing = writable(false);
   readonly conflictCount = writable(0);
   private automaticTimer?: number;
+  private localEditEpoch = 0;
+  private lastLocalEditAt = 0;
+  private readonly managedWrites = new Map<string, string>();
   private readonly composing = new Set<Document>();
   private conflicts: string[] = [];
   private reviewable: CalendarConflict[] = [];
@@ -215,27 +238,126 @@ export class GoogleCalendarSync {
     )
       return;
     window.clearTimeout(this.automaticTimer);
-    this.automaticTimer = window.setTimeout(() => {
-      if (this.stopped || this.planningUndoHold) return;
-      if (
-        this.composing.size ||
-        this.edits?.isWriting ||
-        this.busy ||
-        this.reviewing
-      ) {
-        this.queueAutomaticSync();
-        return;
-      }
-      void this.run(true);
-    }, 5_000);
+    this.automaticTimer = window.setTimeout(
+      () => {
+        if (this.stopped || this.planningUndoHold) return;
+        if (
+          this.composing.size ||
+          this.edits?.isWriting ||
+          this.busy ||
+          this.reviewing
+        ) {
+          this.queueAutomaticSync();
+          return;
+        }
+        void this.run(true);
+      },
+      Math.max(
+        1_000,
+        calendarSyncDelaySeconds(
+          this.getSettings().googleCalendar.autoSyncDelaySeconds,
+        ) *
+          1_000 -
+          (Date.now() - this.lastLocalEditAt),
+      ),
+    );
+  }
+
+  private localEdit() {
+    if (this.stopped) return;
+    this.localEditEpoch++;
+    this.lastLocalEditAt = Date.now();
+    this.queueAutomaticSync();
+  }
+
+  private isSyncNote(file: { path: string } | null | undefined) {
+    if (!file) return true;
+    const date = this.daily.getDateFromFile(file as TFile, "day");
+    if (!date) return false;
+    const { timeMin, timeMax } = this.syncWindow();
+    return (
+      date.valueOf() >= Date.parse(timeMin) &&
+      date.valueOf() < Date.parse(timeMax)
+    );
+  }
+
+  private syncWindow(day = window.moment()) {
+    const config = this.getSettings().googleCalendar;
+    return {
+      timeMin: day
+        .clone()
+        .startOf("day")
+        .subtract(config.daysPast, "days")
+        .toISOString(),
+      timeMax: day
+        .clone()
+        .startOf("day")
+        .add(config.daysAhead + 1, "days")
+        .toISOString(),
+    };
+  }
+
+  private inSyncWindow(snapshot: CalendarSnapshot) {
+    const { timeMin, timeMax } = this.syncWindow();
+    return (
+      isCalendarDateInScope(
+        snapshot,
+        this.getSettings().googleCalendar.syncStartDate,
+      ) && isCalendarSnapshotInWindow(snapshot, timeMin, timeMax)
+    );
   }
 
   private hasUnresolvedChoices() {
     return (
-      this.reviewable.length > 0 ||
-      this.missingLocal.length > 0 ||
-      this.deletedRemote.length > 0 ||
+      this.reviewable.some(
+        (item) =>
+          this.inSyncWindow(item.local.snapshot) ||
+          Boolean(item.mine && this.inSyncWindow(item.mine)),
+      ) ||
+      this.missingLocal.some(
+        (item) =>
+          this.inSyncWindow(item.base) ||
+          this.inSyncWindow(item.remoteSnapshot),
+      ) ||
+      this.deletedRemote.some((item) => this.inSyncWindow(item.mine)) ||
       this.pendingConflictCount() > 0
+    );
+  }
+
+  private pruneConflictScope() {
+    this.reviewable = this.reviewable.filter(
+      (item) =>
+        this.inSyncWindow(item.local.snapshot) ||
+        Boolean(item.mine && this.inSyncWindow(item.mine)),
+    );
+    this.missingLocal = this.missingLocal.filter(
+      (item) =>
+        this.inSyncWindow(item.base) || this.inSyncWindow(item.remoteSnapshot),
+    );
+    this.deletedRemote = this.deletedRemote.filter((item) =>
+      this.inSyncWindow(item.mine),
+    );
+    // Historical drafts stay on disk; they do not block the current window.
+    const active = new Set([
+      ...this.reviewable.map((item) => item.local.path),
+      ...this.missingLocal.map((item) => item.path),
+      ...this.deletedRemote.map((item) => item.path),
+    ]);
+    const inactive = new Set<string>();
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Guards can run before initialization in older hosts.
+    for (const record of Object.values(this.state?.records ?? {})) {
+      inactive.add(record.path);
+      if (
+        this.inSyncWindow(record.base) ||
+        (record.pendingConflict &&
+          this.inSyncWindow(record.pendingConflict.mine))
+      )
+        active.add(record.path);
+    }
+    for (const path of active) inactive.delete(path);
+    this.conflicts = this.conflicts.filter(
+      (message) =>
+        ![...inactive].some((path) => message.startsWith(`${path}:`)),
     );
   }
 
@@ -245,10 +367,8 @@ export class GoogleCalendarSync {
       (record) =>
         !record.deleted &&
         record.pendingConflict &&
-        isCalendarDateInScope(
-          record.base,
-          this.getSettings().googleCalendar.syncStartDate,
-        ),
+        (this.inSyncWindow(record.base) ||
+          this.inSyncWindow(record.pendingConflict.mine)),
     ).length;
   }
 
@@ -339,11 +459,31 @@ export class GoogleCalendarSync {
       },
     });
     this.plugin.registerEvent(
-      this.app.workspace.on("editor-change", () => this.queueAutomaticSync()),
+      this.app.workspace.on("editor-change", (editor, view) => {
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- Older hosts and synthetic editor-change events can omit the view.
+        const file = view?.file;
+        if (!this.isSyncNote(file)) return;
+        if (file && this.managedWrites.get(file.path) === editor.getValue())
+          return;
+        if (file) this.managedWrites.delete(file.path);
+        this.localEdit();
+      }),
     );
     this.plugin.registerEvent(
-      this.app.vault.on("modify", () => {
-        if (!this.busy) this.queueAutomaticSync();
+      this.app.vault.on("modify", (file) => {
+        if (!this.isSyncNote(file)) return;
+        if (!this.managedWrites.has(file.path)) {
+          this.localEdit();
+          return;
+        }
+        void this.app.vault
+          .read(file as TFile)
+          .then((text) => {
+            if (text === this.managedWrites.get(file.path)) return;
+            this.managedWrites.delete(file.path);
+            this.localEdit();
+          })
+          .catch(() => this.localEdit());
       }),
     );
     const watched = new Set<Document>();
@@ -353,7 +493,7 @@ export class GoogleCalendarSync {
       watched.add(doc);
       const start = () => this.composing.add(doc);
       const end = () => {
-        if (this.composing.delete(doc)) this.queueAutomaticSync();
+        if (this.composing.delete(doc)) this.localEdit();
       };
       doc.addEventListener("compositionstart", start, true);
       doc.addEventListener("compositionend", end, true);
@@ -406,6 +546,7 @@ export class GoogleCalendarSync {
       window.clearTimeout(this.automaticTimer);
       unwatch.forEach((remove) => remove());
       this.composing.clear();
+      this.managedWrites.clear();
       this.viewGeneration++;
       this.store.dispatch(googleTimeBlocksUpdated([]));
       this.auth.stop();
@@ -432,17 +573,18 @@ export class GoogleCalendarSync {
     localWrites = false,
     day = window.moment(),
   ) {
-    const config = settings.googleCalendar;
-    const timeMin = day
-      .clone()
-      .startOf("day")
-      .subtract(config.daysPast, "days")
-      .toISOString();
-    const timeMax = day
-      .clone()
-      .startOf("day")
-      .add(config.daysAhead + 1, "days")
-      .toISOString();
+    const { timeMin, timeMax } = this.syncWindow(day);
+    const isWriting = () => this.edits?.isWriting ?? false;
+    const revision = () =>
+      (this.edits?.revision ?? 0) + (localWrites ? 0 : this.localEditEpoch);
+    const revisions = {
+      get isWriting() {
+        return isWriting();
+      },
+      get revision() {
+        return revision();
+      },
+    };
     const notes = new ObsidianCalendarNotes(
       this.app,
       this.daily,
@@ -451,8 +593,12 @@ export class GoogleCalendarSync {
       timeMax,
       this.state,
       () => this.save(),
-      this.edits,
+      revisions,
       localWrites,
+      (path, text, local) => {
+        if (local) this.localEdit();
+        else this.managedWrites.set(path, text);
+      },
     );
     return { notes, timeMin, timeMax };
   }
@@ -521,7 +667,7 @@ export class GoogleCalendarSync {
         }
       } finally {
         this.busy = false;
-        this.queueAutomaticSync();
+        this.localEdit();
       }
     });
     this.noteEdits = queued.catch(() => {});
@@ -804,6 +950,7 @@ export class GoogleCalendarSync {
     refreshConflicts = false,
   ) {
     if (this.reviewing) return;
+    this.updateConflictCount();
     if (!noteAuthority && !refreshConflicts && this.hasUnresolvedChoices()) {
       if (!automatic) this.reviewConflicts();
       return;
@@ -830,6 +977,9 @@ export class GoogleCalendarSync {
         );
       return;
     }
+    const epoch = this.localEditEpoch;
+    const revision = this.edits?.revision;
+    let interrupted = false;
     this.busy = true;
     this.syncing.set(true);
     try {
@@ -847,7 +997,10 @@ export class GoogleCalendarSync {
         this.clientId(),
         config.calendarId.trim(),
         this.state.namespace,
-        () => !this.stopped,
+        () =>
+          !this.stopped &&
+          this.localEditEpoch === epoch &&
+          this.edits?.revision === revision,
         Boolean(config.syncStartDate || noteAuthority),
       );
       const canonicalId = await this.validateManagedCalendar(api);
@@ -924,15 +1077,19 @@ export class GoogleCalendarSync {
       const message =
         error instanceof Error ? error.message : "Calendar sync failed.";
       const readiness =
+        error instanceof CalendarSyncInterrupted ||
+        this.localEditEpoch !== epoch ||
+        this.edits?.revision !== revision ||
         /note edit|notes changed during calendar scanning/i.test(message);
-      if (!automatic || (!readiness && message !== this.lastError))
+      interrupted = readiness;
+      if (!readiness && (!automatic || message !== this.lastError))
         this.report(error);
-      if (automatic && readiness) this.queueAutomaticSync();
+      if (readiness) this.queueAutomaticSync();
       this.lastError = message;
     } finally {
       this.busy = false;
       this.syncing.set(false);
-      await this.refreshView();
+      if (!interrupted) await this.refreshView();
     }
   }
 
@@ -957,6 +1114,7 @@ export class GoogleCalendarSync {
   }
 
   private updateConflictCount() {
+    this.pruneConflictScope();
     const persisted = this.pendingConflictCount();
     this.conflictCount.set(
       Math.max(persisted, this.reviewable.length + this.deletedRemote.length) +
@@ -1010,6 +1168,7 @@ export class GoogleCalendarSync {
 
   reviewConflicts() {
     if (this.reviewing) return;
+    this.updateConflictCount();
     const release = this.holdConflictReview();
     const modal = new Modal(this.app);
     modal.titleEl.setText("Calendar sync conflicts");
@@ -1191,7 +1350,7 @@ export class GoogleCalendarSync {
         ...Object.values(this.state.records)
           .filter(
             (record) =>
-              record.pendingConflict ||
+              (record.pendingConflict && this.inSyncWindow(record.base)) ||
               this.conflicts.some((message) =>
                 message.startsWith(`${record.path}:`),
               ),

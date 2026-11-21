@@ -2,6 +2,7 @@ import type { HexString } from "obsidian";
 
 import { defaultDayFormat } from "./constants";
 import { bundledGoogleApp } from "./google-calendar/client";
+import { calendarSyncDelaySeconds } from "./google-calendar/scope";
 import {
   taskCaptureSettingsSchema,
   type TaskCaptureSettings,
@@ -133,6 +134,7 @@ export const defaultSettings: DayPlannerSettings = {
     clientId: "",
     calendarId: "",
     autoSync: false,
+    autoSyncDelaySeconds: 20,
     syncStartDate: "",
     daysPast: 7,
     daysAhead: 30,
@@ -228,6 +230,9 @@ export function mergeStoredSettings(
     googleCalendar: {
       ...defaultSettings.googleCalendar,
       ...currentSettings.googleCalendar,
+      autoSyncDelaySeconds: calendarSyncDelaySeconds(
+        currentSettings.googleCalendar?.autoSyncDelaySeconds,
+      ),
       useCustomClient:
         currentSettings.googleCalendar?.useCustomClient ??
         Boolean(

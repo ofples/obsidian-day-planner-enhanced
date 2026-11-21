@@ -49,6 +49,37 @@
         ),
     );
 
+    new SettingGroup(el).setHeading("Sync timing").addSetting((setting) =>
+      setting
+        .setName("Wait after edits (seconds)")
+        .setDesc(
+          "Automatic sync waits for schedule editing to settle. Default: 20 seconds.",
+        )
+        .addText((control) => {
+          control.inputEl.type = "number";
+          control.inputEl.min = "5";
+          control.inputEl.max = "300";
+          control
+            .setValue(String($settings.googleCalendar.autoSyncDelaySeconds))
+            .onChange((value) => {
+              const seconds = Number(value);
+              if (
+                value.trim() &&
+                Number.isInteger(seconds) &&
+                seconds >= 5 &&
+                seconds <= 300
+              )
+                $settings = {
+                  ...$settings,
+                  googleCalendar: {
+                    ...$settings.googleCalendar,
+                    autoSyncDelaySeconds: seconds,
+                  },
+                };
+            });
+        }),
+    );
+
     new SettingGroup(el).setHeading("Tasks").addSetting((setting) =>
       setting
         .setName("Capture #todoist tasks")

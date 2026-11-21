@@ -119,6 +119,8 @@ export type WriteDestination =
  * carries a destination that says where it should be written.
  */
 export interface UnwrittenTimeBlock extends LocalTimeBlockBase {
+  /** Display-only target note, retained through an optimistic save handoff. */
+  previewPath?: string;
   source: "unwritten";
   destination: WriteDestination;
 }

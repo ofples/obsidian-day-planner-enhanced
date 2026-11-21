@@ -286,9 +286,11 @@ export function addLineDataToCheckboxes(
       }
       if (taskLine === undefined) {
         (checkbox as HTMLInputElement).disabled = true;
+        delete checkbox.dataset.line;
         return;
       }
 
+      (checkbox as HTMLInputElement).disabled = false;
       checkbox.dataset.line = String(taskLine);
     },
   );
@@ -379,6 +381,99 @@ export function createRenderMarkdownAttachment({
       offTouchStart();
       offTouchEnd();
     };
+  };
+}
+
+type MarkdownRenderOptions = Parameters<
+  typeof createRenderMarkdownAttachment
+>[0];
+
+/** Keep painted content until its replacement is ready; line-number handoffs need no render. */
+export function renderMarkdownAction(
+  el: HTMLElement,
+  initial: MarkdownRenderOptions,
+) {
+  let latest = initial;
+  let generation = 0;
+  let painted: MarkdownRenderOptions | undefined;
+  let pending: MarkdownRenderOptions | undefined;
+  let destroyPainted: (() => void) | undefined;
+  let destroyPending: (() => void) | undefined;
+  const same = (
+    a: MarkdownRenderOptions | undefined,
+    b: MarkdownRenderOptions,
+  ) =>
+    a?.markdown === b.markdown &&
+    a.sourcePath === b.sourcePath &&
+    a.renderMarkdown === b.renderMarkdown;
+  const click = (event: MouseEvent) => {
+    if (!pending && latest.onCheckboxLineClick)
+      void readCheckboxLineData(event, latest.onCheckboxLineClick);
+  };
+  const off = [
+    on(el, "click", click),
+    ...[
+      "pointerdown",
+      "pointerup",
+      "mousedown",
+      "mouseup",
+      "touchstart",
+      "touchend",
+    ].map((name) => on(el, name, stopPropagationForElWithLineData)),
+  ];
+  const update = (options: MarkdownRenderOptions) => {
+    latest = options;
+    if (same(painted, options)) {
+      generation++;
+      destroyPending?.();
+      destroyPending = undefined;
+      pending = undefined;
+      addLineDataToCheckboxes(el, latest.taskLines);
+      return;
+    }
+    if (same(pending, options)) return;
+    const token = ++generation;
+    destroyPending?.();
+    pending = options;
+    addLineDataToCheckboxes(el, []);
+    const stage = el.ownerDocument.createElement("div");
+    stage.className = "planner-markdown-stage";
+    const dispose = options.renderMarkdown(
+      stage,
+      options.markdown,
+      options.sourcePath,
+    ) as (() => void) & { ready?: Promise<void> };
+    destroyPending = dispose;
+    const commit = () => {
+      if (generation !== token) return;
+      const previous = destroyPainted;
+      el.replaceChildren(stage);
+      painted = options;
+      pending = undefined;
+      destroyPainted = dispose;
+      destroyPending = undefined;
+      previous?.();
+      addLineDataToCheckboxes(el, latest.taskLines);
+    };
+    if (dispose.ready)
+      void dispose.ready.then(commit, () => {
+        if (generation === token) {
+          dispose();
+          destroyPending = undefined;
+          pending = undefined;
+        }
+      });
+    else commit();
+  };
+  update(initial);
+  return {
+    update,
+    destroy() {
+      generation++;
+      destroyPending?.();
+      destroyPainted?.();
+      off.forEach((remove) => remove());
+    },
   };
 }
 /* eslint-enable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Re-enable scorecard compatibility suppressions after this file. */

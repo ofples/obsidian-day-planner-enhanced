@@ -8,7 +8,7 @@
     isListItemSourced,
     type LocalTimeBlock,
   } from "../../time-block-types";
-  import { createRenderMarkdownAttachment } from "../../util/dom";
+  import { renderMarkdownAction } from "../../util/dom";
   import { getMinutesSinceMidnight } from "../../util/moment";
   import { filterVisibleTaskChildren } from "../../util/task-status";
   import { withoutDisplayedControlTags } from "../../util/task-lock";
@@ -35,11 +35,8 @@
 
   type NestedListItem = NonNullable<LocalTimeBlock["children"]>[number];
 
-  // The markdown attachment has no update hook: any input that changes identity
-  // tears the rendered subtree down and builds it again. An edit operation hands
-  // this component a fresh timeBlock object on every pointer move, so the values
-  // it feeds the attachment have to stay referentially stable while the rendered
-  // markdown is unchanged. Otherwise heavy embeds remount on every tick.
+  // The render action updates line metadata without remounting Markdown.
+  // Keep its content inputs stable during pointer moves and save handoffs.
   function handleCheckboxLineClick(line: number) {
     if (!isListItemSourced(timeBlock)) {
       return Promise.resolve();
@@ -252,13 +249,13 @@
           isCompact && "is-compact",
           useStackedHeader && "is-stacked-header",
         ]}
-        {@attach createRenderMarkdownAttachment({
+        use:renderMarkdownAction={{
           renderMarkdown,
           markdown: listItem,
           sourcePath,
           taskLines: [listItemLine],
           onCheckboxLineClick,
-        })}
+        }}
       ></div>
     </div>
   {/snippet}
@@ -267,12 +264,12 @@
     {#if paragraphs}
       <div
         class="markdown-wrapper task-description"
-        {@attach createRenderMarkdownAttachment({
+        use:renderMarkdownAction={{
           renderMarkdown,
           markdown: paragraphs,
           sourcePath,
           taskLines: [],
-        })}
+        }}
       ></div>
     {/if}
     {#if ($settingsStore.showSubtasksInTaskBlocks || subtasksExpanded) && nestedListItems}
@@ -287,13 +284,13 @@
             withoutDisplayedControlTags(item.text.replace(/<!--.*?-->/g, "")),
           )
           .join("\n")}
-        {@attach createRenderMarkdownAttachment({
+        use:renderMarkdownAction={{
           renderMarkdown,
           markdown: nestedListItems,
           sourcePath,
           taskLines: nestedListItemLines,
           onCheckboxLineClick,
-        })}
+        }}
       ></div>
     {/if}
     {#if canRevealSubtasks}
@@ -320,6 +317,10 @@
 </TimeBlockContentLayout>
 
 <style>
+  :global(.planner-markdown-stage) {
+    display: contents;
+  }
+
   .subtask-count {
     cursor: pointer;
 

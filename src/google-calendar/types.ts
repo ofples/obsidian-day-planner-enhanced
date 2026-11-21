@@ -21,6 +21,13 @@ export interface CalendarSnapshot {
   taskUrl?: string | null;
 }
 
+/** A new local edit invalidates a scan; retry after the user is idle, not as a conflict. */
+export class CalendarSyncInterrupted extends Error {
+  constructor() {
+    super("Notes changed during calendar sync. Waiting for editing to finish.");
+  }
+}
+
 export interface GoogleEvent {
   id: string;
   etag: string;
@@ -72,6 +79,11 @@ export interface SyncRecord {
   base: CalendarSnapshot;
   deleted?: boolean;
   pendingDelete?: boolean;
+  pendingUpdate?: {
+    base: CalendarSnapshot;
+    local: CalendarSnapshot;
+    snapshot: CalendarSnapshot;
+  };
   pendingConflict?: {
     mine: CalendarSnapshot;
     raw: string;
@@ -152,6 +164,8 @@ export interface CalendarApi {
 }
 
 export interface CalendarNotes {
+  assertCurrent?(): void;
+  assertMissingCurrent?(path: string): Promise<void>;
   canSync?(path: string, snapshot: CalendarSnapshot): Promise<boolean>;
   scan(): Promise<LocalBlock[]>;
   isUnchanged(block: LocalBlock): Promise<boolean>;

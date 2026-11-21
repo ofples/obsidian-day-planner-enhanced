@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   createRenderMarkdownAttachment,
+  renderMarkdownAction,
   createAutoScroll,
   dispatchAutoScrollPointerMove,
   getIsomorphicClientY,
@@ -50,6 +51,63 @@ describe("interactive event targets", () => {
 });
 
 describe("rendered markdown checkboxes", () => {
+  test("pending-to-indexed line handoff keeps painted DOM and enables the right checkbox", () => {
+    const el = document.createElement("div");
+    const renderMarkdown = vi.fn((node: HTMLElement) => {
+      node.innerHTML =
+        '<ul><li data-task=""><input type="checkbox">Child</li></ul>';
+      return vi.fn();
+    });
+    const check = vi.fn(async () => {});
+    const options = {
+      renderMarkdown,
+      markdown: "- [ ] Child",
+      sourcePath: "day.md",
+      taskLines: [undefined] as Array<number | undefined>,
+      onCheckboxLineClick: check,
+    };
+    const action = renderMarkdownAction(el, options);
+    const checkbox = el.querySelector<HTMLInputElement>("input")!;
+    expect(checkbox.disabled).toBe(true);
+    action.update({ ...options, taskLines: [4] });
+    expect(el.querySelector("input")).toBe(checkbox);
+    expect(checkbox.disabled).toBe(false);
+    expect(checkbox.dataset.line).toBe("4");
+    expect(renderMarkdown).toHaveBeenCalledOnce();
+    checkbox.click();
+    expect(check).toHaveBeenCalledWith(4);
+    action.destroy();
+  });
+  test("a slow replacement never empties the visible content and stale renders cannot win", async () => {
+    const el = document.createElement("div");
+    const finishes: Array<() => void> = [];
+    const renderMarkdown = vi.fn((node: HTMLElement, text: string) => {
+      node.textContent = text;
+      if (text === "Original") return vi.fn();
+      return Object.assign(vi.fn(), {
+        ready: new Promise<void>((resolve) => finishes.push(resolve)),
+      });
+    });
+    const options = {
+      renderMarkdown,
+      markdown: "Original",
+      sourcePath: "day.md",
+      taskLines: [],
+    };
+    const action = renderMarkdownAction(el, options);
+    const painted = el.firstChild;
+    action.update({ ...options, markdown: "Older pending" });
+    action.update({ ...options, markdown: "Latest pending" });
+    expect(el.firstChild).toBe(painted);
+    expect(el.textContent).toBe("Original");
+    finishes[0]!();
+    await Promise.resolve();
+    expect(el.textContent).toBe("Original");
+    finishes[1]!();
+    await Promise.resolve();
+    expect(el.textContent).toBe("Latest pending");
+    action.destroy();
+  });
   test("persists a checkbox on the first file line from one semantic click", async () => {
     const outer = document.createElement("div");
     const markdownContainer = document.createElement("div");

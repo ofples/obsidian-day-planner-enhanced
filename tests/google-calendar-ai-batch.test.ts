@@ -174,7 +174,9 @@ test("a held Undo quietly stops automatic sync while local edits remain availabl
   await vi.advanceTimersByTimeAsync(6_000);
   expect(run).not.toHaveBeenCalled();
   h.service.setPlanningUndoHold(false);
-  await vi.advanceTimersByTimeAsync(5_000);
+  await vi.advanceTimersByTimeAsync(13_999);
+  expect(run).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
   expect(run).toHaveBeenCalledExactlyOnceWith(true);
 });
 

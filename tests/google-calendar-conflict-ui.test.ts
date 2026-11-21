@@ -71,6 +71,9 @@ afterEach(() => {
 });
 
 function setup() {
+  vi.spyOn(Date, "now").mockReturnValue(
+    new Date("2030-01-01T00:00:00Z").valueOf(),
+  );
   const service = new GoogleCalendarSync(
     {
       app: {

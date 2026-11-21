@@ -18,15 +18,29 @@ function getInternalLink(event: MouseEvent, container: HTMLElement) {
 }
 
 export const createRenderMarkdown =
-  (app: App) => (el: HTMLElement, markdown: string, sourcePath: string) => {
+  (app: App) =>
+  (
+    el: HTMLElement,
+    markdown: string,
+    sourcePath: string,
+  ): (() => void) & { ready?: Promise<void> } => {
     const loader = new Component();
 
     el.empty();
+    let disposed = false;
 
     // TODO: investigate why `await` doesn't work as expected here
-    MarkdownRenderer.render(app, markdown, el, sourcePath, loader).then(
-      () => loader.load(),
-      (error) => console.error(`Failed to render markdown. `, error),
+    const ready = MarkdownRenderer.render(
+      app,
+      markdown,
+      el,
+      sourcePath,
+      loader,
+    ).then(() => {
+      if (!disposed) loader.load();
+    });
+    void ready.catch((error) =>
+      console.error("Failed to render markdown.", error),
     );
 
     const openInternalLink = (event: MouseEvent) => {
@@ -54,10 +68,14 @@ export const createRenderMarkdown =
     el.addEventListener("click", openInternalLink, true);
     el.addEventListener("auxclick", openInternalLink, true);
 
-    return () => {
-      el.removeEventListener("click", openInternalLink, true);
-      el.removeEventListener("auxclick", openInternalLink, true);
-      loader.unload();
-    };
+    return Object.assign(
+      () => {
+        disposed = true;
+        el.removeEventListener("click", openInternalLink, true);
+        el.removeEventListener("auxclick", openInternalLink, true);
+        loader.unload();
+      },
+      { ready },
+    );
   };
 /* eslint-enable @typescript-eslint/no-floating-promises, @typescript-eslint/no-misused-promises, @typescript-eslint/no-redundant-type-constituents, @typescript-eslint/no-unnecessary-condition, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-enum-comparison, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-return -- Re-enable scorecard compatibility suppressions after this file. */

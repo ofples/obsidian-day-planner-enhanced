@@ -1,5 +1,23 @@
 import type { CalendarSnapshot } from "./types";
 
+export function calendarSyncDelaySeconds(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(5, Math.min(300, Math.round(value)))
+    : 20;
+}
+
+/** Same half-open overlap rule as the Calendar event-list window. */
+export function isCalendarSnapshotInWindow(
+  snapshot: CalendarSnapshot,
+  timeMin: string,
+  timeMax: string,
+) {
+  return (
+    Date.parse(snapshot.start) < Date.parse(timeMax) &&
+    Date.parse(snapshot.end) > Date.parse(timeMin)
+  );
+}
+
 /** A configured boundary is inclusive and follows the local daily-note date. */
 export function isCalendarDateInScope(
   snapshot: CalendarSnapshot,

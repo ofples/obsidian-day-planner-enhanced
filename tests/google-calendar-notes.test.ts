@@ -7,6 +7,7 @@ import { syncCalendar } from "../src/google-calendar/engine";
 import { structuredDescription } from "../src/google-calendar/subtasks";
 import {
   canonicalSnapshotOf,
+  CalendarSyncInterrupted,
   type CalendarApi,
   type CalendarSyncState,
   type GoogleEvent,
@@ -115,6 +116,32 @@ function harness(
 beforeEach(() => vi.stubGlobal("crypto", webcrypto));
 
 describe("vault calendar adapter", () => {
+  test("resuming edits after the note journal is saved cancels an unstarted remote write", async () => {
+    const edits = { isWriting: false, revision: 0 };
+    const h = harness(edits);
+    const [local] = await h.notes.scan();
+    const before = h.texts.get(sourcePath)!;
+    h.save.mockImplementationOnce(async () => {
+      edits.revision++;
+    });
+    await expect(
+      h.notes.write(
+        local!.uid,
+        { ...local!.snapshot, title: "Google rename" },
+        local!,
+      ),
+    ).rejects.toBeInstanceOf(CalendarSyncInterrupted);
+    expect(h.texts.get(sourcePath)).toBe(before);
+    expect(h.state.pendingNoteChange).toBeUndefined();
+    const [refreshed] = await h.notes.scan();
+    await h.notes.write(
+      refreshed!.uid,
+      { ...refreshed!.snapshot, title: "Google rename" },
+      refreshed!,
+    );
+    expect(h.texts.get(sourcePath)).toContain("Google rename");
+  });
+
   test("batch identity updates share the note journal and resume after interruption", async () => {
     const h = harness(undefined, true);
     const [block] = await h.notes.scan();

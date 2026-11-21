@@ -55,6 +55,7 @@
     withDragScrollOffset,
   } from "../hooks/use-edit/drag-pointer";
   import type { EditOperation } from "../hooks/use-edit/types";
+  import { TimelineRenderKeys } from "../timeline-render-keys";
 
   import AiProposalOverlay from "./ai-proposal-overlay.svelte";
   import Column from "./column.svelte";
@@ -411,6 +412,13 @@
     return getMinutesSinceMidnight(task.startTime) % 30 === 0;
   }
 
+  const renderKeys = new TimelineRenderKeys<
+    (typeof plannerLayout.realBlocks)[number]
+  >();
+  const renderedPlanBlocks = $derived(
+    renderKeys.project(plannerLayout.realBlocks),
+  );
+
   const plannerSeparatorVisibility = $derived(
     createSeparatorVisibilityLookup(plannerLayout.realBlocks),
   );
@@ -594,7 +602,8 @@
             placings={plannerLayout.previewPlacings}
           />
         {/if}
-        {#each plannerLayout.realBlocks as timeBlock (timeBlock.source === "ical" ? getRenderKey(timeBlock) : timeBlock.id)}
+        {#each renderedPlanBlocks as row (row.key)}
+          {@const timeBlock = row.block}
           {@const separatorVisibility = plannerSeparatorVisibility.get(
             getRenderKey(timeBlock),
           )}

@@ -172,6 +172,7 @@ vi.mock("obsidian", () => ({
   getAllTags: (cache: { tags?: Array<{ tag: string }> }) =>
     cache.tags?.map(({ tag }) => tag) ?? null,
   moment,
+  Platform: { isDesktopApp: true },
   TFile: vi.fn(),
   normalizePath: (p: string) => path.normalize(p),
   stripHeadingForLink: (heading: string) => heading,

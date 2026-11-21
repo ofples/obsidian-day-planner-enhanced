@@ -1,10 +1,17 @@
 import { describe, expect, test } from "vitest";
 import {
+  calendarSyncDelaySeconds,
   isCalendarDateInScope,
   isCalendarNoteEnabled,
 } from "../src/google-calendar/scope";
 
 describe("calendar sync scope", () => {
+  test.each([undefined, null, "20", Number.NaN, Number.POSITIVE_INFINITY])(
+    "invalid quiet period %s uses the safe default",
+    (value) => {
+      expect(calendarSyncDelaySeconds(value)).toBe(20);
+    },
+  );
   const snapshot = (date: string) => ({
     title: "Task",
     start: window.moment(`${date} 09:00`).toISOString(),

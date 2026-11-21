@@ -203,8 +203,32 @@ export function googleCalendarSettingDefinitions(
         toggle(
           "Automatic sync",
           "autoSync",
-          "Sync after five seconds without note edits and check periodically while Obsidian is open.",
+          "Sync after editing has been idle for the delay below, and check periodically while Obsidian is open.",
         ),
+        {
+          name: "Wait after edits (seconds)",
+          desc: "Wait 5–300 seconds after the last schedule edit before automatic sync. Default: 20 seconds. Sync now remains an explicit action.",
+          render: (setting) =>
+            setting.addText((control) => {
+              control.inputEl.type = "number";
+              control.inputEl.min = "5";
+              control.inputEl.max = "300";
+              control
+                .setValue(
+                  String(getSettings().googleCalendar.autoSyncDelaySeconds),
+                )
+                .onChange((value) => {
+                  const seconds = Number(value);
+                  if (
+                    value.trim() &&
+                    Number.isInteger(seconds) &&
+                    seconds >= 5 &&
+                    seconds <= 300
+                  )
+                    update({ autoSyncDelaySeconds: seconds });
+                });
+            }),
+        },
         {
           name: "Sync and conflicts",
           desc: "Run a sync or review changes that need your choice.",

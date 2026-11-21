@@ -14,6 +14,7 @@ import {
   structuredDescription,
   plainCalendarDescription,
 } from "../src/google-calendar/subtasks";
+import { CalendarSyncInterrupted } from "../src/google-calendar/types";
 import type {
   CalendarApi,
   CalendarNotes,
@@ -126,6 +127,9 @@ function harness(local = block(base), remote = event(base)) {
     save,
     run,
     current: () => current,
+    setLocal: (value: LocalBlock) => {
+      current = value;
+    },
     remote: () => currentEvent,
     setRemote: (value: GoogleEvent) => {
       currentEvent = value;
@@ -134,6 +138,97 @@ function harness(local = block(base), remote = event(base)) {
 }
 
 describe("canonical calendar engine", () => {
+  test("the sync window does not fetch or conflict on hundreds of historical records", async () => {
+    const h = harness();
+    for (let index = 0; index < 500; index++)
+      h.state.records[`past-${index}`] = {
+        eventId: `past-event-${index}`,
+        path: "Daily/2026-11-10.md",
+        base: {
+          ...base,
+          start: window.moment("2026-11-10 09:00").toISOString(),
+          end: window.moment("2026-11-10 10:00").toISOString(),
+        },
+      };
+    const result = await h.run();
+    expect(result.conflicts).toEqual([]);
+    expect(h.api.get).not.toHaveBeenCalled();
+    expect(h.api.remove).not.toHaveBeenCalled();
+    expect(Object.keys(h.state.records)).toHaveLength(501);
+  });
+  test("a linked Google event moved from an old day into the active window is still pulled", async () => {
+    const past = {
+      ...base,
+      start: window.moment("2026-11-10 09:00").toISOString(),
+      end: window.moment("2026-11-10 10:00").toISOString(),
+    };
+    const h = harness(block(past), event(base));
+    h.state.records[uid]!.base = past;
+    const result = await h.run();
+    expect(result.conflicts).toEqual([]);
+    expect(result.pulled).toBe(1);
+    expect(h.state.records[uid]!.base.start).toBe(base.start);
+    expect(h.api.create).not.toHaveBeenCalled();
+    expect(h.api.get).not.toHaveBeenCalled();
+  });
+  test("a missing block from a changing document defers the pass instead of raising a deletion conflict", async () => {
+    const h = harness();
+    vi.mocked(h.notes.scan).mockResolvedValue([]);
+    vi.mocked(h.notes.isDocumentUnchanged!).mockResolvedValue(false);
+    await expect(h.run()).rejects.toBeInstanceOf(CalendarSyncInterrupted);
+    expect(h.api.remove).not.toHaveBeenCalled();
+    expect(h.state.records[uid]!.deleted).toBeUndefined();
+  });
+  test.each(["confirmed", "lost-response"] as const)(
+    "%s uploads do not become competing Google edits when typing resumes",
+    async (mode) => {
+      const first = { ...base, title: "First edit" };
+      const google = { ...base, subtasks: "- [x] Remote child" };
+      const h = harness(block(first), event(google));
+      let current = true;
+      h.notes.assertCurrent = () => {
+        if (!current) throw new CalendarSyncInterrupted();
+      };
+      const original = vi.mocked(h.api.update).getMockImplementation()!;
+      vi.mocked(h.api.update).mockImplementationOnce(async (...args) => {
+        const confirmed = await original(...args);
+        if (mode === "lost-response")
+          throw new Error("Response lost after PATCH");
+        current = false;
+        return confirmed;
+      });
+      if (mode === "confirmed")
+        await expect(h.run()).rejects.toBeInstanceOf(CalendarSyncInterrupted);
+      else expect((await h.run()).conflicts).toHaveLength(1);
+      current = true;
+      h.setLocal(block({ ...base, title: "Second edit" }));
+      const result = await h.run();
+      expect(result.conflicts).toEqual([]);
+      expect(h.state.records[uid]!.base).toMatchObject({
+        title: "Second edit",
+        subtasks: google.subtasks,
+      });
+      expect(h.state.records[uid]!.pendingUpdate).toBeUndefined();
+      expect(h.state.records[uid]!.pendingConflict).toBeUndefined();
+    },
+  );
+  test("uncertain uploads still protect a genuinely newer competing Google edit", async () => {
+    const h = harness(block({ ...base, title: "First edit" }));
+    const original = vi.mocked(h.api.update).getMockImplementation()!;
+    vi.mocked(h.api.update).mockImplementationOnce(async (...args) => {
+      await original(...args);
+      throw new Error("Response lost");
+    });
+    await h.run();
+    h.setRemote(event({ ...base, title: "New Google edit" }, "new-version"));
+    h.setLocal(block({ ...base, title: "Second local edit" }));
+    const result = await h.run();
+    expect(result.reviewable[0]!.fields).toContain("title");
+    expect(h.state.records[uid]!.pendingConflict!.mine.title).toBe(
+      "Second local edit",
+    );
+    expect(h.state.records[uid]!.base.title).toBe("New Google edit");
+  });
   test("Calendar trimming an empty checkbox does not compete with a new local child", async () => {
     const previous = { ...base, subtasks: "- [ ]\n- [x] Already done" };
     const mine = {

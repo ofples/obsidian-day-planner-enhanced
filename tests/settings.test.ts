@@ -9,6 +9,21 @@ import {
 } from "../src/settings";
 
 describe("settings migration", () => {
+  test("calendar quiet period defaults to 20 seconds and validates saved values", () => {
+    expect(mergeStoredSettings(null).googleCalendar.autoSyncDelaySeconds).toBe(
+      20,
+    );
+    for (const [value, expected] of [
+      [30, 30],
+      [2, 5],
+      [999, 300],
+    ] as const) {
+      expect(
+        mergeStoredSettings({ googleCalendar: { autoSyncDelaySeconds: value } })
+          .googleCalendar.autoSyncDelaySeconds,
+      ).toBe(expected);
+    }
+  });
   test("exports default to the existing vault folder and preserve a custom path", () => {
     expect(mergeStoredSettings(null).scheduleExportFolder).toBe(
       "Schedule Exports",
